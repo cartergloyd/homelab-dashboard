@@ -1,0 +1,20 @@
+{
+  "name": "homelab-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tailscale-only dashboard for a home server running Jellyfin, a Paper Minecraft server, and Directus/PostgreSQL",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w web && npm run build -w server",
+    "start": "node server/dist/index.js",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "demo": "DEMO=1 AUTH_DISABLED=1 node server/dist/index.js"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

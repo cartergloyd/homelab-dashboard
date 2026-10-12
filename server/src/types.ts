@@ -1,0 +1,224 @@
+// Shared API shapes. web/src/types.ts mirrors this file — keep them in sync.
+
+export type ServiceState = "ok" | "degraded" | "down" | "unavailable";
+
+export interface ServiceStatus {
+  id: string;
+  name: string;
+  state: ServiceState;
+  latencyMs: number | null;
+  detail: string;
+  href?: string;
+  checkedAt: string;
+}
+
+export interface StatusPayload {
+  services: ServiceStatus[];
+  generatedAt: string;
+  demo: boolean;
+}
+
+export interface ContainerInfo {
+  name: string;
+  state: string;
+  status: string;
+  image: string;
+  startedAt: string | null;
+  health: string | null;
+}
+
+export interface UnitState {
+  unit: string;
+  active: string;
+  sub: string;
+  since: string | null;
+  pid: number | null;
+  memoryBytes: number | null;
+}
+
+export interface McPlayers {
+  online: number;
+  max: number;
+  names: string[];
+}
+
+export interface McPing {
+  online: number;
+  max: number;
+  sample: string[];
+  version: string;
+  motd: string;
+  latencyMs: number;
+}
+
+export interface MinecraftPayload {
+  unit: UnitState | null;
+  ping: McPing | null;
+  rcon: { ok: boolean; error?: string };
+  players: McPlayers | null;
+  address: string;
+}
+
+export interface JellyfinSession {
+  id: string;
+  user: string;
+  client: string;
+  device: string;
+  lastActivity: string;
+  nowPlaying: {
+    name: string;
+    type: string;
+    series?: string;
+    progress: number;
+    paused: boolean;
+  } | null;
+}
+
+export interface JellyfinPayload {
+  reachable: boolean;
+  info: { version: string; serverName: string; os: string } | null;
+  counts: Record<string, number> | null;
+  sessions: JellyfinSession[];
+  container: ContainerInfo | null;
+  url: string;
+  error?: string;
+}
+
+export interface FileEntry {
+  name: string;
+  type: "dir" | "file";
+  size: number;
+  mtime: string;
+}
+
+export interface MediaRoot {
+  name: string;
+  path: string;
+}
+
+export interface DatabasePayload {
+  directus: {
+    state: ServiceState;
+    status: string | null;
+    url: string;
+    latencyMs: number | null;
+    error?: string;
+  };
+  postgres: {
+    connected: boolean;
+    version: string | null;
+    sizeBytes: number | null;
+    tables: number | null;
+    topTables: { name: string; rows: number; bytes: number }[];
+    error?: string;
+  };
+}
+
+export type JobType = "restart" | "backup" | "command";
+
+export interface JobOptions {
+  warnMinutes?: number[];
+  onlyWhenEmpty?: boolean;
+  keep?: number;
+  command?: string;
+}
+
+export interface Job {
+  id: string;
+  name: string;
+  type: JobType;
+  cron: string;
+  enabled: boolean;
+  options: JobOptions;
+  createdAt: string;
+}
+
+export interface JobRun {
+  id: string;
+  jobId: string;
+  jobName: string;
+  type: JobType;
+  startedAt: string;
+  finishedAt: string | null;
+  ok: boolean | null;
+  message: string;
+}
+
+export interface JobView extends Job {
+  nextRun: string | null;
+  lastRun: JobRun | null;
+  running: boolean;
+}
+
+export interface BackupFile {
+  name: string;
+  bytes: number;
+  mtime: string;
+}
+
+export interface Filesystem {
+  filesystem: string;
+  mount: string;
+  totalBytes: number;
+  usedBytes: number;
+  availBytes: number;
+  usedPct: number;
+}
+
+export interface FolderUsage {
+  label: string;
+  path: string;
+  bytes: number | null;
+  error?: string;
+}
+
+export interface StoragePayload {
+  filesystems: Filesystem[];
+  folders: FolderUsage[];
+  refreshedAt: string | null;
+  refreshing: boolean;
+}
+
+export interface TailscalePeer {
+  hostName: string;
+  dnsName: string;
+  os: string;
+  ips: string[];
+  online: boolean;
+  lastSeen: string | null;
+  self: boolean;
+}
+
+export interface TailscalePayload {
+  available: boolean;
+  self: TailscalePeer | null;
+  peers: TailscalePeer[];
+  magicDnsSuffix: string | null;
+  error?: string;
+}
+
+export interface OverviewPayload {
+  status: StatusPayload;
+  minecraft: { players: McPlayers | null; active: string | null };
+  jellyfin: { sessions: number; playing: number };
+  storage: Filesystem[];
+  tailscale: { online: number; total: number };
+  nextJob: { name: string; at: string } | null;
+}
+
+export type LogSource =
+  | "minecraft"
+  | "jellyfin"
+  | "directus"
+  | "postgres"
+  | "dashboard"
+  | "system";
+
+export interface AppConfigPayload {
+  demo: boolean;
+  user: { login: string; name: string };
+  links: { jellyfin: string; directus: string };
+  mediaRoots: string[];
+  timezone: string;
+  logSources: LogSource[];
+}

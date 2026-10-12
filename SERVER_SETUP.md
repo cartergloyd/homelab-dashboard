@@ -1,0 +1,214 @@
+# Server setup — handoff notes
+
+These instructions are written for an AI assistant (or a person) installing this
+dashboard on the owner's Linux home server. Work through them in order, confirm
+each verification step, and ask the owner before anything destructive.
+
+## What you are installing
+
+`homelab-dashboard` is a Node.js web app (React UI + Express API) that gives the
+owner one page, reachable only over Tailscale, to manage:
+
+- **Jellyfin** (already running, in Docker) — status, sessions, library scan, container restart
+- **Jellyfin media files** — browse/upload/rename/move/delete under the media folders
+- **Minecraft** (Paper, installed natively, *not* in Docker) — start/stop/restart via systemd, RCON console, live log
+- **Minecraft maintenance** — scheduled restarts with in-game countdown, world backups, recurring commands
+- **Directus + PostgreSQL** (new, from `docker-compose.yml` in this repo) — the owner's personal database with a web UI
+- **Logs, service status, storage, Tailscale peers**
+
+The dashboard runs **natively as a systemd service** (not in Docker) so it can call
+`systemctl`/`journalctl` for the Paper server. Only Postgres + Directus run in Docker.
+
+Acceptance criteria the owner set:
+1. Dashboard returns **200 OK** at its Tailscale address.
+2. Directus UI is **reachable** over the tailnet.
+3. **PostgreSQL stays private** on the server (published on `127.0.0.1` only — never LAN/tailnet).
+
+## Facts to discover first (ask or inspect; don't guess)
+
+| Fact | How to find it | Used for |
+|---|---|---|
+| Linux distro & Node availability | `cat /etc/os-release`, `node --version` | step 1 |
+| Jellyfin container name | `docker ps --format '{{.Names}} {{.Image}}'` | `JELLYFIN_CONTAINER` |
+| Host paths of Jellyfin media | `docker inspect <jellyfin> --format '{{json .Mounts}}'` | `MEDIA_ROOTS` |
+| Minecraft install dir, user, how it's started | `ps -ef \| grep -i paper`, `systemctl list-units \| grep -i mine`, check for screen/tmux | step 2, `MC_DIR`, `MC_SERVICE` |
+| Server's Tailscale name / IP | `tailscale status`, `tailscale status --json \| jq .Self.DNSName` | public URLs |
+| Owner's Tailscale login(s) | `tailscale status` (right-hand column) or `tailscale whois <their-ip>` | `ALLOWED_LOGINS` |
+| Is ufw/firewalld active? | `sudo ufw status` | step 8 |
+
+## 1. Install Node and the app
+
+```bash
+# Node 22 LTS (Debian/Ubuntu; skip if `node --version` is already >= 20.19)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
+```bash
+sudo mkdir -p /opt/homelab-dashboard
+sudo rsync -a --exclude node_modules --exclude data --exclude .env <path-to-this-repo>/ /opt/homelab-dashboard/
+cd /opt/homelab-dashboard && sudo npm ci && sudo npm run build
+```
+
+`npm run build` compiles `web/` (Vite) and `server/` (tsc). Expected output ends with no errors.
+
+## 2. Paper: enable RCON and make sure systemd manages it
+
+In the Paper directory's `server.properties`, set:
+
+```
+enable-rcon=true
+rcon.port=25575
+rcon.password=<generate: openssl rand -hex 16>
+```
+
+If Paper is **already a systemd unit**, note its unit name (`MC_SERVICE`) and make
+sure it has `KillSignal=SIGINT` and `TimeoutStopSec=120` so restarts save cleanly
+(`sudo systemctl edit <unit>` to add them). Restart it to apply the RCON change.
+
+If Paper runs from **screen/tmux or a shell script**, migrate it:
+
+```bash
+sudo cp deploy/minecraft.service /etc/systemd/system/minecraft.service
+sudo nano /etc/systemd/system/minecraft.service   # fix User, WorkingDirectory, jar name, -Xmx
+```
+
+Stop the existing Paper process (`stop` in its console), then:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now minecraft && systemctl status minecraft
+```
+
+Verify: `nc -zv 127.0.0.1 25565` connects and `journalctl -u minecraft -n 20` shows Paper output.
+
+## 3. Create the service user and grant exactly what it needs
+
+```bash
+sudo useradd --system --home /opt/homelab-dashboard --shell /usr/sbin/nologin homelab
+sudo usermod -aG docker,systemd-journal homelab
+```
+
+Give it access to the Minecraft directory (replace `minecraft` with the group
+that owns `MC_DIR`, from `stat -c %G /opt/minecraft`):
+
+```bash
+sudo usermod -aG minecraft homelab && sudo chmod -R g+rwX /opt/minecraft
+```
+
+Give it read/write on each media root (replace with the real paths from `MEDIA_ROOTS`):
+
+```bash
+sudo setfacl -R -m u:homelab:rwX /srv/media && sudo setfacl -R -d -m u:homelab:rwX /srv/media
+```
+
+Install the sudoers rule (check `which systemctl`; edit the file if it is `/bin/systemctl`):
+
+```bash
+sudo visudo -cf deploy/sudoers-homelab && sudo install -m 0440 deploy/sudoers-homelab /etc/sudoers.d/homelab
+```
+
+```bash
+sudo mkdir -p /var/backups/minecraft /opt/homelab-dashboard/data && sudo chown homelab:homelab /var/backups/minecraft /opt/homelab-dashboard/data && sudo chown -R homelab:homelab /opt/homelab-dashboard
+```
+
+## 4. Jellyfin API key
+
+In Jellyfin's web UI: **Dashboard → Advanced → API Keys → +**, name it `homelab-dashboard`,
+copy the key for `JELLYFIN_API_KEY`. (Jellyfin 12+ requires the modern
+`Authorization: MediaBrowser Token=` header, which the app uses.)
+
+## 5. PostgreSQL + Directus
+
+```bash
+cd /opt/homelab-dashboard && sudo cp .env.example .env && sudo nano .env
+```
+
+Fill every `CHANGE-ME` (`openssl rand -hex 32` for `DIRECTUS_SECRET`). Set
+`DIRECTUS_PUBLIC_URL` to `http://<tailscale-name>:8055`. Then:
+
+```bash
+sudo docker compose up -d && sudo docker compose ps
+```
+
+Verify:
+- `curl -s http://127.0.0.1:8055/server/health` → `{"status":"ok"}` (Directus takes ~20 s to boot)
+- `sudo ss -ltnp | grep 5432` → shows **only** `127.0.0.1:5432` (acceptance criterion 3)
+- Open `http://<tailscale-name>:8055` from a tailnet device and log in with `DIRECTUS_ADMIN_*`.
+
+## 6. Configure and start the dashboard
+
+```bash
+sudo cp deploy/homelab-dashboard.env.example /etc/homelab-dashboard.env && sudo chown root:homelab /etc/homelab-dashboard.env && sudo chmod 0640 /etc/homelab-dashboard.env && sudo nano /etc/homelab-dashboard.env
+```
+
+Fill in: `JELLYFIN_API_KEY`, `JELLYFIN_CONTAINER`, `MEDIA_ROOTS`, `MC_DIR`,
+`MC_SERVICE`, `RCON_PASSWORD`, `PG_URL` (same credentials as compose `.env`),
+the three `*_PUBLIC_URL`/`MC_PUBLIC_ADDRESS` values with the server's Tailscale
+name, `ALLOWED_LOGINS`, and `TZ`.
+
+```bash
+sudo cp deploy/homelab-dashboard.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now homelab-dashboard && systemctl status homelab-dashboard
+```
+
+Verify locally (auth will refuse direct requests, which is correct — only the
+Tailscale proxy may talk to it):
+
+```bash
+curl -i http://127.0.0.1:3000/api/health
+```
+
+Expect `401` with `"No Tailscale identity on this request"`. A `200` here means
+`AUTH_DISABLED` is set — remove it.
+
+## 7. Expose over Tailscale (HTTPS + identity)
+
+```bash
+sudo tailscale serve --bg 3000
+```
+
+Then from a tailnet device open `https://<server-name>.<tailnet>.ts.net`. The sidebar
+footer shows the signed-in Tailscale user. `curl -I` of that URL from a tailnet
+device returns **200** (acceptance criterion 1). Do **not** use `tailscale funnel`;
+the app refuses Funnel requests by design.
+
+Optional: `sudo tailscale serve --bg --https=8443 http://127.0.0.1:8055` gives
+Directus HTTPS too (then set `DIRECTUS_PUBLIC_URL` accordingly).
+
+## 8. Firewall
+
+```bash
+sudo ufw default deny incoming && sudo ufw allow in on tailscale0 && sudo ufw allow OpenSSH
+```
+
+Only if players join Minecraft from the public internet: `sudo ufw allow 25565/tcp`.
+Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 and
+5432 are **not** reachable.
+
+## 9. Final checklist
+
+- [ ] `https://<server>.ts.net` loads; every service on the **Service status** page is OK
+- [ ] **Minecraft** page shows players and the live log; `list` works in the console
+- [ ] **Maintenance → Back up now** creates a `.tar.gz` in `/var/backups/minecraft` and the job history shows OK
+- [ ] **Media files** lists each root; a test upload appears and triggers a Jellyfin scan
+- [ ] **Database** page shows Directus `ok` and Postgres connected
+- [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Minecraft shows "RCON authentication failed" | `RCON_PASSWORD` ≠ `rcon.password`; restart Paper after editing server.properties |
+| Start/Stop/Restart returns "sudo: a password is required" | sudoers path mismatch — compare `which systemctl` with `deploy/sudoers-homelab` |
+| Jellyfin logs/restart "not available" | `homelab` not in `docker` group, or wrong `JELLYFIN_CONTAINER`; re-login isn't needed for a service — restart it |
+| Media files "Not found" on a root | path in `MEDIA_ROOTS` is the *container* path; use the host path from `docker inspect` |
+| Backups "No world folders found" | `MC_DIR` wrong, or world named differently (`level-name` in server.properties); symlink it to `world` or fix `MC_DIR` |
+| Dashboard 401 in browser | Opened via IP:3000 instead of the `tailscale serve` HTTPS address |
+| Dashboard 403 | Login not in `ALLOWED_LOGINS` |
+| Tailscale peers "unavailable" | `tailscale` CLI not on PATH for the service; `sudo ln -s $(which tailscale) /usr/bin/tailscale` |
+
+## Operating notes
+
+- Logs: `journalctl -u homelab-dashboard -f`
+- Update: copy new files, `npm ci && npm run build`, `systemctl restart homelab-dashboard`
+- Job definitions: `/opt/homelab-dashboard/data/jobs.json` (editable while stopped)
+- Demo mode for testing on any machine: `DEMO=1 AUTH_DISABLED=1 npm start` — never set these on the server

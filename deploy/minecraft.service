@@ -1,0 +1,24 @@
+# Template unit for a natively installed Paper server. Only needed if the server
+# is not already managed by systemd (e.g. it runs in screen/tmux today).
+# Adjust User, WorkingDirectory, the jar name and -Xmx before installing to
+# /etc/systemd/system/minecraft.service
+[Unit]
+Description=Paper Minecraft server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minecraft
+Group=minecraft
+WorkingDirectory=/opt/minecraft
+ExecStart=/usr/bin/java -Xms4G -Xmx4G -jar paper.jar --nogui
+# Paper shuts down cleanly on SIGINT; give large worlds time to save.
+KillSignal=SIGINT
+SuccessExitStatus=0 130 143
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

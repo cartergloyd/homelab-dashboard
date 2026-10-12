@@ -1,0 +1,21 @@
+# systemd unit for the dashboard. Install to /etc/systemd/system/homelab-dashboard.service
+[Unit]
+Description=Homelab dashboard (Jellyfin, Minecraft, Directus over Tailscale)
+After=network-online.target docker.service tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homelab
+Group=homelab
+WorkingDirectory=/opt/homelab-dashboard
+EnvironmentFile=/etc/homelab-dashboard.env
+ExecStart=/usr/bin/node /opt/homelab-dashboard/server/dist/index.js
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+# NoNewPrivileges must stay off: the dashboard calls `sudo systemctl ... minecraft.service`
+# (restricted by /etc/sudoers.d/homelab).
+
+[Install]
+WantedBy=multi-user.target
