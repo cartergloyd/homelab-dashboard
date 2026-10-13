@@ -122,6 +122,23 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 4. When done, `submit_report` with what you saw, what you did, and what a human should decide.
 5. If you learn something durable about this server, `append_instructions` with a short note.
 
+## Known facts about the live server (from the first install attempt, issue #2)
+
+Learned on 2026-10-13 when an installer ran this branch on the real machine. These
+override the placeholders wherever they conflict:
+
+- Minecraft lives under a path **with a space**: `/home/gold/Minecraft Server`. Quote it
+  everywhere (env, units, shell snippets).
+- Backups are **dated folders**, not single archives: `mcworld_YYYY_MM_DD/world.tar.gz`.
+  The dashboard's `mc-YYYYMMDD-HHMMSS.tar.gz` format is only what *it* creates.
+- Maintenance scripts are **not** in `/opt/homelab-scripts`; the real folder was not
+  recorded — discover it (`SCRIPTS_DIR`) rather than assume.
+- Real **systemd timers** already exist: an update-fetch timer and a backup/update/restart
+  timer. Mirror them as `external` jobs; do not add dashboard-run equivalents.
+- The seeded default jobs showed up in production → treat any job named "Nightly world
+  backup" / "Daily restart" in `data/jobs.json` on the server as demo leakage to remove.
+- Open work for all of this is tracked in GitHub issue #2 (deferred by the owner).
+
 ## Decisions log
 
 - 2026-10-12 UI first. Carter wants to see the screen early; keep backend to what
