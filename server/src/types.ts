@@ -128,6 +128,8 @@ export interface JobOptions {
   managedBy?: string;
   /** external job: minutes to wait for the script's output before reporting it missing */
   graceMinutes?: number;
+  /** external job mirrored from a systemd timer: the .timer unit name */
+  timer?: string;
 }
 
 export interface Job {
@@ -138,6 +140,8 @@ export interface Job {
   enabled: boolean;
   options: JobOptions;
   createdAt: string;
+  /** true for demo-seeded jobs; `npm run clear-demo-data` removes these */
+  seeded?: boolean;
 }
 
 export interface JobRun {
@@ -155,12 +159,36 @@ export interface JobView extends Job {
   nextRun: string | null;
   lastRun: JobRun | null;
   running: boolean;
+  /** external jobs only: is the real job's output reaching the alerts feed? */
+  outputTracking: "connected" | "not-connected" | "unknown" | null;
 }
+
+export type BackupFormat = "dashboard" | "dated-folder" | "archive";
 
 export interface BackupFile {
   name: string;
+  /** absolute path of the archive or dated folder */
+  path: string;
+  /** backup root it was found under */
+  root: string;
+  format: BackupFormat;
   bytes: number;
   mtime: string;
+  /** only backups the dashboard itself created may be deleted from the UI */
+  deletable: boolean;
+}
+
+export interface BackupsPayload {
+  roots: { path: string; exists: boolean; count: number }[];
+  backups: BackupFile[];
+  method: string;
+  format: string;
+  writeDir: string;
+}
+
+export interface ScriptsPayload {
+  dirs: { path: string; exists: boolean; count: number }[];
+  scripts: ScriptInfo[];
 }
 
 export interface Filesystem {
@@ -275,6 +303,7 @@ export interface ScriptRun {
 
 export interface ScriptInfo {
   name: string;
+  dir: string;
   kind: "python" | "shell";
   running: boolean;
   lastRun: ScriptRun | null;
@@ -372,7 +401,7 @@ export interface AppConfigPayload {
   timezone: string;
   logSources: LogSource[];
   alertSources: AlertSource[];
-  scriptsDir: string;
+  scriptsDirs: string[];
   contextFile: string;
   /** absolute path of server/dist/mcp.js on this machine, for the connect snippet */
   mcpScript: string;

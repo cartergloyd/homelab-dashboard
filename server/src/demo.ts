@@ -42,8 +42,15 @@ async function writeIfMissing(file: string, content: string | Buffer) {
 export async function bootstrapDemo(): Promise<void> {
   const base = path.join(cfg.dataDir, "demo");
   const media = path.join(base, "media");
-  const mc = path.join(base, "minecraft");
+  // deliberately contains a space, like the owner's real "/home/gold/Minecraft Server"
+  const mc = path.join(base, "Minecraft Server");
   const backups = path.join(base, "backups");
+
+  // Existing backup history in the owner's dated-folder layout (issue #2)
+  for (const day of ["2026_10_05", "2026_10_08", "2026_10_11"]) {
+    await writeIfMissing(path.join(backups, `mcworld_${day}`, "world.tar.gz"), Buffer.alloc(24 * 1024));
+    await writeIfMissing(path.join(backups, `mcworld_${day}`, "world_nether.tar.gz"), Buffer.alloc(6 * 1024));
+  }
 
   const sample: Record<string, string[]> = {
     Movies: ["Arrival (2016)/Arrival (2016).mkv", "Dune Part Two (2024)/Dune Part Two (2024).mkv", "Heat (1995)/Heat (1995).mp4"],
@@ -117,8 +124,8 @@ sys.exit(1)
     cfg.mediaRoots = Object.keys(sample).map((name) => ({ name, path: path.join(media, name) }));
   }
   if (!cfg.explicit.mcDir) cfg.minecraft.dir = mc;
-  if (!cfg.explicit.backupDir) cfg.backups.dir = backups;
-  if (!cfg.explicit.scriptsDir) cfg.scriptsDir = scripts;
+  if (!cfg.explicit.backupDir) cfg.backups.dirs = [backups];
+  if (!cfg.explicit.scriptsDir) cfg.scriptsDirs = [scripts];
   // Demo edits go to a copy, never the repo's real CLAUDE.md
   if (!cfg.explicit.contextFile) {
     const copy = path.join(base, "CLAUDE.md");

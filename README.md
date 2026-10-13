@@ -33,6 +33,17 @@ Open http://127.0.0.1:3000. Demo mode fakes Docker, systemd, RCON, Tailscale and
 Jellyfin so every page works on a laptop; the file manager and backups operate on
 throwaway folders under `data/demo/`.
 
+## Installing on a real server
+
+`SERVER_SETUP.md` is the runbook. The tools that make it verifiable:
+
+```bash
+npm run audit:install        # FULLY CONNECTED only when every gated check passes
+npm run discover -- --apply  # mirror existing systemd timers as external jobs
+npm run clear-demo-data -- --yes
+sudo npm run wrap-service -- mc-backup.service --apply --test
+```
+
 ## Development
 
 ```bash

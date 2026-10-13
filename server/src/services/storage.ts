@@ -38,7 +38,7 @@ function targets(): { label: string; path: string }[] {
   return [
     ...cfg.mediaRoots.map((r) => ({ label: r.name, path: r.path })),
     { label: "Minecraft server", path: cfg.minecraft.dir },
-    { label: "Minecraft backups", path: cfg.backups.dir },
+    ...cfg.backups.dirs.map((d, i) => ({ label: cfg.backups.dirs.length > 1 ? `Minecraft backups (${i + 1})` : "Minecraft backups", path: d })),
   ];
 }
 

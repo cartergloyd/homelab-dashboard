@@ -53,7 +53,7 @@ api.get("/config", (_req, res) => {
     timezone: cfg.timezone,
     logSources: LOG_SOURCES,
     alertSources: ALERT_SOURCE_IDS,
-    scriptsDir: cfg.scriptsDir,
+    scriptsDirs: cfg.scriptsDirs,
     contextFile: cfg.contextFile,
     mcpScript: path.join(cfg.repoRoot, "server", "dist", "mcp.js"),
     ...(u.viaKey || !cfg.dashboardKey ? {} : { dashboardKey: cfg.dashboardKey }),
@@ -244,8 +244,12 @@ api.post("/backups", async (_req, res) => {
   res.json(await runBackup());
 });
 
-api.delete("/backups/:name", async (req, res) => {
-  await deleteBackup(String(req.params.name));
+// Only backups the dashboard created are deletable (listBackups → deletable).
+api.delete("/backups", async (req, res) => {
+  const target = str(req.query.path) || str(req.query.name);
+  if (!target) throw new HttpError(400, "path is required");
+  await deleteBackup(target);
+  logAction(res, `deleted backup ${path.basename(target)}`);
   res.json({ ok: true });
 });
 

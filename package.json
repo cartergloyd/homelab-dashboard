@@ -12,7 +12,11 @@
     "start": "node server/dist/index.js",
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web",
-    "demo": "DEMO=1 AUTH_DISABLED=1 node server/dist/index.js"
+    "demo": "DEMO=1 AUTH_DISABLED=1 node server/dist/index.js",
+    "audit:install": "node server/dist/tools/audit-install.js",
+    "discover": "node server/dist/tools/audit-install.js --propose",
+    "clear-demo-data": "node server/dist/tools/clear-demo-data.js",
+    "wrap-service": "node server/dist/tools/wrap-service.js"
   },
   "engines": {
     "node": ">=20.19"

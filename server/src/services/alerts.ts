@@ -162,8 +162,31 @@ export interface PublishInput {
   meta?: AlertEvent["meta"];
 }
 
+// ---- last output seen per script (survives restarts; used for output tracking) --
+
+const scriptSeen = new Map<string, string>();
+let seenTimer: NodeJS.Timeout | null = null;
+const seenFile = () => path.join(cfg.dataDir, "scripts-seen.json");
+
+function noteScriptSeen(label: string, ts: string): void {
+  scriptSeen.set(label, ts);
+  seenTimer ??= setTimeout(() => {
+    seenTimer = null;
+    fsp.writeFile(seenFile(), JSON.stringify(Object.fromEntries(scriptSeen), null, 2)).catch(() => {});
+  }, 2000);
+}
+
+/** ISO time the feed last received output from this script (via ▶, a job, or hl-run), or null. */
+export function lastScriptOutput(label: string): string | null {
+  return scriptSeen.get(label) ?? null;
+}
+
 export function publish(input: PublishInput): AlertEvent {
   const text = input.text.length > MAX_TEXT ? `${input.text.slice(0, MAX_TEXT)}…` : input.text;
+  if (input.source === "scripts") {
+    const label = input.meta?.label ?? input.meta?.script;
+    if (label) noteScriptSeen(label, new Date().toISOString());
+  }
   const c = classify(text);
   const e: AlertEvent = {
     id: crypto.randomUUID(),
@@ -330,6 +353,11 @@ export async function startHub(): Promise<void> {
   await fsp.mkdir(cfg.dataDir, { recursive: true });
   await loadRules();
   await loadRecent();
+  try {
+    for (const [k, v] of Object.entries(JSON.parse(await fsp.readFile(seenFile(), "utf8")) as Record<string, string>)) scriptSeen.set(k, v);
+  } catch {
+    // none yet
+  }
   try {
     let timer: NodeJS.Timeout | null = null;
     fs.watch(rulesFile(), () => {

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -8,7 +8,7 @@ import { AssistantWidget } from "../components/AssistantWidget";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, PageHead, StatusPill, unitToState, useDialog, useToast } from "../components/ui";
 import { fmtBytes, fmtRelative, fmtUptime } from "../format";
-import type { MinecraftPayload, ScriptInfo, ScriptRun } from "../types";
+import type { MinecraftPayload, ScriptRun, ScriptsPayload } from "../types";
 
 interface ConsoleEntry {
   cmd: string;
@@ -23,7 +23,8 @@ export function Minecraft() {
   const { confirm } = useDialog();
   const config = useAppConfig();
   const q = useQuery({ queryKey: ["minecraft"], queryFn: () => api.get<MinecraftPayload>("/minecraft"), refetchInterval: 5000 });
-  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptInfo[]>("/scripts"), refetchInterval: 4000 });
+  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptsPayload>("/scripts"), refetchInterval: 4000 });
+  const missingDirs = scripts.data?.dirs.filter((d) => !d.exists) ?? [];
   const runScript = useMutation({
     mutationFn: (name: string) => api.post<ScriptRun>(`/scripts/${encodeURIComponent(name)}/run`),
     onSuccess: (_r, name) => {
@@ -152,19 +153,25 @@ export function Minecraft() {
               </button>
             ))}
           </div>
+          {missingDirs.length > 0 && (
+            <div className="notice error" style={{ marginTop: 10 }}>
+              Scripts folder not found: {missingDirs.map((d) => <span key={d.path} className="mono">{d.path}</span>).reduce<React.ReactNode[]>((acc, el, i) => (i ? [...acc, ", ", el] : [el]), [])}. Set{" "}
+              <span className="mono">SCRIPTS_DIR</span> in /etc/homelab-dashboard.env to the real folder(s), then restart the dashboard.
+            </div>
+          )}
           <div className="row" style={{ marginTop: 10, gap: 6 }}>
             <span className="small dim">Scripts:</span>
-            {scripts.data?.length === 0 && (
+            {scripts.data && scripts.data.scripts.length === 0 && missingDirs.length === 0 && (
               <span className="muted small">
-                none found in <span className="mono">{config.data?.scriptsDir}</span>
+                no *.py / *.sh files in <span className="mono">{config.data?.scriptsDirs.join(", ")}</span>
               </span>
             )}
-            {scripts.data?.map((s) => (
+            {scripts.data?.scripts.map((s) => (
               <button
                 key={s.name}
                 className="btn sm mono"
                 disabled={s.running || runScript.isPending}
-                title={s.lastRun ? `Last run ${fmtRelative(s.lastRun.startedAt)} · exit ${s.lastRun.exitCode ?? "?"} · ${s.lastRun.trigger}` : "Never run"}
+                title={`${s.dir}/${s.name}${s.lastRun ? ` · last run ${fmtRelative(s.lastRun.startedAt)} · exit ${s.lastRun.exitCode ?? "?"} · ${s.lastRun.trigger}` : " · never run"}`}
                 onClick={() => runScript.mutate(s.name)}
               >
                 {s.running ? <span className="spin">◌</span> : <Icons.play width={12} height={12} />}

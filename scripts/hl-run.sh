@@ -8,7 +8,10 @@
 #
 # Output still prints to your terminal; the exit code of your command is preserved.
 set -uo pipefail
-: "${HOMELAB_URL:=http://127.0.0.1:3000}"
+# When run from a systemd unit with EnvironmentFile=/etc/homelab-dashboard.env, the
+# dashboard's own variable names are present instead of HOMELAB_*; accept both.
+: "${HOMELAB_KEY:=${DASHBOARD_KEY:-}}"
+: "${HOMELAB_URL:=http://127.0.0.1:${PORT:-3000}}"
 
 if [ $# -eq 0 ]; then
   echo "usage: hl-run.sh <command> [args...]" >&2

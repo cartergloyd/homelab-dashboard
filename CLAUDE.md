@@ -109,6 +109,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 - [x] VPN tab: state, provider/protocol, exit IP + location, datacenter (endpoint geo),
       handshake/transfer, DNS, kill switch, and a per-service traffic map (bypass /
       through VPN) with advice. Provider-agnostic probing; `[INSTALLER]` placeholders.
+- [x] Issue #2 install hardening: zero jobs on a non-demo install (`seeded` flag on demo
+      ones); backups discovered in `mc-*.tar.gz`, `mcworld_YYYY_MM_DD/` and `*.tar.gz`
+      layouts with source shown and only dashboard-made ones deletable; `BACKUP_METHOD`
+      / `BACKUP_FORMAT`; multi-folder `SCRIPTS_DIR` with a loud missing-folder error;
+      external jobs carry `timer` + output-tracking state; tools `audit:install`,
+      `discover`, `clear-demo-data`, `wrap-service`; hl-run accepts `DASHBOARD_KEY`.
+- [ ] Cron entries are not auto-discovered by `discover` (only systemd timers) — mirror by hand
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
 - [ ] Codex registration syntax verified against current docs (marked "verify" in UI/docs)
@@ -167,8 +174,13 @@ override the placeholders wherever they conflict:
   landing page.
 - 2026-10-13 Demo mode edits a copy of this file (`data/demo/CLAUDE.md`), never the
   repo's, so smoke tests can write freely.
-- 2026-10-13 Seeded jobs start **disabled**. The owner already has backup/restart
-  scripts; the dashboard must not add a second nightly backup on its own.
+- 2026-10-13 **A non-demo install seeds no jobs at all** (was: two disabled seeds, which
+  still leaked into production — issue #2). Demo seeds carry `seeded: true` so
+  `clear-demo-data` can remove them.
+- 2026-10-13 The dashboard **never deletes a backup it did not create** (tracked in
+  `data/backups-created.json`); existing `mcworld_…` folders show as "existing".
+- 2026-10-13 Install verification is a command, not a feeling: `npm run audit:install`
+  must print FULLY CONNECTED; "it looks connected" is not acceptance.
 - 2026-10-13 VPN: the server runs a VPN with split-tunnel exceptions for Minecraft and
   Jellyfin; the client and mechanism are unknown, so `services/vpn.ts` probes (CLIs,
   WireGuard, ip rule, nft/iptables marks, geo) rather than assuming. Guidance baked into

@@ -1,15 +1,17 @@
 // Automated Minecraft maintenance: cron-scheduled restarts (with in-game
 // countdown), world backups and arbitrary RCON commands. Jobs and run history
 // live in JSON files under DATA_DIR.
+import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { schedule, validate } from "node-cron";
 import { z } from "zod";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import { fmtBytes, sleepUntil } from "../util.js";
-import { publish, query, waitForEvent } from "./alerts.js";
+import { lastScriptOutput, publish, query, waitForEvent } from "./alerts.js";
 import { runBackup } from "./backups.js";
 import { getPlayers } from "./minecraft.js";
 import { rconCommand, stripColour } from "./rcon.js";
@@ -37,9 +39,12 @@ export const JobInput = z.object({
         .optional(),
       managedBy: z.string().trim().max(40).optional(),
       graceMinutes: z.number().int().min(1).max(720).optional(),
+      timer: z.string().trim().max(80).optional(),
     })
     .default({}),
 });
+
+const execFileP = promisify(execFile);
 export type JobInputT = z.infer<typeof JobInput>;
 
 let jobs: Job[] = [];
@@ -64,27 +69,71 @@ async function writeJson(file: string, data: unknown): Promise<void> {
   await fs.rename(tmp, file);
 }
 
-// [INSTALLER] PLACEHOLDER / DEMO ONLY. These two jobs are seeded once, when
-// data/jobs.json does not exist, and start DISABLED. They are NOT the live
-// server's schedule. The live server already restarts and backs up semi-weekly
-// via cron + the owner's Python scripts — that infrastructure stays as it is.
-// Replace these with `external` jobs that mirror the real crontab lines
-// (SERVER_SETUP.md § 6c), then delete these two. Never enable them without the
-// owner's say-so: that would back up / restart twice.
+// DEMO ONLY. A non-demo install starts with ZERO jobs (issue #2: seeded jobs
+// leaked into production). The real server's schedule is discovered and mirrored
+// by `npm run discover` / `npm run audit:install --propose` (SERVER_SETUP § 6c).
+// `npm run clear-demo-data` removes anything flagged `seeded`.
 function defaultJobs(): Job[] {
+  if (!cfg.demo) return [];
   const createdAt = new Date().toISOString();
+  const seeded = true;
   return [
-    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: false, options: { keep: cfg.backups.keep }, createdAt },
+    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: false, options: { keep: cfg.backups.keep }, createdAt, seeded },
+    { id: crypto.randomUUID(), name: "Daily restart", type: "restart", cron: "0 5 * * *", enabled: false, options: { warnMinutes: [10, 5, 1], onlyWhenEmpty: true }, createdAt, seeded },
     {
       id: crypto.randomUUID(),
-      name: "Daily restart",
-      type: "restart",
-      cron: "0 5 * * *",
-      enabled: false,
-      options: { warnMinutes: [10, 5, 1], onlyWhenEmpty: true },
+      name: "Semi-weekly world backup",
+      type: "external",
+      cron: "0 4 * * 0,3",
+      enabled: true,
+      options: { managedBy: "systemd timer", timer: "mc-backup.timer", command: "python3 /opt/homelab-scripts/backup_world.py", script: "backup_world.py", graceMinutes: 30 },
       createdAt,
+      seeded,
+    },
+    {
+      id: crypto.randomUUID(),
+      name: "Semi-weekly restart",
+      type: "external",
+      cron: "0 5 * * 0,3",
+      enabled: true,
+      options: { managedBy: "cron", command: "python3 /opt/homelab-scripts/restart_server.py", script: "restart_server.py", graceMinutes: 15 },
+      createdAt,
+      seeded,
     },
   ];
+}
+
+// ---- output tracking for mirrored (external) jobs --------------------------
+// Is the real job's output reaching the feed? Timer-backed: the service's
+// ExecStart is wrapped with hl-run. Cron-backed: hl-run events with the script's
+// label have been seen. Refreshed every minute; read synchronously by listJobs().
+
+const tracking = new Map<string, JobView["outputTracking"]>();
+
+async function serviceWrapsHlRun(timer: string): Promise<boolean | null> {
+  const service = timer.replace(/\.timer$/, ".service");
+  try {
+    const { stdout } = await execFileP("systemctl", ["show", service, "-p", "ExecStart", "--no-pager"], { timeout: 5000 });
+    return /hl-run/.test(stdout);
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshOutputTracking(): Promise<void> {
+  const twoWeeksAgo = new Date(Date.now() - 14 * 86400_000).toISOString();
+  for (const job of jobs) {
+    if (job.type !== "external") continue;
+    let state: JobView["outputTracking"] = "unknown";
+    if (job.options.timer) {
+      const wrapped = await serviceWrapsHlRun(job.options.timer);
+      state = wrapped === null ? "unknown" : wrapped ? "connected" : "not-connected";
+    } else if (job.options.script) {
+      const seenAt = lastScriptOutput(job.options.script);
+      state = seenAt && seenAt > twoWeeksAgo ? "connected" : "not-connected";
+    }
+    tracking.set(job.id, state);
+  }
 }
 
 export async function initScheduler(): Promise<void> {
@@ -95,6 +144,8 @@ export async function initScheduler(): Promise<void> {
   for (const r of runs) if (r.ok === null) (r.ok = false), (r.message = "Interrupted by dashboard restart"), (r.finishedAt ??= r.startedAt);
   await writeJson(jobsFile(), jobs);
   for (const j of jobs) arm(j);
+  void refreshOutputTracking();
+  setInterval(() => void refreshOutputTracking(), 60_000).unref();
 }
 
 function arm(job: Job): void {
@@ -114,7 +165,18 @@ function disarm(id: string): void {
 
 function view(job: Job): JobView {
   const next = tasks.get(job.id)?.getNextRun() ?? null;
-  return { ...job, nextRun: next ? next.toISOString() : null, lastRun: runs.find((r) => r.jobId === job.id) ?? null, running: running.has(job.id) };
+  return {
+    ...job,
+    nextRun: next ? next.toISOString() : null,
+    lastRun: runs.find((r) => r.jobId === job.id) ?? null,
+    running: running.has(job.id),
+    outputTracking: job.type === "external" ? (tracking.get(job.id) ?? "unknown") : null,
+  };
+}
+
+/** Jobs flagged as demo seeds (for clear-demo-data and the install audit). */
+export function seededJobs(): Job[] {
+  return jobs.filter((j) => j.seeded);
 }
 
 function assertValid(job: Pick<Job, "type" | "options">): void {
@@ -132,6 +194,7 @@ export async function createJob(input: JobInputT): Promise<JobView> {
   jobs.push(job);
   await writeJson(jobsFile(), jobs);
   arm(job);
+  void refreshOutputTracking();
   return view(job);
 }
 
@@ -241,7 +304,7 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
   },
   async backup(job) {
     const r = await runBackup(job.options.keep ?? cfg.backups.keep);
-    return `Created ${r.file} (${fmtBytes(r.bytes)})${r.pruned ? `, pruned ${r.pruned} old backup${r.pruned === 1 ? "" : "s"}` : ""}${r.savedWhileRunning ? "" : " — server was stopped"}`;
+    return `Created ${r.file} (${fmtBytes(r.bytes)}) via ${r.method}${r.pruned ? `, pruned ${r.pruned} old backup${r.pruned === 1 ? "" : "s"}` : ""}${r.savedWhileRunning ? "" : " — server was stopped"}`;
   },
   async command(job) {
     const cmd = job.options.command?.trim();

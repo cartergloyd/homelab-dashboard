@@ -113,6 +113,7 @@ export interface JobOptions {
   script?: string;
   managedBy?: string;
   graceMinutes?: number;
+  timer?: string;
 }
 
 export interface Job {
@@ -123,6 +124,7 @@ export interface Job {
   enabled: boolean;
   options: JobOptions;
   createdAt: string;
+  seeded?: boolean;
 }
 
 export interface JobRun {
@@ -140,12 +142,32 @@ export interface JobView extends Job {
   nextRun: string | null;
   lastRun: JobRun | null;
   running: boolean;
+  outputTracking: "connected" | "not-connected" | "unknown" | null;
 }
+
+export type BackupFormat = "dashboard" | "dated-folder" | "archive";
 
 export interface BackupFile {
   name: string;
+  path: string;
+  root: string;
+  format: BackupFormat;
   bytes: number;
   mtime: string;
+  deletable: boolean;
+}
+
+export interface BackupsPayload {
+  roots: { path: string; exists: boolean; count: number }[];
+  backups: BackupFile[];
+  method: string;
+  format: string;
+  writeDir: string;
+}
+
+export interface ScriptsPayload {
+  dirs: { path: string; exists: boolean; count: number }[];
+  scripts: ScriptInfo[];
 }
 
 export interface Filesystem {
@@ -253,6 +275,7 @@ export interface ScriptRun {
 
 export interface ScriptInfo {
   name: string;
+  dir: string;
   kind: "python" | "shell";
   running: boolean;
   lastRun: ScriptRun | null;
@@ -348,7 +371,7 @@ export interface AppConfigPayload {
   timezone: string;
   logSources: LogSource[];
   alertSources: AlertSource[];
-  scriptsDir: string;
+  scriptsDirs: string[];
   contextFile: string;
   mcpScript: string;
   dashboardKey?: string;

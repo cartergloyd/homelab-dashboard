@@ -1,5 +1,6 @@
-// Maintenance scripts (*.py, *.sh) in SCRIPTS_DIR. Run from the ▶ buttons, from
-// a "script" job, or by an agent; every output line goes into the alerts feed.
+// Maintenance scripts (*.py, *.sh) in SCRIPTS_DIR (one or more folders). Run
+// from the ▶ buttons, from a "script" job, or by an agent; every output line
+// goes into the alerts feed. A missing folder is reported loudly, never silently.
 import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
@@ -7,7 +8,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
-import type { ScriptInfo, ScriptRun } from "../types.js";
+import type { ScriptInfo, ScriptRun, ScriptsPayload } from "../types.js";
 import { publish } from "./alerts.js";
 
 const NAME_RE = /^[\w.-]+\.(py|sh)$/;
@@ -31,6 +32,13 @@ export async function initScripts(): Promise<void> {
   } catch {
     runs = [];
   }
+  for (const dir of cfg.scriptsDirs) {
+    try {
+      await fsp.access(dir);
+    } catch {
+      publish({ source: "dashboard", kind: "log", level: "error", text: `Scripts folder not found: ${dir} — set SCRIPTS_DIR to the real folder(s)` });
+    }
+  }
 }
 
 async function saveRuns(): Promise<void> {
@@ -38,43 +46,59 @@ async function saveRuns(): Promise<void> {
   await fsp.writeFile(runsFile(), JSON.stringify(runs, null, 2)).catch(() => {});
 }
 
-export async function listScripts(): Promise<ScriptInfo[]> {
-  let names: string[] = [];
-  try {
-    names = (await fsp.readdir(cfg.scriptsDir)).filter((n) => NAME_RE.test(n)).sort();
-  } catch {
-    return [];
+export async function listScripts(): Promise<ScriptsPayload> {
+  const scripts: ScriptInfo[] = [];
+  const dirs: ScriptsPayload["dirs"] = [];
+  const seen = new Set<string>();
+  for (const dir of cfg.scriptsDirs) {
+    let names: string[] = [];
+    let ok = true;
+    try {
+      names = (await fsp.readdir(dir)).filter((n) => NAME_RE.test(n)).sort();
+    } catch {
+      ok = false;
+    }
+    for (const name of names) {
+      if (seen.has(name)) continue; // first folder wins on a name clash
+      seen.add(name);
+      scripts.push({ name, dir, kind: name.endsWith(".py") ? "python" : "shell", running: active.has(name), lastRun: runs.find((r) => r.script === name) ?? null });
+    }
+    dirs.push({ path: dir, exists: ok, count: names.length });
   }
-  return names.map((name) => ({
-    name,
-    kind: name.endsWith(".py") ? "python" : "shell",
-    running: active.has(name),
-    lastRun: runs.find((r) => r.script === name) ?? null,
-  }));
+  return { dirs, scripts };
 }
 
 export function listRuns(limit = 50): ScriptRun[] {
   return runs.slice(0, limit);
 }
 
-export async function startScript(name: string, trigger: ScriptRun["trigger"]): Promise<ScriptRun> {
+/** Resolves a script name to the first folder that contains it. */
+async function locate(name: string): Promise<{ dir: string; file: string }> {
   if (!NAME_RE.test(name)) throw new HttpError(400, "Script names must be plain *.py or *.sh file names");
-  const file = path.join(cfg.scriptsDir, name);
-  try {
-    await fsp.access(file);
-  } catch {
-    throw new HttpError(404, `${name} not found in ${cfg.scriptsDir}`);
+  for (const dir of cfg.scriptsDirs) {
+    const file = path.join(dir, name);
+    try {
+      await fsp.access(file);
+      return { dir, file };
+    } catch {
+      // next folder
+    }
   }
+  throw new HttpError(404, `${name} not found in ${cfg.scriptsDirs.join(", ")}`);
+}
+
+export async function startScript(name: string, trigger: ScriptRun["trigger"]): Promise<ScriptRun> {
+  const { dir, file } = await locate(name);
   if (active.has(name)) throw new HttpError(409, `${name} is already running`);
 
   const run: ScriptRun = { id: crypto.randomUUID(), script: name, trigger, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: 0 };
   // [INSTALLER] Scripts run as the `homelab` service user with `python3`/`bash`
-  // from PATH, cwd = SCRIPTS_DIR. The owner's real scripts may expect a different
-  // user, a venv, or sudo — check their shebangs/imports and either adjust the
-  // unit/sudoers or keep them on cron (wrapped with hl-run) instead of here.
+  // from PATH, cwd = the script's folder. The owner's real scripts may expect a
+  // different user, a venv, or sudo — check their shebangs/imports and either
+  // adjust the unit/sudoers or keep them on their timer (wrapped with hl-run).
   const isPython = name.endsWith(".py");
   const child = spawn(isPython ? "python3" : "bash", isPython ? ["-u", file] : [file], {
-    cwd: cfg.scriptsDir,
+    cwd: dir,
     env: { ...process.env, PYTHONUNBUFFERED: "1", HOMELAB_URL: `http://${cfg.host}:${cfg.port}`, HOMELAB_KEY: cfg.dashboardKey ?? "" },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -118,7 +142,7 @@ export async function startScript(name: string, trigger: ScriptRun["trigger"]): 
   return run;
 }
 
-/** Runs a script and waits for it (jobs, MCP). Kills it after `timeoutMs`. */
+/** Runs a script and waits for it (jobs, MCP, BACKUP_METHOD=script). Kills it after `timeoutMs`. */
 export async function runScriptAndWait(name: string, trigger: ScriptRun["trigger"], timeoutMs = 10 * 60_000): Promise<{ run: ScriptRun; tail: string[] }> {
   const run = await startScript(name, trigger);
   const entry = active.get(name);

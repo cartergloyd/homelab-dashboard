@@ -54,8 +54,13 @@ const Env = z.object({
   RCON_HOST: z.string().default("127.0.0.1"),
   RCON_PORT: z.coerce.number().default(25575),
   RCON_PASSWORD: z.string().optional(),
+  // One or more backup roots (comma-separated). The first is where built-in backups are written.
   BACKUP_DIR: z.string().default("/var/backups/minecraft"),
   BACKUP_KEEP: z.coerce.number().default(7),
+  // builtin | script:<name>  — what "Back up now" and backup jobs run
+  BACKUP_METHOD: z.string().default("builtin"),
+  // archive = mc-YYYYMMDD-HHMMSS.tar.gz · dated-folder = mcworld_YYYY_MM_DD/<world>.tar.gz
+  BACKUP_FORMAT: z.enum(["archive", "dated-folder"]).default("archive"),
 
   DIRECTUS_URL: z.string().default("http://127.0.0.1:8055"),
   DIRECTUS_PUBLIC_URL: z.string().optional(),
@@ -69,7 +74,7 @@ const Env = z.object({
 
   // Locally generated password for scripts and the MCP connector (NOT an AI API key)
   DASHBOARD_KEY: z.string().optional(),
-  // Folder of maintenance scripts (*.py, *.sh) shown as ▶ buttons and runnable as jobs
+  // Folder(s) of maintenance scripts (*.py, *.sh), comma-separated, shown as ▶ buttons and runnable as jobs
   SCRIPTS_DIR: z.string().default("/opt/homelab-scripts"),
   // The instructions file agents read; edited from the Assistant widget
   CONTEXT_FILE: z.string().optional(),
@@ -90,6 +95,14 @@ const Env = z.object({
 });
 
 const env = Env.parse(process.env);
+
+/** Comma-separated paths; each may contain spaces (quote the whole value in the env file). */
+const splitPaths = (v: string): string[] =>
+  v
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean)
+    .map((p) => path.resolve(p));
 
 function parseRoots(items: string[]): MediaRoot[] {
   return items.map((item) => {
@@ -123,7 +136,15 @@ export const cfg = {
     publicAddress: env.MC_PUBLIC_ADDRESS ?? null,
     rcon: { host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD },
   },
-  backups: { dir: env.BACKUP_DIR, keep: env.BACKUP_KEEP },
+  backups: {
+    dirs: splitPaths(env.BACKUP_DIR),
+    get dir(): string {
+      return this.dirs[0];
+    },
+    keep: env.BACKUP_KEEP,
+    method: env.BACKUP_METHOD,
+    format: env.BACKUP_FORMAT,
+  },
   directus: {
     url: env.DIRECTUS_URL.replace(/\/$/, ""),
     publicUrl: (env.DIRECTUS_PUBLIC_URL ?? env.DIRECTUS_URL).replace(/\/$/, ""),
@@ -132,7 +153,10 @@ export const cfg = {
   postgres: { url: env.PG_URL, container: env.POSTGRES_CONTAINER },
   dashboardService: env.DASHBOARD_SERVICE,
   dashboardKey: (env.DASHBOARD_KEY ?? null) as string | null,
-  scriptsDir: env.SCRIPTS_DIR,
+  scriptsDirs: splitPaths(env.SCRIPTS_DIR),
+  get scriptsDir(): string {
+    return this.scriptsDirs[0];
+  },
   // dist/config.js → server/dist → server → repo root (wherever the repo is installed)
   repoRoot: path.resolve(here, "../.."),
   contextFile: env.CONTEXT_FILE ?? path.resolve(here, "../../CLAUDE.md"),
