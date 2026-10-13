@@ -7,6 +7,7 @@ import { DialogProvider, ToastProvider } from "./components/ui";
 import type { AppConfigPayload } from "./types";
 import { Dashboard } from "./pages/Dashboard";
 import { Database } from "./pages/Database";
+import { Vpn } from "./pages/Vpn";
 import { MediaPage, MinecraftPage, SystemPage } from "./pages/groups";
 
 const queryClient = new QueryClient({
@@ -18,6 +19,7 @@ const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: "/media", label: "Media", icon: "film" },
   { to: "/database", label: "Database", icon: "database" },
   { to: "/minecraft", label: "Minecraft", icon: "cube" },
+  { to: "/vpn", label: "VPN", icon: "shield" },
   { to: "/system", label: "System", icon: "pulse" },
 ];
 
@@ -129,6 +131,7 @@ function Shell() {
             <Route path="/media" element={<MediaPage />} />
             <Route path="/database" element={<Database />} />
             <Route path="/minecraft" element={<MinecraftPage />} />
+            <Route path="/vpn" element={<Vpn />} />
             <Route path="/system" element={<SystemPage />} />
             {/* old per-page URLs */}
             <Route path="/jellyfin" element={<Navigate to="/media#jellyfin" replace />} />

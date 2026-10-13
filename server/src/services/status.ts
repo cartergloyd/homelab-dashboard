@@ -7,6 +7,7 @@ import { pgStats } from "./postgres.js";
 import { pingServer } from "./slp.js";
 import { unitState } from "./systemd.js";
 import { tailscaleStatus } from "./tailscale.js";
+import { vpnStatus } from "./vpn.js";
 import type { ServiceState, ServiceStatus, StatusPayload } from "../types.js";
 
 let cache: { at: number; payload: StatusPayload } | null = null;
@@ -59,13 +60,22 @@ async function checkTailscale(): Promise<ServiceStatus> {
   return result("tailscale", "Tailscale", ts.self?.online === false ? "down" : "ok", ts.self?.online === false ? "This node is offline" : detail, Date.now() - t);
 }
 
+async function checkVpn(): Promise<ServiceStatus> {
+  const t = Date.now();
+  const v = await vpnStatus();
+  const where = v.exit ? [v.exit.city, v.exit.country].filter(Boolean).join(", ") : null;
+  if (v.state === "connected") return result("vpn", "VPN", "ok", `${v.provider ?? "VPN"} up${where ? ` · exit ${where}` : ""}${v.notes.length ? ` · ${v.notes.length} note${v.notes.length === 1 ? "" : "s"}` : ""}`, Date.now() - t);
+  if (v.state === "disconnected") return result("vpn", "VPN", "down", `${v.provider ?? "VPN"} disconnected — traffic exits via the ISP${v.home ? ` (${v.home.org ?? v.home.ip})` : ""}`, Date.now() - t);
+  return result("vpn", "VPN", "unavailable", v.provider ? `${v.provider} detected but state unknown` : "No VPN client or interface detected");
+}
+
 function checkDashboard(): ServiceStatus {
   return result("dashboard", "Dashboard", "ok", `Up ${fmtDuration(process.uptime())} · ${fmtBytes(process.memoryUsage().rss)} RSS${cfg.demo ? " · demo mode" : ""}`, 0);
 }
 
 export async function getStatus(): Promise<StatusPayload> {
   if (cache && Date.now() - cache.at < 5000) return cache.payload;
-  const services = await Promise.all([checkDashboard(), checkTailscale(), checkJellyfin(), checkMinecraft(), checkDirectus(), checkPostgres()]);
+  const services = await Promise.all([checkDashboard(), checkTailscale(), checkVpn(), checkJellyfin(), checkMinecraft(), checkDirectus(), checkPostgres()]);
   const payload: StatusPayload = { services, generatedAt: new Date().toISOString(), demo: cfg.demo };
   cache = { at: Date.now(), payload };
   return payload;

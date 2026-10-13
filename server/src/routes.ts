@@ -22,6 +22,7 @@ import { getRules, listAgents, publish, query, summary, touchAgent } from "./ser
 import { listRuns as listScriptRuns, listScripts, startScript } from "./services/scripts.js";
 import { getVersion, listHistory, readContext, restoreVersion, writeContext } from "./services/context.js";
 import { addReport, listReports, setReviewed } from "./services/reports.js";
+import { vpnStatus } from "./services/vpn.js";
 import type { AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
 export const api = express.Router();
@@ -387,6 +388,10 @@ api.post("/storage/refresh", async (_req, res) => {
 
 api.get("/tailscale", async (_req, res) => {
   res.json(await tailscaleStatus());
+});
+
+api.get("/vpn", async (req, res) => {
+  res.json(await vpnStatus(req.query.refresh === "1"));
 });
 
 api.get("/logs/sources", (_req, res) => {

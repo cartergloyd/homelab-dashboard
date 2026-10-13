@@ -296,6 +296,50 @@ export interface ContextVersion extends ContextHistoryEntry {
   diff: DiffLine[];
 }
 
+// ---- VPN -----------------------------------------------------------------
+
+export interface GeoInfo {
+  ip: string;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  org: string | null;
+  timezone: string | null;
+  hostname: string | null;
+}
+
+export type VpnPath = "bypass" | "vpn" | "isp" | "local" | "unknown";
+
+export interface VpnServicePath {
+  name: string;
+  port: string;
+  path: VpnPath;
+  evidence: string;
+  advice: string;
+  needed: "required" | "recommended" | "optional" | "none";
+}
+
+export interface VpnPayload {
+  checkedAt: string;
+  state: "connected" | "disconnected" | "unknown";
+  provider: string | null;
+  protocol: string | null;
+  iface: string | null;
+  endpoint: { host: string; port: number | null; geo: GeoInfo | null } | null;
+  exit: GeoInfo | null;
+  home: GeoInfo | null;
+  handshakeAgoSec: number | null;
+  transfer: { rxBytes: number; txBytes: number } | null;
+  connectedSince: string | null;
+  killSwitch: boolean | null;
+  dns: string[];
+  dnsNote: string | null;
+  defaultRouteDev: string | null;
+  services: VpnServicePath[];
+  diagnostics: Record<string, string>;
+  notes: string[];
+}
+
 export interface AppConfigPayload {
   demo: boolean;
   user: { login: string; name: string };

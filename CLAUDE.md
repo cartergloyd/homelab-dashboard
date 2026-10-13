@@ -106,6 +106,10 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 - [x] **Step 6** MCP server (`server/src/mcp.ts`), `.mcp.json`, registration docs
 - [x] Maintenance reports: agents file brief write-ups (`submit_report`), owner marks
       them reviewed (`services/reports.ts`, `ReportsCard`)
+- [x] VPN tab: state, provider/protocol, exit IP + location, datacenter (endpoint geo),
+      handshake/transfer, DNS, kill switch, and a per-service traffic map (bypass /
+      through VPN) with advice. Provider-agnostic probing; `[INSTALLER]` placeholders.
+- [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
 - [ ] Codex registration syntax verified against current docs (marked "verify" in UI/docs)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -148,6 +152,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   repo's, so smoke tests can write freely.
 - 2026-10-13 Seeded jobs start **disabled**. The owner already has backup/restart
   scripts; the dashboard must not add a second nightly backup on its own.
+- 2026-10-13 VPN: the server runs a VPN with split-tunnel exceptions for Minecraft and
+  Jellyfin; the client and mechanism are unknown, so `services/vpn.ts` probes (CLIs,
+  WireGuard, ip rule, nft/iptables marks, geo) rather than assuming. Guidance baked into
+  the traffic map: Tailscale MUST bypass (it carries the dashboard), Directus/Dashboard
+  ride on Tailscale, Postgres is loopback-only, Minecraft needs a bypass, Jellyfin only
+  if reached from the internet. The page is read-only on purpose until the real client
+  is known.
 - 2026-10-13 **The live server keeps its existing semi-weekly restart + backup
   motion (cron + Python scripts) unchanged.** The dashboard mirrors them as
   `external` jobs — real cron expressions, display-only — and the cron commands are

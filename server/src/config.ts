@@ -75,6 +75,18 @@ const Env = z.object({
   CONTEXT_FILE: z.string().optional(),
   // Which log sources the alerts hub tails continuously (default: all)
   ALERT_SOURCES: csv,
+
+  // --- VPN tab -----------------------------------------------------------
+  // [INSTALLER] The VPN software on the server is UNKNOWN. These are hooks for
+  // whatever is actually installed; leave VPN_PROVIDER=auto to let the dashboard
+  // probe for mullvad / nordvpn / protonvpn CLIs and WireGuard/tun interfaces.
+  VPN_PROVIDER: z.enum(["auto", "mullvad", "nordvpn", "protonvpn", "wireguard", "openvpn", "none"]).default("auto"),
+  VPN_INTERFACE: z.string().optional(), // e.g. wg0-mullvad, nordlynx, tun0
+  VPN_LAN_INTERFACE: z.string().optional(), // e.g. eth0 — lets the dashboard show the home ISP IP for comparison
+  VPN_GEO_URL: z.string().default("https://ipinfo.io"), // geolocation API; {url}/json and {url}/<ip>/json
+  VPN_GEO_TOKEN: z.string().optional(),
+  // Declared split-tunnel exceptions when detection can't see them: "Minecraft=25565/tcp,Jellyfin=8096/tcp"
+  VPN_EXCEPTIONS: csv,
 });
 
 const env = Env.parse(process.env);
@@ -124,6 +136,17 @@ export const cfg = {
   // dist/config.js → server/dist → server → repo root (wherever the repo is installed)
   repoRoot: path.resolve(here, "../.."),
   contextFile: env.CONTEXT_FILE ?? path.resolve(here, "../../CLAUDE.md"),
+  vpn: {
+    provider: env.VPN_PROVIDER,
+    iface: env.VPN_INTERFACE ?? null,
+    lanIface: env.VPN_LAN_INTERFACE ?? null,
+    geoUrl: env.VPN_GEO_URL.replace(/\/$/, ""),
+    geoToken: env.VPN_GEO_TOKEN ?? null,
+    declaredExceptions: env.VPN_EXCEPTIONS.map((item) => {
+      const [name, port] = item.split("=");
+      return { name: (name ?? "").trim(), port: (port ?? "").trim() };
+    }).filter((e) => e.name && e.port),
+  },
   alertSources: (env.ALERT_SOURCES.length
     ? env.ALERT_SOURCES.filter((s): s is LogSource => (ALL_LOG_SOURCES as string[]).includes(s))
     : ALL_LOG_SOURCES) as LogSource[],

@@ -19,11 +19,13 @@ import type {
   DatabasePayload,
   Filesystem,
   FolderUsage,
+  GeoInfo,
   JellyfinPayload,
   LogSource,
   McPing,
   TailscalePayload,
   UnitState,
+  VpnPayload,
 } from "./types.js";
 
 const startedAt = Date.now();
@@ -308,6 +310,67 @@ export function tailscale(): TailscalePayload {
       peer("living-room-tv", "android", "100.101.1.4", false, false, 95),
       peer("work-laptop", "windows", "100.101.1.5", false, false, 1440),
     ],
+  };
+}
+
+// ---- vpn -----------------------------------------------------------------
+
+export function vpn(): VpnPayload {
+  const zurich: GeoInfo = { ip: "185.213.155.72", city: "Zürich", region: "Zürich", country: "CH", org: "AS39351 31173 Services AB", timezone: "Europe/Zurich", hostname: "ch-zrh-wg-203.relays.mullvad.net" };
+  const home: GeoInfo = { ip: "73.164.22.9", city: "St. Louis", region: "Missouri", country: "US", org: "AS7922 Comcast Cable Communications, LLC", timezone: "America/Chicago", hostname: null };
+  const advice = (name: string) => {
+    switch (name) {
+      case "Minecraft":
+        return "Players connect to your home IP (port forward). Replies must leave via the ISP, not the VPN, or connections hang — this port needs a bypass rule.";
+      case "Jellyfin":
+        return "Only needed if people reach Jellyfin from the open internet. Over Tailscale it works without any VPN exception.";
+      case "Tailscale":
+        return "Must stay outside the VPN. Tailscale carries this dashboard, Directus and SSH; if the VPN's kill switch/firewall blocks tailscale0, UDP 41641 or 100.64.0.0/10 you lose remote access.";
+      case "Directus":
+        return "Reached only over Tailscale, so it rides on the Tailscale exception. No separate rule.";
+      case "PostgreSQL":
+        return "Bound to 127.0.0.1 — never leaves the machine. Nothing to except.";
+      case "Dashboard":
+        return "Loopback + tailscale serve — rides on the Tailscale exception.";
+      default:
+        return "Over Tailscale nothing is needed. If you also SSH in from the internet, it needs a bypass like Minecraft.";
+    }
+  };
+  const row = (name: string, port: string, path: VpnPayload["services"][number]["path"], evidence: string, needed: VpnPayload["services"][number]["needed"]) => ({ name, port, path, evidence, advice: advice(name), needed });
+  return {
+    checkedAt: new Date().toISOString(),
+    state: "connected",
+    provider: "Mullvad",
+    protocol: "WireGuard",
+    iface: "wg0-mullvad",
+    endpoint: { host: "185.213.155.66", port: 51820, geo: { ...zurich, ip: "185.213.155.66" } },
+    exit: zurich,
+    home,
+    handshakeAgoSec: 37,
+    transfer: { rxBytes: 48.2 * 1024 ** 3, txBytes: 6.1 * 1024 ** 3 },
+    connectedSince: new Date(Date.now() - 3 * 86400_000 - 4 * 3600_000).toISOString(),
+    killSwitch: true,
+    dns: ["10.64.0.1"],
+    dnsNote: "DNS goes to a private address (VPN-provided or your router) — not leaking to the ISP's public resolvers.",
+    defaultRouteDev: "wg0-mullvad",
+    services: [
+      row("Minecraft", "25565/tcp", "bypass", 'Found "25565" in routing/firewall rules (fwmark 0xca6c → table main).', "required"),
+      row("Jellyfin", "8096/tcp", "bypass", 'Found "8096" in routing/firewall rules (fwmark 0xca6c → table main).', "optional"),
+      row("Tailscale", "41641/udp · 100.64.0.0/10", "bypass", "Tailscale policy routing (table 52 / fwmark 0x80000) is present.", "required"),
+      row("Directus", "8055/tcp", "bypass", "Carried inside Tailscale, whose policy routing (table 52) is active.", "none"),
+      row("PostgreSQL", "5432/tcp (127.0.0.1)", "local", "Bound to loopback.", "none"),
+      row("Dashboard", "3000/tcp (127.0.0.1)", "bypass", "Carried inside Tailscale, whose policy routing (table 52) is active.", "none"),
+      row("SSH", "22/tcp", "vpn", "Default route is wg0-mullvad; no rule mentions this port.", "recommended"),
+    ],
+    diagnostics: {
+      "ip rule": "0:\tfrom all lookup local\n5210:\tfrom all fwmark 0x80000/0xff0000 lookup main\n5230:\tfrom all fwmark 0x80000/0xff0000 lookup default\n5250:\tfrom all fwmark 0x80000/0xff0000 unreachable\n5270:\tfrom all lookup 52\n32764:\tfrom all lookup main suppress_prefixlength 0\n32765:\tnot from all fwmark 0xca6c lookup 51820\n32766:\tfrom all lookup main\n32767:\tfrom all lookup default",
+      "ip route default": "default via wg0-mullvad",
+      interfaces: "lo UNKNOWN\neth0 UP\ndocker0 UP bridge\ntailscale0 UNKNOWN tun\nwg0-mullvad UNKNOWN wireguard",
+      "wg show all dump": "wg0-mullvad\t<key>\t<key>\t51820\t51820\nwg0-mullvad\t<key>\t(none)\t185.213.155.66:51820\t0.0.0.0/0,::/0\t1760388000\t51754931200\t6549000000\t25",
+      "firewall (mangle/nft)": "-A OUTPUT -p tcp -m tcp --sport 25565 -j MARK --set-xmark 0xca6c/0xffffffff\n-A OUTPUT -p tcp -m tcp --sport 8096 -j MARK --set-xmark 0xca6c/0xffffffff",
+      "Mullvad CLI": "Connected to ch-zrh-wg-203 in Zürich, Switzerland\nLockdown mode: on",
+    },
+    notes: [],
   };
 }
 

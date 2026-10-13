@@ -48,6 +48,7 @@ Resolve each hit against the live server and tick it off. The main ones:
 | `deploy/homelab-dashboard.service` | `/opt/homelab-dashboard`, `/usr/bin/node` | real install path, `which node` |
 | `deploy/homelab-dashboard.env.example`, `.env.example` | every value | real values |
 | `docker-compose.yml` | ports, image tags, container names | check free ports and current tags; names must match the dashboard env |
+| `server/src/services/vpn.ts`, `VPN_*` env | provider probing, interface names, service list for the traffic map | the real VPN client/interface and how its exceptions are implemented (§ 6d) |
 
 The demo you may have seen running is **not** a picture of this server. When the demo and
 the live machine disagree, the live machine is right and the code/config gets corrected.
@@ -295,6 +296,38 @@ script's lines (via hl-run), then `✔ backup_world.py exited 0 (terminal)`, and
 last run reads `OK — Ran via cron: …`. If instead it reads `No output from … within N min`,
 the cron entry is not wrapped with hl-run yet (or `HOMELAB_KEY` is missing in cron's env).
 `Run now` is intentionally absent for external jobs; start them from cron/the shell.
+
+## 6d. VPN tab
+
+The owner runs a VPN on this server with split-tunnel exceptions (at least Minecraft and
+Jellyfin bypass it). **Which VPN software, and how the exceptions are implemented, is
+unknown** — the VPN page is built to probe and will say "Unknown" where it cannot see.
+Make it accurate:
+
+1. Identify the client: `which mullvad nordvpn protonvpn-cli protonvpn expressvpn wg openvpn`,
+   `ip -d link` (look for `wireguard` / `tun` interfaces that are not `tailscale0`),
+   `systemctl list-units | grep -i -E "vpn|wg-quick|openvpn"`. Set `VPN_PROVIDER` and
+   `VPN_INTERFACE` in `/etc/homelab-dashboard.env`; set `VPN_LAN_INTERFACE` to the
+   physical NIC (`ip route show default` when the VPN is down).
+2. Grant read-only inspection in `/etc/sudoers.d/homelab` (uncomment the matching lines in
+   `deploy/sudoers-homelab`): `wg show all dump` for handshake/endpoint/transfer, and
+   `nft list ruleset` or `iptables -t mangle -S` so port-based bypass rules are detected.
+3. Find how the exceptions are done today: `ip rule show` (fwmark rules), the firewall
+   mangle table (marks on `--sport 25565` / `8096`), the provider's own allowlist
+   (`nordvpn settings`, `mullvad split-tunnel …`), or a per-user routing table. If the
+   dashboard cannot see them, declare them: `VPN_EXCEPTIONS=Minecraft=25565/tcp,Jellyfin=8096/tcp`.
+   Record the mechanism in `CLAUDE.md` → Decisions log.
+4. **Check Tailscale is outside the VPN.** The dashboard, Directus and remote SSH all ride
+   on Tailscale; a VPN kill switch that blocks `tailscale0`, UDP 41641 or `100.64.0.0/10`
+   takes them all down. Verify from another tailnet device that the dashboard stays
+   reachable with the VPN connected *and* right after a VPN reconnect.
+5. Geolocation: the page calls `VPN_GEO_URL` (default ipinfo.io) once per IP, cached an
+   hour. It sends only the IP being looked up. If the owner prefers no third-party calls,
+   point it at a self-hosted service or leave the fields showing "–".
+
+Verify: VPN page shows Connected, an exit location that is **not** the home city, the
+endpoint's datacenter, a recent handshake, and the traffic map marks Minecraft, Jellyfin
+and Tailscale as *Bypasses VPN* with no red "exception missing" pill.
 
 ## 7. Expose over Tailscale (HTTPS + identity)
 

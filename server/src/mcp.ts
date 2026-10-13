@@ -117,6 +117,12 @@ server.registerTool(
 
 server.registerTool("storage", { title: "Storage", description: "Filesystem usage (df) and measured folder sizes (du).", inputSchema: {} }, async () => text(await call("GET", "/api/storage")));
 
+server.registerTool(
+  "vpn_status",
+  { title: "VPN status", description: "Is the VPN up, provider/protocol, exit IP and location, handshake, DNS, and which services bypass it (Minecraft, Jellyfin, Tailscale…) with evidence and advice. Includes raw routing/firewall diagnostics.", inputSchema: {} },
+  async () => text(await call("GET", "/api/vpn?refresh=1")),
+);
+
 // ---- act --------------------------------------------------------------------
 
 server.registerTool(

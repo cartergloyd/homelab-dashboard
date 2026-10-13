@@ -6,3 +6,10 @@
 # will run from the dashboard and need root for anything else, add exact-argument rules
 # for those commands here — never widen to ALL.
 homelab ALL=(root) NOPASSWD: /usr/bin/systemctl start minecraft.service, /usr/bin/systemctl stop minecraft.service, /usr/bin/systemctl restart minecraft.service
+
+# [INSTALLER] VPN tab — read-only inspection. Uncomment the lines that match what is
+# installed (check paths with `which wg nft iptables`). Without them the VPN page still
+# works but shows "Unknown" for handshake/transfer and for port bypass detection.
+# homelab ALL=(root) NOPASSWD: /usr/bin/wg show all dump
+# homelab ALL=(root) NOPASSWD: /usr/sbin/nft list ruleset
+# homelab ALL=(root) NOPASSWD: /usr/sbin/iptables -t mangle -S
