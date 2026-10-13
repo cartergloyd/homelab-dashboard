@@ -2,11 +2,13 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useAppConfig } from "../App";
+import { AlertsFeed } from "../components/AlertsFeed";
+import { AssistantWidget } from "../components/AssistantWidget";
 import { Icons } from "../components/icons";
-import { LogViewer } from "../components/LogViewer";
-import { Card, ErrorNotice, PageHead, StatTile, StatusPill, unitToState, useDialog, useToast } from "../components/ui";
-import { fmtBytes, fmtUptime } from "../format";
-import type { MinecraftPayload } from "../types";
+import { Card, ErrorNotice, PageHead, StatusPill, unitToState, useDialog, useToast } from "../components/ui";
+import { fmtBytes, fmtRelative, fmtUptime } from "../format";
+import type { MinecraftPayload, ScriptInfo, ScriptRun } from "../types";
 
 interface ConsoleEntry {
   cmd: string;
@@ -19,7 +21,17 @@ export function Minecraft() {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm } = useDialog();
+  const config = useAppConfig();
   const q = useQuery({ queryKey: ["minecraft"], queryFn: () => api.get<MinecraftPayload>("/minecraft"), refetchInterval: 5000 });
+  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptInfo[]>("/scripts"), refetchInterval: 4000 });
+  const runScript = useMutation({
+    mutationFn: (name: string) => api.post<ScriptRun>(`/scripts/${encodeURIComponent(name)}/run`),
+    onSuccess: (_r, name) => {
+      toast(`${name} started — output is in the feed below`);
+      qc.invalidateQueries({ queryKey: ["scripts"] });
+    },
+    onError: (e: Error) => toast(e.message, "error"),
+  });
   const [cmd, setCmd] = useState("");
   const [history, setHistory] = useState<ConsoleEntry[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,44 +82,53 @@ export function Minecraft() {
           )
         }
         actions={
-          <>
-            <button className="btn primary" disabled={running || action.isPending} onClick={() => action.mutate("start")}>
-              <Icons.play width={14} height={14} /> Start
-            </button>
-            <button className="btn" disabled={!running || action.isPending} onClick={() => guarded("restart")}>
-              <Icons.refresh width={14} height={14} /> Restart
-            </button>
-            <button className="btn danger" disabled={!running || action.isPending} onClick={() => guarded("stop")}>
-              <Icons.stop width={14} height={14} /> Stop
-            </button>
-            <Link className="btn" to="/minecraft#maintenance">
-              <Icons.clock width={14} height={14} /> Maintenance
-            </Link>
-          </>
+          <div className="stack" style={{ alignItems: "flex-end", gap: 8 }}>
+            <div className="status-strip" title={d?.players?.names.length ? `Online: ${d.players.names.join(", ")}` : undefined}>
+              <StatusPill state={state} label={d ? (d.ping ? "Online" : active === "active" ? "Starting" : active ?? "Unknown") : "Checking"} />
+              <span>
+                <span className="muted">Players</span> {d?.players ? `${d.players.online}/${d.players.max}` : d?.ping ? `${d.ping.online}/${d.ping.max}` : "–"}
+              </span>
+              <span>
+                <span className="muted">Memory</span> {d?.unit?.memoryBytes ? fmtBytes(d.unit.memoryBytes) : "–"}
+              </span>
+              <span>
+                <span className="muted">Up</span> {d?.unit ? fmtUptime(d.unit.since) : "–"}
+              </span>
+              {d?.ping && <span className="muted">{d.ping.latencyMs} ms</span>}
+            </div>
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <button className="btn primary" disabled={running || action.isPending} onClick={() => action.mutate("start")}>
+                <Icons.play width={14} height={14} /> Start
+              </button>
+              <button className="btn" disabled={!running || action.isPending} onClick={() => guarded("restart")}>
+                <Icons.refresh width={14} height={14} /> Restart
+              </button>
+              <button className="btn danger" disabled={!running || action.isPending} onClick={() => guarded("stop")}>
+                <Icons.stop width={14} height={14} /> Stop
+              </button>
+              <Link className="btn" to="/minecraft#maintenance">
+                <Icons.clock width={14} height={14} /> Maintenance
+              </Link>
+            </div>
+          </div>
         }
       />
       <ErrorNotice error={q.error} />
       {d && !d.rcon.ok && running && <div className="notice" style={{ marginBottom: 14 }}>RCON unavailable: {d.rcon.error}. Player list and console need RCON enabled in server.properties.</div>}
 
-      <div className="grid" style={{ marginBottom: 14 }}>
-        <div className="card tile">
-          <div className="tile-label">Server</div>
-          <div className="row" style={{ marginTop: 4 }}>
-            <StatusPill state={state} label={d ? (d.ping ? "Online" : active === "active" ? "Starting" : active ?? "Unknown") : "Checking"} />
-            {d?.ping && <span className="muted small">{d.ping.latencyMs} ms</span>}
-          </div>
-          <div className="tile-sub">{d?.unit ? `Up ${fmtUptime(d.unit.since)}${d.unit.pid ? ` · PID ${d.unit.pid}` : ""}` : "No systemd unit visible"}</div>
+      <div className="alerts-layout">
+        <div>
+          <h3 style={{ marginBottom: 8 }}>Live server alerts</h3>
+          <AlertsFeed height={520} />
         </div>
-        <StatTile
-          label="Players online"
-          value={d?.players ? `${d.players.online} / ${d.players.max}` : d?.ping ? `${d.ping.online} / ${d.ping.max}` : "–"}
-          sub={d?.players?.names.length ? d.players.names.join(", ") : running ? "Nobody online" : "Server offline"}
-        />
-        <StatTile label="Memory" value={d?.unit?.memoryBytes ? fmtBytes(d.unit.memoryBytes) : "–"} sub="Java process (systemd)" />
+        <div>
+          <h3 style={{ marginBottom: 8 }}>Assistant</h3>
+          <AssistantWidget />
+        </div>
       </div>
 
-      <div className="grid wide">
-        <Card title="Console" className="span-2">
+      <div style={{ marginTop: 14 }}>
+        <Card title="Console">
           <form
             className="console"
             onSubmit={(e) => {
@@ -131,6 +152,27 @@ export function Minecraft() {
               </button>
             ))}
           </div>
+          <div className="row" style={{ marginTop: 10, gap: 6 }}>
+            <span className="small dim">Scripts:</span>
+            {scripts.data?.length === 0 && (
+              <span className="muted small">
+                none found in <span className="mono">{config.data?.scriptsDir}</span>
+              </span>
+            )}
+            {scripts.data?.map((s) => (
+              <button
+                key={s.name}
+                className="btn sm mono"
+                disabled={s.running || runScript.isPending}
+                title={s.lastRun ? `Last run ${fmtRelative(s.lastRun.startedAt)} · exit ${s.lastRun.exitCode ?? "?"} · ${s.lastRun.trigger}` : "Never run"}
+                onClick={() => runScript.mutate(s.name)}
+              >
+                {s.running ? <span className="spin">◌</span> : <Icons.play width={12} height={12} />}
+                {s.name}
+                {!s.running && s.lastRun && s.lastRun.exitCode !== null && s.lastRun.exitCode !== 0 && <span className="dot-err" title="Last run failed" />}
+              </button>
+            ))}
+          </div>
           {history.length > 0 && (
             <div className="console-out">
               {history.map((h) => (
@@ -142,11 +184,6 @@ export function Minecraft() {
             </div>
           )}
         </Card>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        <h3 style={{ marginBottom: 8 }}>Live server log</h3>
-        <LogViewer source="minecraft" height={380} />
       </div>
     </>
   );

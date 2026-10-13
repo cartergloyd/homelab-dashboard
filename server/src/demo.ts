@@ -1,6 +1,15 @@
 // DEMO=1 fixtures. Lets the whole UI run on a laptop with no Docker, systemd,
 // Tailscale, Jellyfin or Minecraft present. Files and backups still operate on
 // real (throwaway) directories under DATA_DIR/demo so those flows can be exercised.
+//
+// [INSTALLER] EVERYTHING IN THIS FILE IS DEMO ONLY. Nothing here runs on the
+// server unless DEMO=1 is set — never set DEMO or AUTH_DISABLED on the server.
+// The fake players, peers, filesystems, container names, the demo key
+// ("demo-key-not-secret") and the three sample scripts (backup_world.py,
+// restart_server.py, check_disk.py) are stand-ins. The real equivalents are:
+// the owner's existing Python scripts (point SCRIPTS_DIR at them or wrap their
+// cron lines with hl-run), the real DASHBOARD_KEY, and whatever `docker ps`,
+// `systemctl` and `tailscale status` actually report.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -51,11 +60,74 @@ export async function bootstrapDemo(): Promise<void> {
   await writeIfMissing(path.join(mc, "server.properties"), "enable-rcon=true\nrcon.port=25575\nmotd=Demo Paper server\n");
   await fs.mkdir(backups, { recursive: true });
 
+  // Stand-ins for the owner's Python maintenance scripts
+  const scripts = path.join(base, "scripts");
+  await writeIfMissing(
+    path.join(scripts, "backup_world.py"),
+    `import time
+steps = [
+    "Checking server status",
+    "Disabling world autosave (save-off)",
+    "Flushing world to disk (save-all flush)",
+    "Compressing world (12,480 files)",
+    "Compressing world_nether",
+    "Compressing world_the_end",
+    "Copying archive to backup drive",
+    "Re-enabling autosave (save-on)",
+    "Pruning backups older than 7 days",
+]
+print("== backup_world.py starting", flush=True)
+for i, step in enumerate(steps, 1):
+    print(f"[{i}/{len(steps)}] {step}...", flush=True)
+    time.sleep(0.6)
+    if i == 4:
+        for pct in range(0, 101, 25):
+            print(f"    {pct}% ({pct * 13} MB)", flush=True)
+            time.sleep(0.3)
+print("Backup complete: mc-20261013-040001.tar.gz (1.3 GB)", flush=True)
+`,
+  );
+  await writeIfMissing(
+    path.join(scripts, "restart_server.py"),
+    `import time
+print("Warning players: restarting in 10 seconds", flush=True); time.sleep(0.8)
+print("say Server restarting in 10 seconds", flush=True); time.sleep(0.8)
+print("Stopping server...", flush=True); time.sleep(1.2)
+print("[Server thread/INFO]: Saving players", flush=True)
+print("[Server thread/INFO]: Saving worlds", flush=True); time.sleep(0.8)
+print("Starting minecraft server version 1.21.8", flush=True); time.sleep(1.5)
+print("Preparing spawn area: 92%", flush=True); time.sleep(0.6)
+print("Done (8.2s)! For help, type \\"help\\"", flush=True)
+`,
+  );
+  await writeIfMissing(
+    path.join(scripts, "check_disk.py"),
+    `import sys, time
+print("Checking /srv/media ... 81% used", flush=True); time.sleep(0.5)
+print("WARNING: /srv/media is above 80%", flush=True); time.sleep(0.5)
+print("Checking /var/backups ...", flush=True); time.sleep(0.5)
+print("ERROR: backup drive /var/backups is not mounted", flush=True)
+sys.exit(1)
+`,
+  );
+
   if (!cfg.explicit.mediaRoots) {
     cfg.mediaRoots = Object.keys(sample).map((name) => ({ name, path: path.join(media, name) }));
   }
   if (!cfg.explicit.mcDir) cfg.minecraft.dir = mc;
   if (!cfg.explicit.backupDir) cfg.backups.dir = backups;
+  if (!cfg.explicit.scriptsDir) cfg.scriptsDir = scripts;
+  // Demo edits go to a copy, never the repo's real CLAUDE.md
+  if (!cfg.explicit.contextFile) {
+    const copy = path.join(base, "CLAUDE.md");
+    try {
+      await fs.access(copy);
+    } catch {
+      await fs.copyFile(cfg.contextFile, copy).catch(() => fs.writeFile(copy, "# Instructions (demo copy)\n"));
+    }
+    cfg.contextFile = copy;
+  }
+  cfg.dashboardKey ??= "demo-key-not-secret";
 }
 
 // ---- systemd -------------------------------------------------------------

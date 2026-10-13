@@ -52,6 +52,10 @@ export function describeCron(expr: string): string {
   if (time && dom === "*" && mon === "*" && dow === "*") return `Daily at ${time}`;
   if (time && dom === "*" && mon === "*" && /^\d$/.test(dow)) return `Every ${days[Number(dow)]} at ${time}`;
   if (time && dom === "*" && mon === "*" && dow === "1-5") return `Weekdays at ${time}`;
+  if (time && dom === "*" && mon === "*" && dow === "0,6") return `Weekends at ${time}`;
+  if (time && dom === "*" && mon === "*" && /^\d(,\d)+$/.test(dow)) return `${dow.split(",").map((d) => days[Number(d) % 7]).join(", ")} at ${time}`;
+  if (time && dom === "*" && mon === "*" && /^\d-\d$/.test(dow)) return `${days[Number(dow[0])]}–${days[Number(dow[2])]} at ${time}`;
+  if (time && /^\d+$/.test(dom) && mon === "*" && dow === "*") return `Monthly on day ${dom} at ${time}`;
   if (/^\*\/\d+$/.test(min) && hour === "*") return `Every ${min.slice(2)} min`;
   if (min === "0" && /^\*\/\d+$/.test(hour)) return `Every ${hour.slice(2)} hours`;
   return expr;

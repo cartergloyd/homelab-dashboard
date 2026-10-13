@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "homelab": {
+      "command": "node",
+      "args": ["server/dist/mcp.js"],
+      "env": {
+        "HOMELAB_URL": "${HOMELAB_URL:-http://127.0.0.1:3000}",
+        "HOMELAB_KEY": "${HOMELAB_KEY}"
+      }
+    }
+  }
+}

@@ -121,6 +121,17 @@ export const Icons = {
       <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />
     </svg>
   ),
+  spark: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />
+    </svg>
+  ),
+  plug: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base} {...p}>
+      <path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0z" />
+      <path d="M12 16v5" />
+    </svg>
+  ),
   chevron: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}>
       <path d="m6 9 6 6 6-6" />

@@ -1,5 +1,8 @@
 # The only privileged commands the dashboard may run. Exact arguments only.
 # Validate then install:
 #   visudo -cf deploy/sudoers-homelab && install -m 0440 deploy/sudoers-homelab /etc/sudoers.d/homelab
-# If `which systemctl` is /bin/systemctl on your distro, change the paths below to match.
+# [INSTALLER] placeholders: "minecraft.service" must be the REAL unit name (MC_SERVICE) and
+# "/usr/bin/systemctl" must match `which systemctl` on this distro. If the owner's scripts
+# will run from the dashboard and need root for anything else, add exact-argument rules
+# for those commands here — never widen to ALL.
 homelab ALL=(root) NOPASSWD: /usr/bin/systemctl start minecraft.service, /usr/bin/systemctl stop minecraft.service, /usr/bin/systemctl restart minecraft.service

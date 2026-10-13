@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAppConfig } from "../App";
 import { Icons } from "../components/icons";
+import { ReportsCard } from "../components/ReportsCard";
 import { Card, ErrorNotice, Meter, PageHead, StatTile, StatusPill, useDialog, useToast } from "../components/ui";
 import { fmtRelative } from "../format";
 import type { OverviewPayload } from "../types";
@@ -76,6 +77,10 @@ export function Dashboard() {
           value={d?.nextJob ? fmtRelative(d.nextJob.at) : "None"}
           sub={d?.nextJob ? d.nextJob.name : <Link to="/minecraft#maintenance">Set up maintenance</Link>}
         />
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <ReportsCard />
       </div>
 
       <div className="grid wide">

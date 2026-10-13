@@ -1,7 +1,10 @@
-# Template unit for a natively installed Paper server. Only needed if the server
-# is not already managed by systemd (e.g. it runs in screen/tmux today).
-# Adjust User, WorkingDirectory, the jar name and -Xmx before installing to
-# /etc/systemd/system/minecraft.service
+# [INSTALLER] PLACEHOLDER TEMPLATE — do not install blindly.
+# The live server already runs Paper. First check how: `systemctl list-units | grep -i mine`,
+# `ps -ef | grep -i paper`. If a unit already exists, use ITS name as MC_SERVICE and leave
+# this file alone (at most add KillSignal/TimeoutStopSec via `systemctl edit`).
+# Only if Paper runs from screen/tmux/a shell script: copy this file and replace every
+# placeholder (User, WorkingDirectory, jar name, -Xms/-Xmx) with the real values before
+# installing to /etc/systemd/system/minecraft.service.
 [Unit]
 Description=Paper Minecraft server
 After=network-online.target
@@ -9,6 +12,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# [INSTALLER] placeholders: real user/group, real server folder, real jar name and memory flags
 User=minecraft
 Group=minecraft
 WorkingDirectory=/opt/minecraft

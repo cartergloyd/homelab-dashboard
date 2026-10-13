@@ -35,7 +35,14 @@ export const api = {
   },
 };
 
+function wsBase(): string {
+  return `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}`;
+}
+
 export function logSocketUrl(source: string): string {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/ws/logs?source=${encodeURIComponent(source)}`;
+  return `${wsBase()}/ws/logs?source=${encodeURIComponent(source)}`;
+}
+
+export function alertsSocketUrl(): string {
+  return `${wsBase()}/ws/alerts`;
 }

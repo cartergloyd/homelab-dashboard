@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { logSocketUrl } from "../api";
+import { useEventSocket } from "../hooks/useEventSocket";
 import type { LogSource } from "../types";
-
-const MAX_LINES = 2000;
-
-type Conn = "connecting" | "open" | "closed";
 
 function lineClass(line: string): string {
   if (/\b(ERROR|SEVERE|FATAL|\[ERR|\[error\]|Exception)\b/i.test(line)) return "log-line err";
@@ -12,61 +9,20 @@ function lineClass(line: string): string {
   return "log-line";
 }
 
+type Msg = { type: "line"; line: string } | { type: "lines"; lines: string[] };
+const extract = (msg: unknown): string[] | null => {
+  const m = msg as Msg;
+  if (m.type === "line") return [m.line];
+  if (m.type === "lines") return m.lines;
+  return null;
+};
+
+/** Raw tail of one log source (System → Logs). */
 export function LogViewer({ source, height = 420 }: { source: LogSource; height?: number | string }) {
-  const [lines, setLines] = useState<string[]>([]);
-  const [conn, setConn] = useState<Conn>("connecting");
-  const [paused, setPaused] = useState(false);
+  const { items: lines, conn, paused, setPaused, clear } = useEventSocket<string>(logSocketUrl(source), extract, 2000);
   const [follow, setFollow] = useState(true);
   const [filter, setFilter] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
-  const pausedRef = useRef(paused);
-  pausedRef.current = paused;
-
-  useEffect(() => {
-    setLines([]);
-    setConn("connecting");
-    let ws: WebSocket | null = null;
-    let closed = false;
-    let retry: ReturnType<typeof setTimeout> | null = null;
-    let pending: string[] = [];
-    let flush: ReturnType<typeof setTimeout> | null = null;
-
-    const connect = () => {
-      ws = new WebSocket(logSocketUrl(source));
-      ws.onopen = () => setConn("open");
-      ws.onmessage = (ev) => {
-        if (pausedRef.current) return;
-        try {
-          const msg = JSON.parse(ev.data as string) as { type: string; line: string };
-          if (msg.type !== "line") return;
-          pending.push(msg.line);
-          flush ??= setTimeout(() => {
-            flush = null;
-            const batch = pending;
-            pending = [];
-            setLines((prev) => {
-              const next = prev.concat(batch);
-              return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
-            });
-          }, 80);
-        } catch {
-          // ignore malformed frames
-        }
-      };
-      ws.onclose = () => {
-        setConn("closed");
-        if (!closed) retry = setTimeout(connect, 3000);
-      };
-      ws.onerror = () => ws?.close();
-    };
-    connect();
-    return () => {
-      closed = true;
-      if (retry) clearTimeout(retry);
-      if (flush) clearTimeout(flush);
-      ws?.close();
-    };
-  }, [source]);
 
   useEffect(() => {
     if (follow && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
@@ -97,7 +53,7 @@ export function LogViewer({ source, height = 420 }: { source: LogSource; height?
         <button className="btn sm" onClick={() => setPaused((p) => !p)}>
           {paused ? "Resume" : "Pause"}
         </button>
-        <button className="btn sm ghost" onClick={() => setLines([])}>
+        <button className="btn sm ghost" onClick={clear}>
           Clear
         </button>
       </div>

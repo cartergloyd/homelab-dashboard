@@ -9,17 +9,19 @@ import { z } from "zod";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import { fmtBytes, sleepUntil } from "../util.js";
+import { publish, query, waitForEvent } from "./alerts.js";
 import { runBackup } from "./backups.js";
 import { getPlayers } from "./minecraft.js";
 import { rconCommand, stripColour } from "./rcon.js";
+import { runScriptAndWait } from "./scripts.js";
 import { unitAction, unitState } from "./systemd.js";
-import type { Job, JobRun, JobView } from "../types.js";
+import type { AlertEvent, Job, JobRun, JobView } from "../types.js";
 
 type Task = ReturnType<typeof schedule>;
 
 export const JobInput = z.object({
   name: z.string().trim().min(1).max(80),
-  type: z.enum(["restart", "backup", "command"]),
+  type: z.enum(["restart", "backup", "command", "script", "external"]),
   cron: z.string().trim().refine((c) => validate(c), "Invalid cron expression"),
   enabled: z.boolean().default(true),
   options: z
@@ -28,6 +30,13 @@ export const JobInput = z.object({
       onlyWhenEmpty: z.boolean().optional(),
       keep: z.number().int().min(1).max(365).optional(),
       command: z.string().trim().max(500).optional(),
+      script: z
+        .string()
+        .trim()
+        .regex(/^[\w.-]+\.(py|sh)$/, "Script must be a *.py or *.sh file name")
+        .optional(),
+      managedBy: z.string().trim().max(40).optional(),
+      graceMinutes: z.number().int().min(1).max(720).optional(),
     })
     .default({}),
 });
@@ -55,10 +64,17 @@ async function writeJson(file: string, data: unknown): Promise<void> {
   await fs.rename(tmp, file);
 }
 
+// [INSTALLER] PLACEHOLDER / DEMO ONLY. These two jobs are seeded once, when
+// data/jobs.json does not exist, and start DISABLED. They are NOT the live
+// server's schedule. The live server already restarts and backs up semi-weekly
+// via cron + the owner's Python scripts — that infrastructure stays as it is.
+// Replace these with `external` jobs that mirror the real crontab lines
+// (SERVER_SETUP.md § 6c), then delete these two. Never enable them without the
+// owner's say-so: that would back up / restart twice.
 function defaultJobs(): Job[] {
   const createdAt = new Date().toISOString();
   return [
-    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: true, options: { keep: cfg.backups.keep }, createdAt },
+    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: false, options: { keep: cfg.backups.keep }, createdAt },
     {
       id: crypto.randomUUID(),
       name: "Daily restart",
@@ -103,6 +119,7 @@ function view(job: Job): JobView {
 
 function assertValid(job: Pick<Job, "type" | "options">): void {
   if (job.type === "command" && !job.options.command) throw new HttpError(400, "A command is required for command jobs");
+  if (job.type === "script" && !job.options.script) throw new HttpError(400, "Choose a script for script jobs");
 }
 
 export function listJobs(): JobView[] {
@@ -139,6 +156,7 @@ export async function deleteJob(id: string): Promise<void> {
 export function runJob(id: string): JobRun {
   const job = jobs.find((j) => j.id === id);
   if (!job) throw new HttpError(404, "Job not found");
+  if (job.type === "external") throw new HttpError(400, `"${job.name}" runs outside the dashboard (${job.options.managedBy ?? "cron"}); start it there.`);
   if (running.has(id)) throw new HttpError(409, "Job is already running");
   const run = startRun(job);
   void execute(id, run);
@@ -160,6 +178,7 @@ export function nextScheduled(): { name: string; at: string } | null {
 function startRun(job: Job): JobRun {
   const run: JobRun = { id: crypto.randomUUID(), jobId: job.id, jobName: job.name, type: job.type, startedAt: new Date().toISOString(), finishedAt: null, ok: null, message: "Running…" };
   runs.unshift(run);
+  publish({ source: "jobs", kind: "job", level: "info", tags: ["maintenance"], text: `Job "${job.name}" started (${job.type})`, meta: { job: job.name, jobId: job.id } });
   return run;
 }
 
@@ -178,6 +197,14 @@ async function execute(jobId: string, existing?: JobRun): Promise<void> {
     run.finishedAt = new Date().toISOString();
     running.delete(jobId);
     runs = runs.slice(0, 200);
+    publish({
+      source: "jobs",
+      kind: "job",
+      level: run.ok ? "info" : "error",
+      tags: ["maintenance"],
+      text: `Job "${job.name}" ${run.ok ? "finished" : "failed"}: ${run.message}`,
+      meta: { job: job.name, jobId: job.id },
+    });
     await writeJson(runsFile(), runs).catch(() => {});
   }
 }
@@ -192,7 +219,10 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
     }
     const warns = [...new Set((job.options.warnMinutes ?? [10, 5, 1]).filter((n) => n > 0))].sort((a, b) => b - a);
     const scale = cfg.demo ? 1000 : 60_000; // demo mode: minutes become seconds
-    const say = (msg: string) => rconCommand(`say ${msg}`).catch(() => {});
+    const say = (msg: string) => {
+      publish({ source: "jobs", kind: "job", level: "info", tags: ["maintenance"], text: `Countdown: ${msg}`, meta: { job: job.name, jobId: job.id } });
+      return rconCommand(`say ${msg}`).catch(() => {});
+    };
     if (warns.length) {
       const t0 = Date.now();
       const total = warns[0] * scale;
@@ -217,5 +247,42 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
     const cmd = job.options.command?.trim();
     if (!cmd) throw new Error("No command configured");
     return stripColour(await rconCommand(cmd)) || "(no output)";
+  },
+  async script(job) {
+    const name = job.options.script;
+    if (!name) throw new Error("No script configured");
+    const { run, tail } = await runScriptAndWait(name, "job");
+    if (run.exitCode !== 0) throw new Error(`${name} exited ${run.exitCode}: ${tail.slice(-2).join(" | ") || "(no output)"}`);
+    return `${name} exited 0 (${run.lines} lines)`;
+  },
+  // Mirrors something cron / a systemd timer runs. The dashboard does NOT run it;
+  // it marks the feed when the job is due and, if the cron command is wrapped
+  // with scripts/hl-run.sh, confirms the output arrived.
+  async external(job) {
+    const by = job.options.managedBy ?? "cron";
+    const label = job.options.script;
+    publish({
+      source: "jobs",
+      kind: "job",
+      level: "info",
+      tags: ["maintenance"],
+      text: `Due now: "${job.name}" runs outside the dashboard via ${by}${job.options.command ? ` — ${job.options.command}` : ""}`,
+      meta: { job: job.name, jobId: job.id },
+    });
+    if (!label) return `Due via ${by}; no script name configured, so the result was not checked`;
+    const graceMs = (job.options.graceMinutes ?? 10) * 60_000;
+    const since = new Date().toISOString();
+    const mine = (e: AlertEvent) => e.source === "scripts" && (e.meta?.label === label || e.meta?.script === label);
+    // ✔/✖ carry the exit code (hl-run posts it after the output stream closes; the
+    // dashboard's own runner emits it on exit). "■ finished" alone means output
+    // arrived but no exit code was reported.
+    const exit = await waitForEvent((e) => mine(e) && /^[✔✖]/.test(e.text), graceMs);
+    if (exit) {
+      if (exit.level === "error") throw new Error(`${label} failed: ${exit.text}`);
+      return `Ran via ${by}: ${exit.text}`;
+    }
+    const seen = query({ sources: ["scripts"], since, limit: 500 }).find((e) => mine(e) && e.text.startsWith("■"));
+    if (seen) return `Ran via ${by}: ${seen.text} — exit code not reported (update hl-run on the server)`;
+    throw new Error(`No output from ${label} within ${graceMs / 60_000} min. Is the ${by} command wrapped with hl-run?`);
   },
 };
