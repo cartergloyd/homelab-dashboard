@@ -114,14 +114,20 @@ export interface DatabasePayload {
   };
 }
 
-export type JobType = "restart" | "backup" | "command" | "script";
+/** `external` = runs outside the dashboard (cron, systemd timer); mirrored for visibility only. */
+export type JobType = "restart" | "backup" | "command" | "script" | "external";
 
 export interface JobOptions {
   warnMinutes?: number[];
   onlyWhenEmpty?: boolean;
   keep?: number;
   command?: string;
+  /** script job: file to run. external job: script name to watch for in the feed. */
   script?: string;
+  /** external job: who runs it, e.g. "cron", "systemd timer" */
+  managedBy?: string;
+  /** external job: minutes to wait for the script's output before reporting it missing */
+  graceMinutes?: number;
 }
 
 export interface Job {

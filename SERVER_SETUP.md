@@ -226,27 +226,47 @@ On the very first start (no `jobs.json` yet) two jobs are seeded, **both disable
 | Nightly world backup | `backup` | 04:00 | RCON `save-off` → `save-all flush` → tar.gz `world*` into `BACKUP_DIR` → `save-on`; keeps the newest `BACKUP_KEEP` |
 | Daily restart | `restart` | 05:00 | in-game countdown at 10/5/1 min → `save-all` → `systemctl restart`; skips if players are online |
 
-Four job types exist: `backup`, `restart` (as above), `command` (one RCON command) and
-`script` (runs a file from `SCRIPTS_DIR`, output into the alerts feed).
+Five job types exist: `backup`, `restart` (as above), `command` (one RCON command),
+`script` (runs a file from `SCRIPTS_DIR`, output into the alerts feed) and `external`
+(**mirror only** — something cron or a systemd timer already runs; the dashboard never
+runs it, just marks the feed when it is due and checks that output arrived).
 
-**Decision the installer must make with the owner — don't skip it.** The owner already has
-Python scripts that restart the server and back up the world (and possibly cron entries or
-Task Scheduler-style shortcuts that run them). Running both those and the built-in jobs
-would back up twice and could restart twice. Pick one per task:
+**The owner's instruction for this install: the live server already restarts and backs up
+on a semi-weekly schedule, and that must keep working exactly as it does. Do not delete,
+move or re-time those cron entries, and do not enable the seeded built-in jobs.** Make the
+dashboard *reflect* reality instead:
 
-- *Keep the owner's scripts:* put them in `SCRIPTS_DIR`, remove any existing cron entries
-  that run them (`crontab -l` for the owner and root), then in the dashboard create a
-  `script` job per script with the same schedule the cron had. Leave the two seeded jobs
-  disabled or delete them.
-- *Switch to the built-ins:* enable the seeded jobs, adjust the times, remove the old cron
-  entries, and keep the scripts only as ▶ buttons for manual use.
+1. Discover the real schedule. Check all of: `sudo crontab -l`, `crontab -l` as the owner
+   and as the Minecraft user, `ls /etc/cron.d /etc/cron.weekly`, `systemctl list-timers`,
+   and read the scripts themselves (one script may call another). Note the exact cron
+   expressions, the exact commands, and which user runs them.
+2. For each real job, create an `external` job in the dashboard with that cron expression,
+   `managedBy` = `cron` (or `systemd timer`), `command` = the exact command for display, and
+   `script` = the script's file name (e.g. `backup_world.py`) so the dashboard can confirm
+   it ran. Create them in the Maintenance card (New job → External) or by `POST /api/jobs`:
 
-Either way, write the choice into `CLAUDE.md` → Decisions log so agents don't undo it.
+   ```bash
+   curl -s -X POST -H "Authorization: Bearer $DASHBOARD_KEY" -H 'Content-Type: application/json' \
+     -d '{"name":"Semi-weekly world backup","type":"external","cron":"0 4 * * 0,3","enabled":true,"options":{"managedBy":"cron","command":"python3 /opt/homelab-scripts/backup_world.py","script":"backup_world.py","graceMinutes":20}}' \
+     http://127.0.0.1:3000/api/jobs
+   ```
+   The cron expression above is a **placeholder** — use what `crontab -l` actually shows.
+3. Wrap each cron command with `hl-run` so its output streams into the feed and the
+   dashboard can mark the mirrored job OK / failed. Only the command changes, never the
+   schedule — e.g. `0 4 * * 0,3  python3 /opt/homelab-scripts/backup_world.py` becomes
+   `0 4 * * 0,3  HOMELAB_KEY=… /usr/local/bin/hl-run python3 /opt/homelab-scripts/backup_world.py`
+   (or put `HOMELAB_KEY=…` at the top of the crontab). Keep the scripts where they are;
+   `SCRIPTS_DIR` is only for scripts the dashboard itself should offer as ▶ buttons — copy
+   or symlink them there if the owner wants manual runs too.
+4. Delete the two seeded disabled jobs (or leave them disabled) and record what you found and
+   did in `CLAUDE.md` → Decisions log.
 
-Verify: on the Maintenance card, **Run now** on each enabled job; the run should show
-`OK` with a message (e.g. `Created mc-….tar.gz (1.2 GB)`) and the alerts feed should show
-the job's start/finish lines. A `script` job that exits non-zero shows `Failed` with the
-script's last output lines — that is working as intended.
+Verify: the Dashboard's "Next scheduled job" tile shows the next real cron time; when the
+cron fires, the feed shows `Due now: "…" runs outside the dashboard via cron`, then the
+script's lines (via hl-run), then `✔ backup_world.py exited 0 (terminal)`, and the job's
+last run reads `OK — Ran via cron: …`. If instead it reads `No output from … within N min`,
+the cron entry is not wrapped with hl-run yet (or `HOMELAB_KEY` is missing in cron's env).
+`Run now` is intentionally absent for external jobs; start them from cron/the shell.
 
 ## 7. Expose over Tailscale (HTTPS + identity)
 

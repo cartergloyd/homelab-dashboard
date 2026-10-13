@@ -313,6 +313,22 @@ api.post("/alerts/ingest", (req, res) => {
   });
 });
 
+/** hl-run.sh posts the wrapped command's exit code here after its output stream closes. */
+api.post("/alerts/ingest/exit", (req, res) => {
+  const label = (str(req.query.label) || "terminal").slice(0, 80);
+  const code = Number(req.query.code);
+  const ok = code === 0;
+  publish({
+    source: "scripts",
+    kind: "script",
+    level: ok ? "info" : "error",
+    tags: ["maintenance"],
+    text: `${ok ? "✔" : "✖"} ${label} exited ${Number.isFinite(code) ? code : "?"} (terminal)`,
+    meta: { label, exitCode: Number.isFinite(code) ? code : null },
+  });
+  res.json({ ok: true });
+});
+
 // ---- instructions & context (CLAUDE.md) ---------------------------------
 
 const author = (res: Response) => (user(res).viaKey ? user(res).name : user(res).login);

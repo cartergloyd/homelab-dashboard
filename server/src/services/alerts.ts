@@ -189,6 +189,22 @@ export function subscribe(fn: (e: AlertEvent) => void): () => void {
   return () => subscribers.delete(fn);
 }
 
+/** Resolves with the first event matching `predicate`, or null after `timeoutMs`. */
+export function waitForEvent(predicate: (e: AlertEvent) => boolean, timeoutMs: number): Promise<AlertEvent | null> {
+  return new Promise((resolve) => {
+    const unsub = subscribe((e) => {
+      if (!predicate(e)) return;
+      clearTimeout(timer);
+      unsub();
+      resolve(e);
+    });
+    const timer = setTimeout(() => {
+      unsub();
+      resolve(null);
+    }, timeoutMs);
+  });
+}
+
 /** Raw lines of one source, as they arrive — used by the plain log viewer. */
 export function subscribeRaw(source: AlertSource, fn: (line: string) => void): () => void {
   const set = rawSubs.get(source) ?? new Set();

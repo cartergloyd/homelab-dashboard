@@ -31,4 +31,8 @@ label="$(printf '%s' "$label" | sed 's/[^A-Za-z0-9._-]/_/g')"
 "$@" 2>&1 | tee >(curl -sS -X POST -T - \
   -H "Authorization: Bearer $HOMELAB_KEY" \
   "$HOMELAB_URL/api/alerts/ingest?label=$label" >/dev/null || echo "hl-run: could not reach $HOMELAB_URL" >&2)
-exit "${PIPESTATUS[0]}"
+status="${PIPESTATUS[0]}"
+# tell the dashboard how it ended, so mirrored (external) jobs can be marked OK / failed
+curl -sS -X POST -H "Authorization: Bearer $HOMELAB_KEY" \
+  "$HOMELAB_URL/api/alerts/ingest/exit?label=$label&code=$status" >/dev/null 2>&1 || true
+exit "$status"

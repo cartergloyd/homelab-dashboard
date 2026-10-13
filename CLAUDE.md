@@ -62,10 +62,11 @@ docker-compose.yml   PostgreSQL (127.0.0.1 only) + Directus
 ```
 
 Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (types
-`backup`, `restart`, `command`, `script`), run with node-cron in `TZ`, history in
-`data/job-runs.json`. Two defaults are seeded disabled on first start only; the
-install step chooses between them and the owner's own scripts (SERVER_SETUP § 6c).
-Never hard-code a schedule — add or change jobs through the API/UI.
+`backup`, `restart`, `command`, `script`, `external`), run with node-cron in `TZ`,
+history in `data/job-runs.json`. `external` jobs are mirrors of cron/systemd-timer
+jobs: the dashboard marks "due now" in the feed and waits for the script's hl-run
+output instead of running anything. Two built-in defaults are seeded disabled on
+first start only. Never hard-code a schedule — add or change jobs through the API/UI.
 
 Auth model: the app binds `127.0.0.1:3000`; `tailscale serve` fronts it and injects
 `Tailscale-User-Login`. Those headers are trusted only on loopback connections and
@@ -141,8 +142,12 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 - 2026-10-13 Demo mode edits a copy of this file (`data/demo/CLAUDE.md`), never the
   repo's, so smoke tests can write freely.
 - 2026-10-13 Seeded jobs start **disabled**. The owner already has backup/restart
-  scripts; the dashboard must not add a second nightly backup on its own. The
-  installer picks scripts-as-jobs or built-ins and records it here.
+  scripts; the dashboard must not add a second nightly backup on its own.
+- 2026-10-13 **The live server keeps its existing semi-weekly restart + backup
+  motion (cron + Python scripts) unchanged.** The dashboard mirrors them as
+  `external` jobs — real cron expressions, display-only — and the cron commands are
+  wrapped with `hl-run` so output lands in the feed and the mirrored job is marked
+  OK/failed. Do not convert them to built-in jobs or re-time them without Carter.
 
 ## How to run & verify
 

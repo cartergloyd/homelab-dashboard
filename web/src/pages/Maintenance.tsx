@@ -16,6 +16,7 @@ interface JobForm {
   keep: string;
   command: string;
   script: string;
+  managedBy: string;
 }
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -26,7 +27,7 @@ const PRESETS: { label: string; cron: string }[] = [
   { label: "Every 30 min", cron: "*/30 * * * *" },
 ];
 
-const TYPE_LABEL: Record<JobType, string> = { restart: "Restart", backup: "Backup", command: "Command", script: "Script" };
+const TYPE_LABEL: Record<JobType, string> = { restart: "Restart", backup: "Backup", command: "Command", script: "Script", external: "External" };
 
 function toForm(j?: JobView): JobForm {
   return {
@@ -39,12 +40,18 @@ function toForm(j?: JobView): JobForm {
     keep: String(j?.options.keep ?? 7),
     command: j?.options.command ?? "",
     script: j?.options.script ?? "",
+    managedBy: j?.options.managedBy ?? "cron",
   };
 }
 
 function fromForm(f: JobForm) {
   const options: Record<string, unknown> = {};
   if (f.type === "script") options.script = f.script;
+  if (f.type === "external") {
+    options.managedBy = f.managedBy.trim() || "cron";
+    if (f.command.trim()) options.command = f.command.trim();
+    if (f.script.trim()) options.script = f.script.trim();
+  }
   if (f.type === "restart") {
     options.warnMinutes = f.warnMinutes
       .split(/[,\s]+/)
@@ -94,6 +101,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
               <option value="restart">Restart with countdown</option>
               <option value="command">RCON command</option>
               <option value="script">Run a script</option>
+              <option value="external">External — runs via cron/timer (mirror only)</option>
             </select>
           </label>
           <label className="field">
@@ -149,6 +157,27 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
               <input className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} placeholder="backup_world.py" required />
             )}
           </label>
+        )}
+        {f.type === "external" && (
+          <>
+            <p className="dim small" style={{ margin: 0 }}>
+              The dashboard will <strong>not</strong> run this. It marks the feed when the job is due and, if the cron command is wrapped with <span className="mono">hl-run</span>, confirms the script's output arrived.
+            </p>
+            <div className="form-grid">
+              <label className="field">
+                Managed by
+                <input className="input" value={f.managedBy} onChange={(e) => set("managedBy", e.target.value)} placeholder="cron" />
+              </label>
+              <label className="field">
+                Script name to watch for (optional)
+                <input className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} placeholder="backup_world.py" />
+              </label>
+            </div>
+            <label className="field">
+              What runs (for display)
+              <input className="input mono" value={f.command} onChange={(e) => set("command", e.target.value)} placeholder="python3 /opt/homelab-scripts/backup_world.py" />
+            </label>
+          </>
         )}
         <label className="check">
           <input type="checkbox" checked={f.enabled} onChange={(e) => set("enabled", e.target.checked)} />
@@ -254,6 +283,17 @@ export function Maintenance() {
                     {j.type === "backup" && `Keep newest ${j.options.keep ?? 7}`}
                     {j.type === "command" && <span className="mono">{j.options.command}</span>}
                     {j.type === "script" && <span className="mono">▶ {j.options.script}</span>}
+                    {j.type === "external" && (
+                      <>
+                        Runs via {j.options.managedBy ?? "cron"} outside the dashboard
+                        {j.options.command && (
+                          <>
+                            {" · "}
+                            <span className="mono">{j.options.command}</span>
+                          </>
+                        )}
+                      </>
+                    )}
                   </div>
                 </td>
                 <td>
@@ -275,9 +315,11 @@ export function Maintenance() {
                 </td>
                 <td>
                   <div className="row" style={{ gap: 4, justifyContent: "flex-end", flexWrap: "nowrap" }}>
-                    <button className="btn sm ghost" disabled={j.running || run.isPending} onClick={() => run.mutate(j)}>
-                      Run now
-                    </button>
+                    {j.type !== "external" && (
+                      <button className="btn sm ghost" disabled={j.running || run.isPending} onClick={() => run.mutate(j)}>
+                        Run now
+                      </button>
+                    )}
                     <button className="btn sm ghost" onClick={() => toggle.mutate(j)}>
                       {j.enabled ? "Disable" : "Enable"}
                     </button>

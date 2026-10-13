@@ -103,7 +103,7 @@ export interface DatabasePayload {
   };
 }
 
-export type JobType = "restart" | "backup" | "command" | "script";
+export type JobType = "restart" | "backup" | "command" | "script" | "external";
 
 export interface JobOptions {
   warnMinutes?: number[];
@@ -111,6 +111,8 @@ export interface JobOptions {
   keep?: number;
   command?: string;
   script?: string;
+  managedBy?: string;
+  graceMinutes?: number;
 }
 
 export interface Job {

@@ -9,19 +9,19 @@ import { z } from "zod";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import { fmtBytes, sleepUntil } from "../util.js";
-import { publish } from "./alerts.js";
+import { publish, query, waitForEvent } from "./alerts.js";
 import { runBackup } from "./backups.js";
 import { getPlayers } from "./minecraft.js";
 import { rconCommand, stripColour } from "./rcon.js";
 import { runScriptAndWait } from "./scripts.js";
 import { unitAction, unitState } from "./systemd.js";
-import type { Job, JobRun, JobView } from "../types.js";
+import type { AlertEvent, Job, JobRun, JobView } from "../types.js";
 
 type Task = ReturnType<typeof schedule>;
 
 export const JobInput = z.object({
   name: z.string().trim().min(1).max(80),
-  type: z.enum(["restart", "backup", "command", "script"]),
+  type: z.enum(["restart", "backup", "command", "script", "external"]),
   cron: z.string().trim().refine((c) => validate(c), "Invalid cron expression"),
   enabled: z.boolean().default(true),
   options: z
@@ -35,6 +35,8 @@ export const JobInput = z.object({
         .trim()
         .regex(/^[\w.-]+\.(py|sh)$/, "Script must be a *.py or *.sh file name")
         .optional(),
+      managedBy: z.string().trim().max(40).optional(),
+      graceMinutes: z.number().int().min(1).max(720).optional(),
     })
     .default({}),
 });
@@ -150,6 +152,7 @@ export async function deleteJob(id: string): Promise<void> {
 export function runJob(id: string): JobRun {
   const job = jobs.find((j) => j.id === id);
   if (!job) throw new HttpError(404, "Job not found");
+  if (job.type === "external") throw new HttpError(400, `"${job.name}" runs outside the dashboard (${job.options.managedBy ?? "cron"}); start it there.`);
   if (running.has(id)) throw new HttpError(409, "Job is already running");
   const run = startRun(job);
   void execute(id, run);
@@ -247,5 +250,35 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
     const { run, tail } = await runScriptAndWait(name, "job");
     if (run.exitCode !== 0) throw new Error(`${name} exited ${run.exitCode}: ${tail.slice(-2).join(" | ") || "(no output)"}`);
     return `${name} exited 0 (${run.lines} lines)`;
+  },
+  // Mirrors something cron / a systemd timer runs. The dashboard does NOT run it;
+  // it marks the feed when the job is due and, if the cron command is wrapped
+  // with scripts/hl-run.sh, confirms the output arrived.
+  async external(job) {
+    const by = job.options.managedBy ?? "cron";
+    const label = job.options.script;
+    publish({
+      source: "jobs",
+      kind: "job",
+      level: "info",
+      tags: ["maintenance"],
+      text: `Due now: "${job.name}" runs outside the dashboard via ${by}${job.options.command ? ` — ${job.options.command}` : ""}`,
+      meta: { job: job.name, jobId: job.id },
+    });
+    if (!label) return `Due via ${by}; no script name configured, so the result was not checked`;
+    const graceMs = (job.options.graceMinutes ?? 10) * 60_000;
+    const since = new Date().toISOString();
+    const mine = (e: AlertEvent) => e.source === "scripts" && (e.meta?.label === label || e.meta?.script === label);
+    // ✔/✖ carry the exit code (hl-run posts it after the output stream closes; the
+    // dashboard's own runner emits it on exit). "■ finished" alone means output
+    // arrived but no exit code was reported.
+    const exit = await waitForEvent((e) => mine(e) && /^[✔✖]/.test(e.text), graceMs);
+    if (exit) {
+      if (exit.level === "error") throw new Error(`${label} failed: ${exit.text}`);
+      return `Ran via ${by}: ${exit.text}`;
+    }
+    const seen = query({ sources: ["scripts"], since, limit: 500 }).find((e) => mine(e) && e.text.startsWith("■"));
+    if (seen) return `Ran via ${by}: ${seen.text} — exit code not reported (update hl-run on the server)`;
+    throw new Error(`No output from ${label} within ${graceMs / 60_000} min. Is the ${by} command wrapped with hl-run?`);
   },
 };
