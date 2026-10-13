@@ -61,6 +61,12 @@ scripts/  hl-run.sh — tee a terminal script's output into the alerts feed
 docker-compose.yml   PostgreSQL (127.0.0.1 only) + Directus
 ```
 
+Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (types
+`backup`, `restart`, `command`, `script`), run with node-cron in `TZ`, history in
+`data/job-runs.json`. Two defaults are seeded disabled on first start only; the
+install step chooses between them and the owner's own scripts (SERVER_SETUP § 6c).
+Never hard-code a schedule — add or change jobs through the API/UI.
+
 Auth model: the app binds `127.0.0.1:3000`; `tailscale serve` fronts it and injects
 `Tailscale-User-Login`. Those headers are trusted only on loopback connections and
 Funnel is refused. Scripts and the MCP server use `Authorization: Bearer
@@ -134,6 +140,9 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   landing page.
 - 2026-10-13 Demo mode edits a copy of this file (`data/demo/CLAUDE.md`), never the
   repo's, so smoke tests can write freely.
+- 2026-10-13 Seeded jobs start **disabled**. The owner already has backup/restart
+  scripts; the dashboard must not add a second nightly backup on its own. The
+  installer picks scripts-as-jobs or built-ins and records it here.
 
 ## How to run & verify
 

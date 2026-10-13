@@ -62,10 +62,13 @@ async function writeJson(file: string, data: unknown): Promise<void> {
   await fs.rename(tmp, file);
 }
 
+// Seeded only when data/jobs.json does not exist yet. Both start DISABLED: the
+// owner already has backup/restart scripts, and the installer decides (see
+// SERVER_SETUP.md § 6c) whether to schedule those or these built-ins.
 function defaultJobs(): Job[] {
   const createdAt = new Date().toISOString();
   return [
-    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: true, options: { keep: cfg.backups.keep }, createdAt },
+    { id: crypto.randomUUID(), name: "Nightly world backup", type: "backup", cron: "0 4 * * *", enabled: false, options: { keep: cfg.backups.keep }, createdAt },
     {
       id: crypto.randomUUID(),
       name: "Daily restart",

@@ -213,6 +213,41 @@ owner's explicit choice. Every call is attributed in the alerts feed and the Ass
 
 Smoke test from the server: `cd /opt/homelab-dashboard/server && HOMELAB_KEY=… node test-mcp.mjs`.
 
+## 6c. Scheduled jobs (Minecraft → Maintenance)
+
+Jobs are **data, not code**: `/opt/homelab-dashboard/data/jobs.json`, edited through the
+Maintenance card (create / edit / enable / disable / delete / Run now). Run history is in
+`data/job-runs.json` (last 200). Times use the `TZ` in `/etc/homelab-dashboard.env`.
+
+On the very first start (no `jobs.json` yet) two jobs are seeded, **both disabled**:
+
+| Seeded job | Type | Schedule | What it does |
+|---|---|---|---|
+| Nightly world backup | `backup` | 04:00 | RCON `save-off` → `save-all flush` → tar.gz `world*` into `BACKUP_DIR` → `save-on`; keeps the newest `BACKUP_KEEP` |
+| Daily restart | `restart` | 05:00 | in-game countdown at 10/5/1 min → `save-all` → `systemctl restart`; skips if players are online |
+
+Four job types exist: `backup`, `restart` (as above), `command` (one RCON command) and
+`script` (runs a file from `SCRIPTS_DIR`, output into the alerts feed).
+
+**Decision the installer must make with the owner — don't skip it.** The owner already has
+Python scripts that restart the server and back up the world (and possibly cron entries or
+Task Scheduler-style shortcuts that run them). Running both those and the built-in jobs
+would back up twice and could restart twice. Pick one per task:
+
+- *Keep the owner's scripts:* put them in `SCRIPTS_DIR`, remove any existing cron entries
+  that run them (`crontab -l` for the owner and root), then in the dashboard create a
+  `script` job per script with the same schedule the cron had. Leave the two seeded jobs
+  disabled or delete them.
+- *Switch to the built-ins:* enable the seeded jobs, adjust the times, remove the old cron
+  entries, and keep the scripts only as ▶ buttons for manual use.
+
+Either way, write the choice into `CLAUDE.md` → Decisions log so agents don't undo it.
+
+Verify: on the Maintenance card, **Run now** on each enabled job; the run should show
+`OK` with a message (e.g. `Created mc-….tar.gz (1.2 GB)`) and the alerts feed should show
+the job's start/finish lines. A `script` job that exits non-zero shows `Failed` with the
+script's last output lines — that is working as intended.
+
 ## 7. Expose over Tailscale (HTTPS + identity)
 
 ```bash
@@ -270,5 +305,5 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 
 - Logs: `journalctl -u homelab-dashboard -f`
 - Update: copy new files, `npm ci && npm run build`, `systemctl restart homelab-dashboard`
-- Job definitions: `/opt/homelab-dashboard/data/jobs.json` (editable while stopped)
+- Job definitions: `/opt/homelab-dashboard/data/jobs.json` (editable while stopped; see § 6c). Deleting the file re-seeds the two disabled defaults on next start.
 - Demo mode for testing on any machine: `DEMO=1 AUTH_DISABLED=1 npm start` — never set these on the server
