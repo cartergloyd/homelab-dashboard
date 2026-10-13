@@ -127,8 +127,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   symptom, not an outage). Rules persist in `data/alert-rules.json`; changing the
   defaults in code does not touch an existing file.
 - 2026-10-13 Minecraft layout: compact status strip top-right; alerts + assistant
-  row; console + maintenance reports row; then the Maintenance section. Carter found
-  the big status tiles low-value.
+  row; console; then the Maintenance section. Carter found the big status tiles
+  low-value.
+- 2026-10-13 **Maintenance reports live on the Dashboard** (under the stat tiles),
+  not the Minecraft tab — they are the owner's review inbox, so they belong on the
+  landing page.
 - 2026-10-13 Demo mode edits a copy of this file (`data/demo/CLAUDE.md`), never the
   repo's, so smoke tests can write freely.
 
