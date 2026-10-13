@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, Modal, PageHead, StatusPill, useDialog, useToast } from "../components/ui";
 import { describeCron, fmtBytes, fmtDateTime, fmtRelative } from "../format";
-import type { BackupFile, JobRun, JobType, JobView } from "../types";
+import type { BackupFile, JobRun, JobType, JobView, ScriptInfo } from "../types";
 
 interface JobForm {
   name: string;
@@ -15,6 +15,7 @@ interface JobForm {
   onlyWhenEmpty: boolean;
   keep: string;
   command: string;
+  script: string;
 }
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -25,7 +26,7 @@ const PRESETS: { label: string; cron: string }[] = [
   { label: "Every 30 min", cron: "*/30 * * * *" },
 ];
 
-const TYPE_LABEL: Record<JobType, string> = { restart: "Restart", backup: "Backup", command: "Command" };
+const TYPE_LABEL: Record<JobType, string> = { restart: "Restart", backup: "Backup", command: "Command", script: "Script" };
 
 function toForm(j?: JobView): JobForm {
   return {
@@ -37,11 +38,13 @@ function toForm(j?: JobView): JobForm {
     onlyWhenEmpty: j?.options.onlyWhenEmpty ?? false,
     keep: String(j?.options.keep ?? 7),
     command: j?.options.command ?? "",
+    script: j?.options.script ?? "",
   };
 }
 
 function fromForm(f: JobForm) {
   const options: Record<string, unknown> = {};
+  if (f.type === "script") options.script = f.script;
   if (f.type === "restart") {
     options.warnMinutes = f.warnMinutes
       .split(/[,\s]+/)
@@ -59,6 +62,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   const toast = useToast();
   const [f, setF] = useState<JobForm>(toForm(job));
   const set = <K extends keyof JobForm>(k: K, v: JobForm[K]) => setF((s) => ({ ...s, [k]: v }));
+  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptInfo[]>("/scripts") });
   const save = useMutation({
     mutationFn: () => (job ? api.put(`/jobs/${job.id}`, fromForm(f)) : api.post("/jobs", fromForm(f))),
     onSuccess: () => {
@@ -89,6 +93,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
               <option value="backup">World backup</option>
               <option value="restart">Restart with countdown</option>
               <option value="command">RCON command</option>
+              <option value="script">Run a script</option>
             </select>
           </label>
           <label className="field">
@@ -126,6 +131,23 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
           <label className="field">
             Command (sent over RCON)
             <input className="input mono" value={f.command} onChange={(e) => set("command", e.target.value)} placeholder="say Daily reminder: be nice" required />
+          </label>
+        )}
+        {f.type === "script" && (
+          <label className="field">
+            Script (from the scripts folder; output goes to the alerts feed)
+            {scripts.data?.length ? (
+              <select className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} required>
+                <option value="">Choose a script…</option>
+                {scripts.data.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} placeholder="backup_world.py" required />
+            )}
           </label>
         )}
         <label className="check">
@@ -231,6 +253,7 @@ export function Maintenance() {
                     {j.type === "restart" && `Warn at ${(j.options.warnMinutes ?? []).join(", ")} min${j.options.onlyWhenEmpty ? " · skip if players online" : ""}`}
                     {j.type === "backup" && `Keep newest ${j.options.keep ?? 7}`}
                     {j.type === "command" && <span className="mono">{j.options.command}</span>}
+                    {j.type === "script" && <span className="mono">▶ {j.options.script}</span>}
                   </div>
                 </td>
                 <td>

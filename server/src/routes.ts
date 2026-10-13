@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import express, { type Request } from "express";
+import readline from "node:readline";
+import express, { type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { cfg } from "./config.js";
+import { ALERT_SOURCE_IDS, cfg } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { Identity } from "./auth.js";
 import * as files from "./services/files.js";
@@ -17,11 +18,23 @@ import { filesystems, refreshFolders, storage } from "./services/storage.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
-import type { AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
+import { getRules, listAgents, publish, query, summary, touchAgent } from "./services/alerts.js";
+import { listRuns as listScriptRuns, listScripts, startScript } from "./services/scripts.js";
+import { getVersion, listHistory, readContext, restoreVersion, writeContext } from "./services/context.js";
+import { addReport, listReports, setReviewed } from "./services/reports.js";
+import type { AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
 export const api = express.Router();
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+const user = (res: Response): Identity => res.locals.user as Identity;
+
+/** Records who did what: agents (via key) to presence + feed, humans straight to the feed. */
+function logAction(res: Response, action: string): void {
+  const u = user(res);
+  if (u.viaKey) touchAgent(u.name, action);
+  else publish({ source: "dashboard", kind: "log", level: "info", tags: ["maintenance"], text: `${u.name}: ${action}` });
+}
 
 // ---- app -----------------------------------------------------------------
 
@@ -30,14 +43,18 @@ api.get("/health", (_req, res) => {
 });
 
 api.get("/config", (_req, res) => {
-  const user = res.locals.user as Identity;
+  const u = user(res);
   const payload: AppConfigPayload = {
     demo: cfg.demo,
-    user,
+    user: { login: u.login, name: u.name },
     links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
     timezone: cfg.timezone,
     logSources: LOG_SOURCES,
+    alertSources: ALERT_SOURCE_IDS,
+    scriptsDir: cfg.scriptsDir,
+    contextFile: cfg.contextFile,
+    ...(u.viaKey || !cfg.dashboardKey ? {} : { dashboardKey: cfg.dashboardKey }),
   };
   res.json(payload);
 });
@@ -73,11 +90,13 @@ api.get("/jellyfin", async (_req, res) => {
 
 api.post("/jellyfin/refresh", async (_req, res) => {
   await jellyfin.refreshLibrary();
+  logAction(res, "started a Jellyfin library scan");
   res.json({ ok: true });
 });
 
 api.post("/jellyfin/restart", async (_req, res) => {
   await jellyfin.restart();
+  logAction(res, "restarted the Jellyfin container");
   res.json({ ok: true });
 });
 
@@ -171,13 +190,16 @@ api.get("/minecraft/players", async (_req, res) => {
 
 api.post("/minecraft/action", async (req, res) => {
   const { action } = z.object({ action: z.enum(["start", "stop", "restart"]) }).parse(req.body);
+  logAction(res, `${action} Minecraft service`);
   await minecraftAction(action);
   res.json({ ok: true });
 });
 
 api.post("/minecraft/command", async (req, res) => {
   const { command } = z.object({ command: z.string().max(500) }).parse(req.body);
-  res.json({ output: await minecraftCommand(command) });
+  const output = await minecraftCommand(command);
+  logAction(res, `RCON: ${command.trim()}`);
+  res.json({ output });
 });
 
 // ---- maintenance ---------------------------------------------------------
@@ -191,7 +213,9 @@ api.get("/jobs/runs", (req, res) => {
 });
 
 api.post("/jobs", async (req, res) => {
-  res.status(201).json(await sched.createJob(sched.JobInput.parse(req.body)));
+  const job = await sched.createJob(sched.JobInput.parse(req.body));
+  logAction(res, `created job "${job.name}"`);
+  res.status(201).json(job);
 });
 
 api.put("/jobs/:id", async (req, res) => {
@@ -204,7 +228,9 @@ api.delete("/jobs/:id", async (req, res) => {
 });
 
 api.post("/jobs/:id/run", (req, res) => {
-  res.status(202).json(sched.runJob(String(req.params.id)));
+  const run = sched.runJob(String(req.params.id));
+  logAction(res, `ran job "${run.jobName}"`);
+  res.status(202).json(run);
 });
 
 api.get("/backups", async (_req, res) => {
@@ -212,12 +238,123 @@ api.get("/backups", async (_req, res) => {
 });
 
 api.post("/backups", async (_req, res) => {
+  logAction(res, "started a world backup");
   res.json(await runBackup());
 });
 
 api.delete("/backups/:name", async (req, res) => {
   await deleteBackup(String(req.params.name));
   res.json({ ok: true });
+});
+
+// ---- scripts -------------------------------------------------------------
+
+api.get("/scripts", async (_req, res) => {
+  res.json(await listScripts());
+});
+
+api.get("/scripts/runs", (req, res) => {
+  res.json(listScriptRuns(Number(req.query.limit) || 50));
+});
+
+api.post("/scripts/:name/run", async (req, res) => {
+  const name = String(req.params.name);
+  const run = await startScript(name, user(res).viaKey ? "agent" : "manual");
+  logAction(res, `ran script ${name}`);
+  res.status(202).json(run);
+});
+
+// ---- alerts --------------------------------------------------------------
+
+api.get("/alerts", (req, res) => {
+  const sources = str(req.query.sources)
+    ? (str(req.query.sources).split(",").filter((s) => (ALERT_SOURCE_IDS as string[]).includes(s)) as AlertSource[])
+    : undefined;
+  res.json(
+    query({
+      sources,
+      problemsOnly: req.query.problemsOnly === "1" || req.query.problemsOnly === "true",
+      since: str(req.query.since) || undefined,
+      limit: Number(req.query.limit) || undefined,
+    }),
+  );
+});
+
+api.get("/alerts/summary", (_req, res) => {
+  res.json(summary());
+});
+
+api.get("/alerts/rules", (_req, res) => {
+  res.json(getRules());
+});
+
+api.get("/agents", (_req, res) => {
+  res.json(listAgents());
+});
+
+/**
+ * Streams a terminal script's output into the feed, one event per line.
+ * Used by scripts/hl-run.sh: `... | curl -T - .../api/alerts/ingest?label=name`
+ */
+api.post("/alerts/ingest", (req, res) => {
+  const label = (str(req.query.label) || "terminal").slice(0, 80);
+  const meta = { label, agent: user(res).viaKey ? user(res).name : undefined };
+  let lines = 0;
+  publish({ source: "scripts", kind: "script", level: "info", tags: ["maintenance"], text: `▶ ${label} started (terminal)`, meta });
+  const rl = readline.createInterface({ input: req });
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    lines++;
+    publish({ source: "scripts", kind: "script", text: line, meta });
+  });
+  rl.on("close", () => {
+    publish({ source: "scripts", kind: "script", level: "info", tags: ["maintenance"], text: `■ ${label} finished (${lines} lines)`, meta });
+    res.json({ ok: true, lines });
+  });
+});
+
+// ---- instructions & context (CLAUDE.md) ---------------------------------
+
+const author = (res: Response) => (user(res).viaKey ? user(res).name : user(res).login);
+
+api.get("/context", async (_req, res) => {
+  res.json(await readContext());
+});
+
+api.put("/context", async (req, res) => {
+  const body = z.object({ content: z.string().max(512 * 1024), baseHash: z.string().optional(), note: z.string().max(200).default("") }).parse(req.body);
+  const result = await writeContext(body.content, body.baseHash, author(res), body.note);
+  if (user(res).viaKey) touchAgent(user(res).name, `updated instructions${body.note ? `: ${body.note}` : ""}`);
+  res.json(result);
+});
+
+api.get("/context/history", async (_req, res) => {
+  res.json(await listHistory());
+});
+
+api.get("/context/history/:id", async (req, res) => {
+  res.json(await getVersion(String(req.params.id)));
+});
+
+api.post("/context/history/:id/restore", async (req, res) => {
+  res.json(await restoreVersion(String(req.params.id), author(res)));
+});
+
+// ---- maintenance reports (agents write, humans review) -------------------
+
+api.get("/reports", (req, res) => {
+  res.json(listReports(Number(req.query.limit) || 50, req.query.unreviewed !== "1"));
+});
+
+api.post("/reports", async (req, res) => {
+  const body = z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(8000) }).parse(req.body);
+  const u = user(res);
+  res.status(201).json(await addReport(u.viaKey ? u.name : u.name || u.login, body.title, body.body));
+});
+
+api.post("/reports/:id/review", async (req, res) => {
+  const { reviewed } = z.object({ reviewed: z.boolean().default(true) }).parse(req.body ?? {});
+  res.json(await setReviewed(String(req.params.id), user(res).name, reviewed));
 });
 
 // ---- storage / tailscale / logs -----------------------------------------

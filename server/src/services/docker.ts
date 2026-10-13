@@ -46,10 +46,11 @@ export async function restartContainer(name: string): Promise<void> {
   await docker().getContainer(name).restart({ t: 20 });
 }
 
-/** Follows a container's stdout+stderr; resolves to a stop function. */
-export async function followContainerLogs(name: string, onLine: (line: string) => void): Promise<() => void> {
+/** Follows a container's stdout+stderr; resolves to a stop function. `onEnd` fires if the stream dies. */
+export async function followContainerLogs(name: string, onLine: (line: string) => void, onEnd?: () => void): Promise<() => void> {
   if (!dockerAvailable()) {
     onLine(`[docker socket not available at ${cfg.dockerSocket}]`);
+    setTimeout(() => onEnd?.(), 0);
     return () => {};
   }
   const container = docker().getContainer(name);
@@ -61,8 +62,20 @@ export async function followContainerLogs(name: string, onLine: (line: string) =
   const rlErr = readline.createInterface({ input: err });
   rlOut.on("line", onLine);
   rlErr.on("line", onLine);
-  stream.on("error", (e: Error) => onLine(`[docker logs error] ${e.message}`));
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    onEnd?.();
+  };
+  stream.on("error", (e: Error) => {
+    onLine(`[docker logs error] ${e.message}`);
+    end();
+  });
+  stream.on("end", end);
+  stream.on("close", end);
   return () => {
+    ended = true;
     rlOut.close();
     rlErr.close();
     (stream as unknown as { destroy?: () => void }).destroy?.();

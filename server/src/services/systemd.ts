@@ -48,16 +48,27 @@ export async function unitAction(unit: string, action: UnitAction): Promise<void
   await execFileP("sudo", ["-n", "systemctl", action, unitName(unit)], { timeout: 180_000 });
 }
 
-/** Tails journald; returns a stop function. `args` selects the unit/priority. */
-export function followJournal(args: string[], onLine: (line: string) => void): () => void {
+/** Tails journald; returns a stop function. `args` selects the unit/priority. `onEnd` fires if the tail dies. */
+export function followJournal(args: string[], onLine: (line: string) => void, onEnd?: () => void): () => void {
   const child = spawn("journalctl", [...args, "-f", "-n", "200", "-o", "cat", "--no-pager"], {
     stdio: ["ignore", "pipe", "pipe"],
   });
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    onEnd?.();
+  };
   const rl = readline.createInterface({ input: child.stdout });
   rl.on("line", onLine);
   child.stderr.on("data", (d: Buffer) => onLine(`[journalctl] ${d.toString().trim()}`));
-  child.on("error", (e) => onLine(`[journalctl unavailable] ${e.message}`));
+  child.on("error", (e) => {
+    onLine(`[journalctl unavailable] ${e.message}`);
+    end();
+  });
+  child.on("close", end);
   return () => {
+    ended = true; // a deliberate stop is not a failure
     rl.close();
     if (!child.killed) child.kill();
   };

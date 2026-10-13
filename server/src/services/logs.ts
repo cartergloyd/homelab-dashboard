@@ -6,21 +6,21 @@ import type { LogSource } from "../types.js";
 
 export const LOG_SOURCES: LogSource[] = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"];
 
-/** Starts tailing a source; resolves to a function that stops it. */
-export async function openLogStream(source: LogSource, onLine: (line: string) => void): Promise<() => void> {
+/** Starts tailing a source; resolves to a function that stops it. `onEnd` fires if the tail dies on its own. */
+export async function openLogStream(source: LogSource, onLine: (line: string) => void, onEnd?: () => void): Promise<() => void> {
   if (cfg.demo) return demo.logStream(source, onLine);
   switch (source) {
     case "minecraft":
-      return followJournal(["-u", cfg.minecraft.service], onLine);
+      return followJournal(["-u", cfg.minecraft.service], onLine, onEnd);
     case "dashboard":
-      return followJournal(["-u", cfg.dashboardService], onLine);
+      return followJournal(["-u", cfg.dashboardService], onLine, onEnd);
     case "system":
-      return followJournal(["-p", "warning"], onLine);
+      return followJournal(["-p", "warning"], onLine, onEnd);
     case "jellyfin":
-      return followContainerLogs(cfg.jellyfin.container, onLine);
+      return followContainerLogs(cfg.jellyfin.container, onLine, onEnd);
     case "directus":
-      return followContainerLogs(cfg.directus.container, onLine);
+      return followContainerLogs(cfg.directus.container, onLine, onEnd);
     case "postgres":
-      return followContainerLogs(cfg.postgres.container, onLine);
+      return followContainerLogs(cfg.postgres.container, onLine, onEnd);
   }
 }

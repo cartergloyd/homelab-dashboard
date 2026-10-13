@@ -4,11 +4,24 @@ One web UI, reachable only over Tailscale, for a home server running Jellyfin
 (Docker), a Paper Minecraft server (native), and a personal Directus/PostgreSQL
 database.
 
-**Pages:** Dashboard · Jellyfin · Media files · Database · Minecraft · Maintenance
-· Logs · Service status · Storage
+**Tabs:** Dashboard · Media (Jellyfin, files) · Database · Minecraft (server, live
+alerts, assistant, maintenance) · System (status, storage, logs)
+
+**Live Server Alerts** (Minecraft tab): the Paper log, scheduled jobs, your
+maintenance scripts' output and agent actions in one feed, with a one-click
+"Problems & maintenance" filter. **Assistant** panel: which terminal agent is
+connected, what it did, the editable `CLAUDE.md` instructions with a change log,
+and maintenance reports agents file for you to review.
+
+**Agents:** the dashboard is an MCP server. Register it once in your terminal
+Claude Code or Codex (`Connect an agent` button has the command) and the agent can
+read alerts, tail logs, send RCON, restart the service, run scripts, file reports
+and update its own instructions — on your existing subscription, no API keys.
+These tools are deliberately powerful; everything they do is attributed in the feed.
 
 **Installing on the server:** follow [SERVER_SETUP.md](SERVER_SETUP.md). It is
-written so another AI assistant can do it step by step.
+written so another AI assistant can do it step by step. Start with
+[CLAUDE.md](CLAUDE.md) for the why and the current roadmap.
 
 ## Try it anywhere (demo mode)
 
@@ -36,6 +49,8 @@ server/   Express 5 + ws API. services/ holds one module per integration
 web/      Vite + React UI. pages/ has one file per page; components/ui.tsx has
           cards, tiles, meters, pills, dialogs and toasts.
 deploy/   systemd units, sudoers rule, environment template.
+scripts/  hl-run.sh — mirror a terminal command's output into the alerts feed.
+server/src/mcp.ts    stdio MCP server (thin client over the REST API); .mcp.json registers it.
 docker-compose.yml   PostgreSQL (127.0.0.1 only) + Directus.
 ```
 

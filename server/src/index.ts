@@ -9,7 +9,11 @@ import { cfg } from "./config.js";
 import { bootstrapDemo } from "./demo.js";
 import { statusOf } from "./errors.js";
 import { api } from "./routes.js";
+import { startHub } from "./services/alerts.js";
+import { initContext } from "./services/context.js";
+import { initReports } from "./services/reports.js";
 import { initScheduler } from "./services/scheduler.js";
+import { initScripts } from "./services/scripts.js";
 import { refreshFolders } from "./services/storage.js";
 import { attachLogSocket } from "./ws.js";
 
@@ -28,6 +32,10 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 async function main(): Promise<void> {
   if (cfg.demo) await bootstrapDemo();
   fs.mkdirSync(cfg.dataDir, { recursive: true });
+  await startHub();
+  await initScripts();
+  await initContext();
+  await initReports();
   await initScheduler();
   void refreshFolders();
 
@@ -51,6 +59,8 @@ async function main(): Promise<void> {
   attachLogSocket(server);
   server.listen(cfg.port, cfg.host, () => {
     console.log(`homelab-dashboard listening on http://${cfg.host}:${cfg.port}${cfg.demo ? " (DEMO mode)" : ""}${cfg.authDisabled ? " (auth disabled)" : ""}`);
+    if (!cfg.dashboardKey) console.warn("DASHBOARD_KEY is not set: scripts and the MCP connector cannot authenticate.");
+    else if (cfg.demo) console.log(`Dashboard key (demo): ${cfg.dashboardKey}`);
   });
 }
 

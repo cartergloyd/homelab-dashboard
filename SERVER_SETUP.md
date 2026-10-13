@@ -160,6 +160,59 @@ curl -i http://127.0.0.1:3000/api/health
 Expect `401` with `"No Tailscale identity on this request"`. A `200` here means
 `AUTH_DISABLED` is set — remove it.
 
+## 6b. Live Server Alerts, scripts and agents
+
+**Dashboard key.** Generate one and put it in `/etc/homelab-dashboard.env` as `DASHBOARD_KEY`:
+
+```bash
+openssl rand -hex 24
+```
+
+It is a password for the dashboard's own API (scripts, the MCP connector). It is **not**
+an Anthropic/OpenAI key and costs nothing.
+
+**Scripts folder.** Move the owner's Python/shell maintenance scripts (restart, backup, …)
+into `SCRIPTS_DIR` (default `/opt/homelab-scripts`):
+
+```bash
+sudo mkdir -p /opt/homelab-scripts && sudo chown homelab:homelab /opt/homelab-scripts
+```
+
+They run as the `homelab` user. If a script needs root (e.g. `systemctl` for other units),
+add an exact-argument rule for it to `/etc/sudoers.d/homelab` rather than running the
+dashboard as root. Scripts that still get launched from a terminal can be wrapped so their
+output lands in the feed:
+
+```bash
+sudo install -m 0755 scripts/hl-run.sh /usr/local/bin/hl-run
+```
+
+Then `HOMELAB_KEY=… hl-run python3 /opt/homelab-scripts/backup_world.py` (set `HOMELAB_URL`
+too when not on the server; it defaults to `http://127.0.0.1:3000`).
+
+**Alert rules.** Keyword rules live in `/opt/homelab-dashboard/data/alert-rules.json`
+(created on first start, hot-reloaded on edit). Three lists: `error`, `warn`, `maintenance`.
+
+**Connect a terminal agent (MCP).** The owner runs Claude Code / Codex in a terminal on
+their existing subscription; no API keys. Register the connector once per machine:
+
+```bash
+claude mcp add homelab -e HOMELAB_URL=http://127.0.0.1:3000 -e HOMELAB_KEY=<DASHBOARD_KEY> -- node /opt/homelab-dashboard/server/dist/mcp.js
+```
+
+From the owner's Mac over the tailnet use `HOMELAB_URL=https://<server>.<tailnet>.ts.net`
+and either clone the repo there too or wrap the command as
+`ssh <server> node /opt/homelab-dashboard/server/dist/mcp.js`. For Codex, the equivalent is
+`codex mcp add homelab …` or an `[mcp_servers.homelab]` block in `~/.codex/config.toml` —
+**verify the exact syntax against the current Codex docs** before telling the owner it works.
+Running `claude` inside `/opt/homelab-dashboard` picks the connector up automatically from
+`.mcp.json` (export `HOMELAB_KEY` first).
+
+The connector's tools can restart Minecraft, run scripts and edit `CLAUDE.md` — that is the
+owner's explicit choice. Every call is attributed in the alerts feed and the Assistant widget.
+
+Smoke test from the server: `cd /opt/homelab-dashboard/server && HOMELAB_KEY=… node test-mcp.mjs`.
+
 ## 7. Expose over Tailscale (HTTPS + identity)
 
 ```bash
@@ -192,6 +245,10 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 - [ ] **Media files** lists each root; a test upload appears and triggers a Jellyfin scan
 - [ ] **Database** page shows Directus `ok` and Postgres connected
 - [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only
+- [ ] **Minecraft → Live server alerts** shows Paper log lines; "Problems & maintenance" hides the routine ones
+- [ ] Each script in `SCRIPTS_DIR` has a ▶ button and its output appears in the feed
+- [ ] `node test-mcp.mjs` passes; the Assistant widget flips to "Connected · test-client"
+- [ ] Owner's terminal `claude` (or `codex`) lists the `homelab` MCP tools
 
 ## Troubleshooting
 
@@ -205,6 +262,9 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 | Dashboard 401 in browser | Opened via IP:3000 instead of the `tailscale serve` HTTPS address |
 | Dashboard 403 | Login not in `ALLOWED_LOGINS` |
 | Tailscale peers "unavailable" | `tailscale` CLI not on PATH for the service; `sudo ln -s $(which tailscale) /usr/bin/tailscale` |
+| Script button missing | file must be `*.py` or `*.sh` directly in `SCRIPTS_DIR` and readable by `homelab` |
+| MCP tools all fail with 401 | `HOMELAB_KEY` ≠ `DASHBOARD_KEY`, or `DASHBOARD_KEY` not set (service logs warn at start) |
+| Alerts feed empty for Minecraft | `homelab` not in `systemd-journal` group, or wrong `MC_SERVICE` unit name |
 
 ## Operating notes
 

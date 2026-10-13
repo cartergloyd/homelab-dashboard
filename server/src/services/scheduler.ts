@@ -9,9 +9,11 @@ import { z } from "zod";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import { fmtBytes, sleepUntil } from "../util.js";
+import { publish } from "./alerts.js";
 import { runBackup } from "./backups.js";
 import { getPlayers } from "./minecraft.js";
 import { rconCommand, stripColour } from "./rcon.js";
+import { runScriptAndWait } from "./scripts.js";
 import { unitAction, unitState } from "./systemd.js";
 import type { Job, JobRun, JobView } from "../types.js";
 
@@ -19,7 +21,7 @@ type Task = ReturnType<typeof schedule>;
 
 export const JobInput = z.object({
   name: z.string().trim().min(1).max(80),
-  type: z.enum(["restart", "backup", "command"]),
+  type: z.enum(["restart", "backup", "command", "script"]),
   cron: z.string().trim().refine((c) => validate(c), "Invalid cron expression"),
   enabled: z.boolean().default(true),
   options: z
@@ -28,6 +30,11 @@ export const JobInput = z.object({
       onlyWhenEmpty: z.boolean().optional(),
       keep: z.number().int().min(1).max(365).optional(),
       command: z.string().trim().max(500).optional(),
+      script: z
+        .string()
+        .trim()
+        .regex(/^[\w.-]+\.(py|sh)$/, "Script must be a *.py or *.sh file name")
+        .optional(),
     })
     .default({}),
 });
@@ -103,6 +110,7 @@ function view(job: Job): JobView {
 
 function assertValid(job: Pick<Job, "type" | "options">): void {
   if (job.type === "command" && !job.options.command) throw new HttpError(400, "A command is required for command jobs");
+  if (job.type === "script" && !job.options.script) throw new HttpError(400, "Choose a script for script jobs");
 }
 
 export function listJobs(): JobView[] {
@@ -160,6 +168,7 @@ export function nextScheduled(): { name: string; at: string } | null {
 function startRun(job: Job): JobRun {
   const run: JobRun = { id: crypto.randomUUID(), jobId: job.id, jobName: job.name, type: job.type, startedAt: new Date().toISOString(), finishedAt: null, ok: null, message: "Running…" };
   runs.unshift(run);
+  publish({ source: "jobs", kind: "job", level: "info", tags: ["maintenance"], text: `Job "${job.name}" started (${job.type})`, meta: { job: job.name, jobId: job.id } });
   return run;
 }
 
@@ -178,6 +187,14 @@ async function execute(jobId: string, existing?: JobRun): Promise<void> {
     run.finishedAt = new Date().toISOString();
     running.delete(jobId);
     runs = runs.slice(0, 200);
+    publish({
+      source: "jobs",
+      kind: "job",
+      level: run.ok ? "info" : "error",
+      tags: ["maintenance"],
+      text: `Job "${job.name}" ${run.ok ? "finished" : "failed"}: ${run.message}`,
+      meta: { job: job.name, jobId: job.id },
+    });
     await writeJson(runsFile(), runs).catch(() => {});
   }
 }
@@ -192,7 +209,10 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
     }
     const warns = [...new Set((job.options.warnMinutes ?? [10, 5, 1]).filter((n) => n > 0))].sort((a, b) => b - a);
     const scale = cfg.demo ? 1000 : 60_000; // demo mode: minutes become seconds
-    const say = (msg: string) => rconCommand(`say ${msg}`).catch(() => {});
+    const say = (msg: string) => {
+      publish({ source: "jobs", kind: "job", level: "info", tags: ["maintenance"], text: `Countdown: ${msg}`, meta: { job: job.name, jobId: job.id } });
+      return rconCommand(`say ${msg}`).catch(() => {});
+    };
     if (warns.length) {
       const t0 = Date.now();
       const total = warns[0] * scale;
@@ -217,5 +237,12 @@ const runners: Record<Job["type"], (job: Job) => Promise<string>> = {
     const cmd = job.options.command?.trim();
     if (!cmd) throw new Error("No command configured");
     return stripColour(await rconCommand(cmd)) || "(no output)";
+  },
+  async script(job) {
+    const name = job.options.script;
+    if (!name) throw new Error("No script configured");
+    const { run, tail } = await runScriptAndWait(name, "job");
+    if (run.exitCode !== 0) throw new Error(`${name} exited ${run.exitCode}: ${tail.slice(-2).join(" | ") || "(no output)"}`);
+    return `${name} exited 0 (${run.lines} lines)`;
   },
 };

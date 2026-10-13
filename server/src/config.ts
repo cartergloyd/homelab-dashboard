@@ -1,6 +1,10 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { MediaRoot } from "./types.js";
+import type { AlertSource, LogSource, MediaRoot } from "./types.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ALL_LOG_SOURCES: LogSource[] = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"];
 
 const flag = z
   .string()
@@ -56,6 +60,15 @@ const Env = z.object({
 
   DASHBOARD_SERVICE: z.string().default("homelab-dashboard"),
   TZ: z.string().optional(),
+
+  // Locally generated password for scripts and the MCP connector (NOT an AI API key)
+  DASHBOARD_KEY: z.string().optional(),
+  // Folder of maintenance scripts (*.py, *.sh) shown as ▶ buttons and runnable as jobs
+  SCRIPTS_DIR: z.string().default("/opt/homelab-scripts"),
+  // The instructions file agents read; edited from the Assistant widget
+  CONTEXT_FILE: z.string().optional(),
+  // Which log sources the alerts hub tails continuously (default: all)
+  ALERT_SOURCES: csv,
 });
 
 const env = Env.parse(process.env);
@@ -100,12 +113,23 @@ export const cfg = {
   },
   postgres: { url: env.PG_URL, container: env.POSTGRES_CONTAINER },
   dashboardService: env.DASHBOARD_SERVICE,
+  dashboardKey: (env.DASHBOARD_KEY ?? null) as string | null,
+  scriptsDir: env.SCRIPTS_DIR,
+  // dist/config.js → server/dist → server → repo root
+  contextFile: env.CONTEXT_FILE ?? path.resolve(here, "../../CLAUDE.md"),
+  alertSources: (env.ALERT_SOURCES.length
+    ? env.ALERT_SOURCES.filter((s): s is LogSource => (ALL_LOG_SOURCES as string[]).includes(s))
+    : ALL_LOG_SOURCES) as LogSource[],
   // which env vars were set explicitly, so demo mode only fills the gaps
   explicit: {
     mediaRoots: env.MEDIA_ROOTS.length > 0,
     mcDir: process.env.MC_DIR !== undefined,
     backupDir: process.env.BACKUP_DIR !== undefined,
+    scriptsDir: process.env.SCRIPTS_DIR !== undefined,
+    contextFile: process.env.CONTEXT_FILE !== undefined,
   },
 };
+
+export const ALERT_SOURCE_IDS: AlertSource[] = [...ALL_LOG_SOURCES, "jobs", "scripts", "agent"];
 
 export type Config = typeof cfg;

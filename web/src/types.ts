@@ -103,13 +103,14 @@ export interface DatabasePayload {
   };
 }
 
-export type JobType = "restart" | "backup" | "command";
+export type JobType = "restart" | "backup" | "command" | "script";
 
 export interface JobOptions {
   warnMinutes?: number[];
   onlyWhenEmpty?: boolean;
   keep?: number;
   command?: string;
+  script?: string;
 }
 
 export interface Job {
@@ -197,6 +198,102 @@ export interface OverviewPayload {
 
 export type LogSource = "minecraft" | "jellyfin" | "directus" | "postgres" | "dashboard" | "system";
 
+// ---- Live Server Alerts --------------------------------------------------
+
+export type AlertLevel = "info" | "warn" | "error";
+export type AlertSource = LogSource | "jobs" | "scripts" | "agent";
+export type AlertKind = "log" | "job" | "script" | "agent";
+
+export interface AlertEvent {
+  id: string;
+  ts: string;
+  source: AlertSource;
+  kind: AlertKind;
+  level: AlertLevel;
+  tags: string[];
+  text: string;
+  meta?: {
+    job?: string;
+    jobId?: string;
+    script?: string;
+    runId?: string;
+    agent?: string;
+    exitCode?: number | null;
+    label?: string;
+  };
+}
+
+export interface AlertSummary {
+  total: number;
+  errorsLastHour: number;
+  warnsLastHour: number;
+  maintenanceLastHour: number;
+  lastMaintenance: AlertEvent | null;
+  lastAgent: AlertEvent | null;
+}
+
+export interface AgentPresence {
+  name: string;
+  lastSeen: string;
+  lastAction: string | null;
+  actions: number;
+}
+
+export interface ScriptRun {
+  id: string;
+  script: string;
+  trigger: "manual" | "job" | "agent";
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  lines: number;
+}
+
+export interface ScriptInfo {
+  name: string;
+  kind: "python" | "shell";
+  running: boolean;
+  lastRun: ScriptRun | null;
+}
+
+export interface AgentReport {
+  id: string;
+  ts: string;
+  agent: string;
+  title: string;
+  body: string;
+  reviewed: boolean;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
+export interface ContextPayload {
+  path: string;
+  content: string;
+  hash: string;
+  updatedAt: string | null;
+}
+
+export interface ContextHistoryEntry {
+  id: string;
+  ts: string;
+  author: string;
+  note: string;
+  added: number;
+  removed: number;
+  bytes: number;
+}
+
+export interface DiffLine {
+  type: "same" | "add" | "del";
+  text: string;
+}
+
+export interface ContextVersion extends ContextHistoryEntry {
+  content: string;
+  diff: DiffLine[];
+}
+
 export interface AppConfigPayload {
   demo: boolean;
   user: { login: string; name: string };
@@ -204,4 +301,8 @@ export interface AppConfigPayload {
   mediaRoots: string[];
   timezone: string;
   logSources: LogSource[];
+  alertSources: AlertSource[];
+  scriptsDir: string;
+  contextFile: string;
+  dashboardKey?: string;
 }
