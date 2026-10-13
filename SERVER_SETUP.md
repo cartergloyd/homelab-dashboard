@@ -24,6 +24,34 @@ Acceptance criteria the owner set:
 2. Directus UI is **reachable** over the tailnet.
 3. **PostgreSQL stays private** on the server (published on `127.0.0.1` only — never LAN/tailnet).
 
+## 0. Placeholders — find and replace every one
+
+This repo was built on a laptop against a **demo** of the server, not the server. Every
+assumption that could not be verified is marked in the code and config with the tag
+`[INSTALLER]`. Before anything else, list them:
+
+```bash
+grep -rn "\[INSTALLER\]" --include="*.ts" --include="*.yml" --include="*.example" --include="*.service" --include="sudoers-*" . | grep -v node_modules
+```
+
+Resolve each hit against the live server and tick it off. The main ones:
+
+| Where | What is placeholder | Replace with |
+|---|---|---|
+| `server/src/config.ts` | every `.default(...)` (container names, unit name, paths, ports) | real values in `/etc/homelab-dashboard.env` |
+| `server/src/services/scheduler.ts` `defaultJobs()` | two seeded built-in jobs (disabled) | `external` mirrors of the real cron lines; delete the seeds (§ 6c) |
+| `server/src/demo.ts` | fake players/peers/filesystems, demo key, 3 sample scripts | nothing — never set `DEMO`; real scripts live in cron / `SCRIPTS_DIR` |
+| `server/src/services/backups.ts` `WORLDS` | Paper default world folder names | `level-name` from the real server.properties (only if the built-in backup is ever used) |
+| `server/src/services/alerts.ts` `DEFAULT_RULES` | keyword rules tuned on demo logs | tune `data/alert-rules.json` after a day of real logs |
+| `server/src/services/systemd.ts`, `deploy/sudoers-homelab` | `minecraft.service`, `/usr/bin/systemctl` | real unit name, real systemctl path |
+| `deploy/minecraft.service` | user, folder, jar, memory | only if Paper is not already a unit — otherwise don't install it |
+| `deploy/homelab-dashboard.service` | `/opt/homelab-dashboard`, `/usr/bin/node` | real install path, `which node` |
+| `deploy/homelab-dashboard.env.example`, `.env.example` | every value | real values |
+| `docker-compose.yml` | ports, image tags, container names | check free ports and current tags; names must match the dashboard env |
+
+The demo you may have seen running is **not** a picture of this server. When the demo and
+the live machine disagree, the live machine is right and the code/config gets corrected.
+
 ## Facts to discover first (ask or inspect; don't guess)
 
 | Fact | How to find it | Used for |

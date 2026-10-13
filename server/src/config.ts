@@ -6,6 +6,12 @@ import type { AlertSource, LogSource, MediaRoot } from "./types.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ALL_LOG_SOURCES: LogSource[] = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"];
 
+// [INSTALLER] Every `.default(...)` below is a PLACEHOLDER guess for a typical
+// install (container names, unit name, paths, ports). None of them is known to
+// match the real server. Set the true values in /etc/homelab-dashboard.env
+// (template: deploy/homelab-dashboard.env.example); the env always wins.
+// Find every placeholder in the repo with:  grep -rn "\[INSTALLER\]" .
+
 const flag = z
   .string()
   .optional()
@@ -115,7 +121,8 @@ export const cfg = {
   dashboardService: env.DASHBOARD_SERVICE,
   dashboardKey: (env.DASHBOARD_KEY ?? null) as string | null,
   scriptsDir: env.SCRIPTS_DIR,
-  // dist/config.js → server/dist → server → repo root
+  // dist/config.js → server/dist → server → repo root (wherever the repo is installed)
+  repoRoot: path.resolve(here, "../.."),
   contextFile: env.CONTEXT_FILE ?? path.resolve(here, "../../CLAUDE.md"),
   alertSources: (env.ALERT_SOURCES.length
     ? env.ALERT_SOURCES.filter((s): s is LogSource => (ALL_LOG_SOURCES as string[]).includes(s))

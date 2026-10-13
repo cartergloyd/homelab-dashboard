@@ -1,4 +1,6 @@
 # systemd unit for the dashboard. Install to /etc/systemd/system/homelab-dashboard.service
+# [INSTALLER] placeholders: /opt/homelab-dashboard (install path), /usr/bin/node (`which node`),
+# user/group homelab. Keep DEMO / AUTH_DISABLED out of the env file on the server.
 [Unit]
 Description=Homelab dashboard (Jellyfin, Minecraft, Directus over Tailscale)
 After=network-online.target docker.service tailscaled.service

@@ -68,6 +68,10 @@ export async function startScript(name: string, trigger: ScriptRun["trigger"]): 
   if (active.has(name)) throw new HttpError(409, `${name} is already running`);
 
   const run: ScriptRun = { id: crypto.randomUUID(), script: name, trigger, startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, lines: 0 };
+  // [INSTALLER] Scripts run as the `homelab` service user with `python3`/`bash`
+  // from PATH, cwd = SCRIPTS_DIR. The owner's real scripts may expect a different
+  // user, a venv, or sudo — check their shebangs/imports and either adjust the
+  // unit/sudoers or keep them on cron (wrapped with hl-run) instead of here.
   const isPython = name.endsWith(".py");
   const child = spawn(isPython ? "python3" : "bash", isPython ? ["-u", file] : [file], {
     cwd: cfg.scriptsDir,

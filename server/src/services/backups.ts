@@ -9,6 +9,11 @@ import { rconCommand } from "./rcon.js";
 import type { BackupFile } from "../types.js";
 
 const execFileP = promisify(execFile);
+// [INSTALLER] PLACEHOLDER: Paper's default world folders. Check `level-name` in
+// the real server.properties — if the world is not called "world", add the real
+// names here (Paper names the other dimensions <level-name>_nether / _the_end).
+// Only matters if the built-in `backup` job is ever used; the owner's own backup
+// script is the live mechanism today.
 const WORLDS = ["world", "world_nether", "world_the_end"];
 const NAME_RE = /^mc-\d{8}-\d{6}\.tar\.gz$/;
 

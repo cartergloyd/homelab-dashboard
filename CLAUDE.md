@@ -75,6 +75,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 
 ## Conventions
 
+- **`[INSTALLER]` tags mark placeholders.** Anything written against the demo rather
+  than the real server — default container/unit names, paths, seeded jobs, sample
+  scripts, alert rules, deploy templates — carries a `[INSTALLER]` comment saying what
+  to replace it with. `grep -rn "\[INSTALLER\]" .` lists them; SERVER_SETUP § 0 is
+  the checklist. When you add a new guess, tag it the same way.
 - One service module per integration. Never let a missing dependency crash boot —
   return `unavailable`/`null` and let the UI say so.
 - Validate request bodies with zod at the route; throw `HttpError(status, msg)`.

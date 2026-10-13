@@ -22,6 +22,11 @@ export interface RuleSet {
   maintenance: string[];
 }
 
+// [INSTALLER] PLACEHOLDER rule set, written against demo log lines. It is copied
+// to data/alert-rules.json on first start and tuned THERE (hot-reloaded) — not
+// here. After a day of real logs, review what the "Problems & maintenance" filter
+// shows and move noisy patterns out / missing failure phrases in. Plugin-specific
+// errors (Paper plugins, Jellyfin transcoder) are not covered yet.
 export const DEFAULT_RULES: RuleSet = {
   error: [
     "\\bERROR\\b",

@@ -54,6 +54,7 @@ api.get("/config", (_req, res) => {
     alertSources: ALERT_SOURCE_IDS,
     scriptsDir: cfg.scriptsDir,
     contextFile: cfg.contextFile,
+    mcpScript: path.join(cfg.repoRoot, "server", "dist", "mcp.js"),
     ...(u.viaKey || !cfg.dashboardKey ? {} : { dashboardKey: cfg.dashboardKey }),
   };
   res.json(payload);

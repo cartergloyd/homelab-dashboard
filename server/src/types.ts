@@ -329,6 +329,8 @@ export interface AppConfigPayload {
   alertSources: AlertSource[];
   scriptsDir: string;
   contextFile: string;
+  /** absolute path of server/dist/mcp.js on this machine, for the connect snippet */
+  mcpScript: string;
   /** only sent to Tailscale-identified users, never to key-authenticated clients */
   dashboardKey?: string;
 }

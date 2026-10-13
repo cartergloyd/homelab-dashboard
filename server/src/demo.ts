@@ -1,6 +1,15 @@
 // DEMO=1 fixtures. Lets the whole UI run on a laptop with no Docker, systemd,
 // Tailscale, Jellyfin or Minecraft present. Files and backups still operate on
 // real (throwaway) directories under DATA_DIR/demo so those flows can be exercised.
+//
+// [INSTALLER] EVERYTHING IN THIS FILE IS DEMO ONLY. Nothing here runs on the
+// server unless DEMO=1 is set — never set DEMO or AUTH_DISABLED on the server.
+// The fake players, peers, filesystems, container names, the demo key
+// ("demo-key-not-secret") and the three sample scripts (backup_world.py,
+// restart_server.py, check_disk.py) are stand-ins. The real equivalents are:
+// the owner's existing Python scripts (point SCRIPTS_DIR at them or wrap their
+// cron lines with hl-run), the real DASHBOARD_KEY, and whatever `docker ps`,
+// `systemctl` and `tailscale status` actually report.
 
 import fs from "node:fs/promises";
 import path from "node:path";

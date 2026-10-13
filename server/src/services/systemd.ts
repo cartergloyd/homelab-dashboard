@@ -42,7 +42,13 @@ export async function unitState(unit: string): Promise<UnitState | null> {
   }
 }
 
-/** Privileged: relies on the exact-argument sudoers rules in deploy/sudoers-homelab. */
+/**
+ * Privileged: relies on the exact-argument sudoers rules in deploy/sudoers-homelab.
+ * [INSTALLER] Those rules name `minecraft.service` and `/usr/bin/systemctl`. If the
+ * real unit is called something else (MC_SERVICE) or systemctl lives in /bin, the
+ * sudoers file must be changed to match or every Start/Stop/Restart fails with
+ * "a password is required".
+ */
 export async function unitAction(unit: string, action: UnitAction): Promise<void> {
   if (cfg.demo) return demo.unitAction(unit, action);
   await execFileP("sudo", ["-n", "systemctl", action, unitName(unit)], { timeout: 180_000 });

@@ -2,6 +2,13 @@
 # PostgreSQL is published on 127.0.0.1 only — it is never reachable from the LAN or the tailnet.
 # Directus is published on all interfaces; ufw limits inbound traffic to the tailscale0 interface.
 # The dashboard itself runs natively (see SERVER_SETUP.md), not in this stack.
+#
+# [INSTALLER] This stack is NEW infrastructure (the owner has no Postgres/Directus yet),
+# so these are the values to create — but check two things first: (1) nothing else on the
+# server already uses ports 5432 or 8055 (`ss -ltnp`); (2) the pinned image tags are still
+# current and supported (postgres:16, directus/directus:11.9.3 were current in Oct 2026).
+# The container names below must match DIRECTUS_CONTAINER / POSTGRES_CONTAINER in the
+# dashboard env, or its logs/status for them show "unavailable".
 
 services:
   postgres:

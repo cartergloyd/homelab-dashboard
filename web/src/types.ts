@@ -306,5 +306,6 @@ export interface AppConfigPayload {
   alertSources: AlertSource[];
   scriptsDir: string;
   contextFile: string;
+  mcpScript: string;
   dashboardKey?: string;
 }

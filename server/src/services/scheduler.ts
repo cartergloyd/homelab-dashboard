@@ -64,9 +64,13 @@ async function writeJson(file: string, data: unknown): Promise<void> {
   await fs.rename(tmp, file);
 }
 
-// Seeded only when data/jobs.json does not exist yet. Both start DISABLED: the
-// owner already has backup/restart scripts, and the installer decides (see
-// SERVER_SETUP.md § 6c) whether to schedule those or these built-ins.
+// [INSTALLER] PLACEHOLDER / DEMO ONLY. These two jobs are seeded once, when
+// data/jobs.json does not exist, and start DISABLED. They are NOT the live
+// server's schedule. The live server already restarts and backs up semi-weekly
+// via cron + the owner's Python scripts — that infrastructure stays as it is.
+// Replace these with `external` jobs that mirror the real crontab lines
+// (SERVER_SETUP.md § 6c), then delete these two. Never enable them without the
+// owner's say-so: that would back up / restart twice.
 function defaultJobs(): Job[] {
   const createdAt = new Date().toISOString();
   return [

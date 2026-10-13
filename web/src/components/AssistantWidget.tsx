@@ -20,7 +20,8 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
   const key = config.data?.dashboardKey;
   const mask = (k: string) => (reveal ? k : `${k.slice(0, 4)}…${k.slice(-4)}`);
   const shownKey = key ? mask(key) : "<DASHBOARD_KEY>";
-  const node = "/opt/homelab-dashboard/server/dist/mcp.js";
+  // real path reported by the server, so the snippet is right wherever the repo was installed
+  const node = config.data?.mcpScript ?? "/opt/homelab-dashboard/server/dist/mcp.js";
   const snippets = [
     {
       title: "Claude Code — from this device over Tailscale",
@@ -75,7 +76,7 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
           </div>
         ))}
         <p className="muted small" style={{ margin: 0 }}>
-          The node path assumes the dashboard is installed at /opt/homelab-dashboard on the server. Running the connector from this device needs the repo cloned here too, or wrap it as <code className="mono">ssh homeserver node {node}</code>.
+          The node path is where this dashboard is installed on the server. Running the connector from another device needs the repo cloned there too, or wrap it as <code className="mono">ssh homeserver node {node}</code>.
         </p>
       </div>
     </Modal>
