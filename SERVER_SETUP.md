@@ -41,7 +41,7 @@ Resolve each hit against the live server and tick it off. The main ones:
 | `server/src/config.ts` | every `.default(...)` (container names, unit name, paths, ports) | real values in `/etc/homelab-dashboard.env` |
 | `server/src/services/scheduler.ts` `defaultJobs()` | demo-only seeds (a real install starts with zero jobs) | `npm run discover -- --apply` to mirror the real timers (§ 6c); `npm run clear-demo-data` if seeds leaked |
 | `server/src/demo.ts` | fake players/peers/filesystems, demo key, 3 sample scripts | nothing — never set `DEMO`; real scripts live in cron / `SCRIPTS_DIR` |
-| `server/src/services/backups.ts` `WORLDS` | Paper default world folder names | `level-name` from the real server.properties (only if the built-in backup is ever used) |
+| `server/src/services/backups.ts` `worldFolders()` | reads `level-name` from `MC_DIR/server.properties`, falls back to `world` | nothing, unless the world folders live outside `MC_DIR` |
 | `server/src/services/alerts.ts` `DEFAULT_RULES` | keyword rules tuned on demo logs | tune `data/alert-rules.json` after a day of real logs |
 | `server/src/services/systemd.ts`, `deploy/sudoers-homelab` | `minecraft.service`, `/usr/bin/systemctl` | real unit name, real systemctl path |
 | `deploy/minecraft.service` | user, folder, jar, memory | only if Paper is not already a unit — otherwise don't install it |
@@ -231,9 +231,23 @@ claude mcp add homelab -e HOMELAB_URL=http://127.0.0.1:3000 -e HOMELAB_KEY=<DASH
 
 From the owner's Mac over the tailnet use `HOMELAB_URL=https://<server>.<tailnet>.ts.net`
 and either clone the repo there too or wrap the command as
-`ssh <server> node /opt/homelab-dashboard/server/dist/mcp.js`. For Codex, the equivalent is
-`codex mcp add homelab …` or an `[mcp_servers.homelab]` block in `~/.codex/config.toml` —
-**verify the exact syntax against the current Codex docs** before telling the owner it works.
+`ssh <server> node /opt/homelab-dashboard/server/dist/mcp.js`.
+
+Codex CLI (syntax per the official MCP page, developers.openai.com/codex/mcp):
+
+```bash
+codex mcp add homelab --env HOMELAB_URL=http://127.0.0.1:3000 --env HOMELAB_KEY=<DASHBOARD_KEY> -- node /opt/homelab-dashboard/server/dist/mcp.js
+```
+
+or the equivalent block in `~/.codex/config.toml` (`codex mcp list` / `codex mcp get homelab` to check):
+
+```toml
+[mcp_servers.homelab]
+command = "node"
+args = ["/opt/homelab-dashboard/server/dist/mcp.js"]
+env = { HOMELAB_URL = "http://127.0.0.1:3000", HOMELAB_KEY = "<DASHBOARD_KEY>" }
+```
+
 Running `claude` inside `/opt/homelab-dashboard` picks the connector up automatically from
 `.mcp.json` (export `HOMELAB_KEY` first).
 
@@ -248,52 +262,71 @@ Jobs are **data, not code**: `/opt/homelab-dashboard/data/jobs.json`, edited thr
 Maintenance card (create / edit / enable / disable / delete / Run now). Run history is in
 `data/job-runs.json` (last 200). Times use the `TZ` in `/etc/homelab-dashboard.env`.
 
-On the very first start (no `jobs.json` yet) two jobs are seeded, **both disabled**:
-
-| Seeded job | Type | Schedule | What it does |
-|---|---|---|---|
-| Nightly world backup | `backup` | 04:00 | RCON `save-off` → `save-all flush` → tar.gz `world*` into `BACKUP_DIR` → `save-on`; keeps the newest `BACKUP_KEEP` |
-| Daily restart | `restart` | 05:00 | in-game countdown at 10/5/1 min → `save-all` → `systemctl restart`; skips if players are online |
-
-Five job types exist: `backup`, `restart` (as above), `command` (one RCON command),
-`script` (runs a file from `SCRIPTS_DIR`, output into the alerts feed) and `external`
-(**mirror only** — something cron or a systemd timer already runs; the dashboard never
-runs it, just marks the feed when it is due and checks that output arrived).
+A non-demo install starts with **zero jobs** (nothing is seeded; issue #2). Five job
+types exist: `backup` (RCON `save-off` → `save-all flush` → tar the worlds into
+`BACKUP_DIR` → `save-on`, retention only over backups the dashboard made), `restart`
+(in-game countdown → `save-all` → `systemctl restart`, skips if players are online),
+`command` (one RCON command), `script` (runs a file from `SCRIPTS_DIR`, output into the
+alerts feed) and `external` (**mirror only** — something cron or a systemd timer already
+runs; the dashboard never runs it, just marks the feed when it is due and checks that
+output arrived). On this server everything that matters is `external`.
 
 **The owner's instruction for this install: the live server already restarts and backs up
 on a semi-weekly schedule (systemd timers + Python scripts), and that must keep working
 exactly as it does. Do not delete, move or re-time those timers.** A non-demo install
 starts with **zero** jobs; make the dashboard *reflect* reality with the tools:
 
-1. **Discover.** `npm run discover` (= `audit:install --propose`) lists the relevant
-   systemd timers (`systemctl list-timers`), reads each one's `OnCalendar` and the
-   service's `ExecStart`, and prints: a suggested `SCRIPTS_DIR` (the folders the scripts
-   actually live in) and one proposed `external` mirror job per timer with the timer's
-   name, the schedule translated to cron, the exact command, and the script name to
-   watch for. Also check `sudo crontab -l` and `crontab -l` for the owner / Minecraft
-   user — cron entries are not auto-discovered; mirror those by hand (Maintenance → New
-   job → External, `managedBy: cron`).
-2. **Review, then apply.** Fix any schedule the tool could not translate, then
+1. **Discover.** `npm run discover` (= `audit:install --propose`) finds the real
+   schedule and prints what to configure, without changing anything:
+   - **systemd timers** (`systemctl list-timers`, JSON or text on old systemd): each
+     relevant timer's `OnCalendar` is translated to cron and **verified against
+     systemd's own next-elapse time** — a translation that disagrees is flagged "set by
+     hand" instead of being trusted. The service's `ExecStart` (via `systemctl cat`, so
+     quoting survives) becomes the displayed command and the script name to watch for.
+   - **crontabs**: `crontab -l` for the service user, `/etc/crontab`, `/etc/cron.d/*`,
+     and — through `sudo -n crontab -l -u <user>` — root's and the Minecraft folder
+     owner's. Only Minecraft-looking lines (backup / restart / update / world / the
+     server folder) are kept. If sudo refuses, the audit says so and names the command
+     to run by hand.
+   - **script folders** (where the timer/cron commands' `*.py`/`*.sh` actually live) and
+     **backup roots** (folders holding `mcworld_YYYY_MM_DD/`, `mc-*.tar.gz` or
+     world/minecraft archives, searched under the Minecraft folder, `/home`, `/mnt`,
+     `/media`, `/srv`, `/opt`, `/var/backups` and any path the scripts mention).
+   Output: a "Proposed /etc/homelab-dashboard.env changes" block (`SCRIPTS_DIR`,
+   `BACKUP_DIR`, `BACKUP_FORMAT`, `BACKUP_METHOD=script:<name>` when a backup script was
+   found) and one proposed `external` mirror job per timer / cron line with the real
+   name, schedule, command, script and — for cron — the exact wrapped line to paste.
+2. **Review, then apply.** Put the env suggestions in `/etc/homelab-dashboard.env`
+   (restart the dashboard), fix any schedule marked "set by hand", then
    `npm run discover -- --apply` creates the mirror jobs in the running dashboard. They
    are display-only: the dashboard never runs them, it marks "Due now" in the feed and
    checks the output arrived.
-3. **Wrap each timer's service with hl-run** so its output and exit code reach the feed:
-   `sudo install -m 0755 scripts/hl-run.sh /usr/local/bin/hl-run`, then per unit
-   `sudo npm run wrap-service -- <unit>.service --apply --test`. It writes a systemd
-   drop-in that prefixes the original `ExecStart` with hl-run (quoting preserved from
-   `systemctl cat`, so paths with spaces survive), reloads systemd, and sends a test
-   event. The timer and schedule are untouched. Until this is done the job row says
-   "Output not tracked — wrap with hl-run".
-4. **Point the dashboard at the real folders.** In `/etc/homelab-dashboard.env`:
-   `SCRIPTS_DIR` (comma-separated; from step 1), `BACKUP_DIR` (where the existing
-   `mcworld_YYYY_MM_DD/` folders are), and if "Back up now" should run the owner's own
-   script, `BACKUP_METHOD=script:<name>` (the script must be in `SCRIPTS_DIR`). Otherwise
-   `BACKUP_FORMAT=dated-folder` makes the built-in backup write the same layout.
+3. **Install hl-run and wrap the real jobs** so their output and exit code reach the feed:
+   ```bash
+   sudo npm run wrap-service -- --install-hl-run      # /usr/local/bin/hl-run + /etc/homelab-hl-run.env (URL + key only, 0600)
+   sudo npm run wrap-service -- <unit>.service --apply --test    # once per timer-backed service
+   ```
+   The drop-in prefixes the original `ExecStart` with hl-run (quoting preserved from
+   `systemctl cat`, so paths with spaces survive), reloads systemd, and `--test` proves a
+   test event reaches the feed *using only the env file*, exactly as the unit will. The
+   timer and schedule are untouched. For a **cron** line, paste the wrapped line that
+   `discover` printed (`… /usr/local/bin/hl-run <original command>`) into that crontab;
+   if the crontab belongs to a user other than root, make `/etc/homelab-hl-run.env`
+   readable to them (`chown root:<user>`, `chmod 0640`) or put `HOMELAB_KEY=…` at the top
+   of the crontab. Until this is done the job row says "Output not tracked — wrap with
+   hl-run" and the audit fails that job.
+4. **Point the dashboard at the real folders** if step 2 did not already: `SCRIPTS_DIR`
+   (comma-separated), `BACKUP_DIR` (where the existing `mcworld_YYYY_MM_DD/` folders are),
+   and if "Back up now" should run the owner's own script, `BACKUP_METHOD=script:<name>`
+   (the script must be in `SCRIPTS_DIR`). Otherwise `BACKUP_FORMAT=dated-folder` makes the
+   built-in backup write the same layout. The built-in backup reads `level-name` from
+   `server.properties`, so a world not called `world` needs no configuration.
 5. **Audit.** `npm run audit:install` must end with `FULLY CONNECTED`. It gates on: env
    sane (no DEMO, real key), unit + sudo rule, Docker + Jellyfin, RCON, Tailscale, scripts
-   folders exist, backup roots exist, no demo data, every relevant timer mirrored with
-   output tracking connected, and a live alerts-ingestion test. Record what you found in
-   `CLAUDE.md` → Decisions log.
+   folders exist, backup roots exist, no demo data, every relevant timer **and cron entry**
+   mirrored, each timer mirror's cron expression agreeing with systemd's next run, output
+   tracking connected for every mirror, hl-run installed, and a live alerts-ingestion test.
+   Record what you found in `CLAUDE.md` → Decisions log.
 
 Verify in the UI: the Dashboard's "Next scheduled job" tile shows the next real timer
 time; the Maintenance table shows each mirror with its timer name and a green "Output
@@ -320,11 +353,14 @@ if you quote in the right place:
 | Command | What it does |
 |---|---|
 | `npm run audit:install` | Production audit; `FULLY CONNECTED` only when all gated checks pass. `-- --json` for agents. Exit 1 on failure. |
-| `npm run discover` | Audit + discovery: proposes `SCRIPTS_DIR` and `external` mirror jobs for unmirrored systemd timers. `-- --apply` creates them. |
+| `npm run discover` | Audit + discovery: systemd timers, crontabs, script folders, backup roots → proposed env values and `external` mirror jobs (cron translations verified against systemd). `-- --apply` creates the jobs. |
 | `npm run clear-demo-data` | Dry run listing seeded jobs/runs, the demo folder and demo reports; `-- --yes` removes them. Never touches user data. |
-| `npm run wrap-service -- <unit>` | Prints the hl-run drop-in for a service; `--apply` (root) writes + reloads; `--test` sends a test event through hl-run. |
+| `npm run wrap-service -- --install-hl-run` | (root) Installs `/usr/local/bin/hl-run` and writes `/etc/homelab-hl-run.env` (dashboard URL + key only). |
+| `npm run wrap-service -- <unit>` | Prints the hl-run drop-in for a service; `--apply` (root) writes + reloads; `--test` sends a test event through hl-run the way cron/systemd would (env file only). |
+| `node server/test-discover.mjs` | Unit checks for the schedule translation / crontab parsing used by `discover`. |
 
-All read `/etc/homelab-dashboard.env` (override with `--env FILE`).
+All read `/etc/homelab-dashboard.env` (override with `--env FILE`). None of them ever
+edits a timer, a crontab or a script — they print; you apply.
 
 ## 6d. VPN tab
 
@@ -395,7 +431,7 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 - [ ] `node test-mcp.mjs` passes; the Assistant widget flips to "Connected · test-client"
 - [ ] Owner's terminal `claude` (or `codex`) lists the `homelab` MCP tools
 - [ ] **World backups** panel lists the existing `mcworld_…` folders (marked "existing") before any dashboard-made backup
-- [ ] Every mirrored timer shows "Output tracking connected"
+- [ ] Every mirrored timer **and cron line** shows "Output tracking connected"; `npm run discover` proposes nothing new
 - [ ] `npm run audit:install` ends with **FULLY CONNECTED**
 
 ## Troubleshooting
@@ -418,5 +454,5 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 
 - Logs: `journalctl -u homelab-dashboard -f`
 - Update: copy new files, `npm ci && npm run build`, `systemctl restart homelab-dashboard`
-- Job definitions: `/opt/homelab-dashboard/data/jobs.json` (editable while stopped; see § 6c). Deleting the file re-seeds the two disabled defaults on next start.
+- Job definitions: `/opt/homelab-dashboard/data/jobs.json` (editable while stopped; see § 6c). Deleting the file leaves zero jobs on next start — re-run `npm run discover -- --apply` to recreate the mirrors.
 - Demo mode for testing on any machine: `DEMO=1 AUTH_DISABLED=1 npm start` — never set these on the server

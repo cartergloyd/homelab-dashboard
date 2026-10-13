@@ -18,6 +18,7 @@ interface JobForm {
   script: string;
   managedBy: string;
   timer: string;
+  cronSource: string;
 }
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -43,6 +44,7 @@ function toForm(j?: JobView): JobForm {
     script: j?.options.script ?? "",
     managedBy: j?.options.managedBy ?? "cron",
     timer: j?.options.timer ?? "",
+    cronSource: j?.options.cronSource ?? "",
   };
 }
 
@@ -54,6 +56,7 @@ function fromForm(f: JobForm) {
     if (f.command.trim()) options.command = f.command.trim();
     if (f.script.trim()) options.script = f.script.trim();
     if (f.timer.trim()) options.timer = f.timer.trim();
+    if (f.cronSource.trim()) options.cronSource = f.cronSource.trim();
   }
   if (f.type === "restart") {
     options.warnMinutes = f.warnMinutes
@@ -176,6 +179,10 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
                 <input className="input mono" value={f.timer} onChange={(e) => set("timer", e.target.value)} placeholder="mc-backup.timer" />
               </label>
               <label className="field">
+                Crontab it lives in (optional)
+                <input className="input mono" value={f.cronSource} onChange={(e) => set("cronSource", e.target.value)} placeholder="crontab (gold) or /etc/cron.d/minecraft" />
+              </label>
+              <label className="field">
                 Script name to watch for (optional)
                 <input className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} placeholder="backup_world.py" />
               </label>
@@ -281,7 +288,8 @@ export function Maintenance() {
             {jobs.data?.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  No jobs yet.
+                  No jobs yet. If this server already restarts or backs up on a schedule (systemd timers, cron), run <span className="mono">npm run discover -- --apply</span> on the server to mirror
+                  it here without changing it — or add a job with <strong>New job</strong>.
                 </td>
               </tr>
             )}
@@ -305,6 +313,12 @@ export function Maintenance() {
                           <>
                             {" "}
                             <span className="mono">{j.options.timer}</span>
+                          </>
+                        )}
+                        {!j.options.timer && j.options.cronSource && (
+                          <>
+                            {" in "}
+                            <span className="mono">{j.options.cronSource}</span>
                           </>
                         )}{" "}
                         outside the dashboard

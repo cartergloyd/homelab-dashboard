@@ -39,9 +39,12 @@ throwaway folders under `data/demo/`.
 
 ```bash
 npm run audit:install        # FULLY CONNECTED only when every gated check passes
-npm run discover -- --apply  # mirror existing systemd timers as external jobs
+npm run discover             # find timers, crontabs, script folders, backup roots; propose env + mirror jobs
+npm run discover -- --apply  # create the proposed external (mirror-only) jobs
 npm run clear-demo-data -- --yes
-sudo npm run wrap-service -- mc-backup.service --apply --test
+sudo npm run wrap-service -- --install-hl-run                    # hl-run + /etc/homelab-hl-run.env
+sudo npm run wrap-service -- mc-backup.service --apply --test    # route a timer's output into the feed
+node server/test-discover.mjs                                    # unit checks for the discovery helpers
 ```
 
 ## Development

@@ -130,6 +130,8 @@ export interface JobOptions {
   graceMinutes?: number;
   /** external job mirrored from a systemd timer: the .timer unit name */
   timer?: string;
+  /** external job mirrored from a crontab: where the line lives, e.g. "crontab (gold)" or "/etc/cron.d/minecraft" */
+  cronSource?: string;
 }
 
 export interface Job {

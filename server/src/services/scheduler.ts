@@ -40,6 +40,7 @@ export const JobInput = z.object({
       managedBy: z.string().trim().max(40).optional(),
       graceMinutes: z.number().int().min(1).max(720).optional(),
       timer: z.string().trim().max(80).optional(),
+      cronSource: z.string().trim().max(120).optional(),
     })
     .default({}),
 });

@@ -1,20 +1,24 @@
 #!/usr/bin/env node
-// Production install audit (issue #2). Checks the configured service names,
-// paths, timers, backup roots, scripts folders and DATA_DIR against the live
-// machine, and only says FULLY CONNECTED when status, jobs, scripts, backups and
-// alerts ingestion all pass. --propose discovers systemd timers / script folders /
-// backup roots and prints suggested env values and `external` mirror jobs;
-// --apply (with --propose) creates those jobs through the running dashboard.
+// Production install audit + importer (issue #2). Checks the configured service
+// names, paths, timers, cron entries, backup roots, scripts folders and DATA_DIR
+// against the live machine, and only says FULLY CONNECTED when status, jobs,
+// scripts, backups and alerts ingestion all pass. --propose discovers systemd
+// timers, crontab lines, script folders and backup roots and prints suggested env
+// values and `external` mirror jobs; --apply (with --propose) creates those jobs
+// through the running dashboard.
 //
 //   npm run audit:install                 # audit against /etc/homelab-dashboard.env
 //   npm run audit:install -- --json       # machine-readable (for agents)
 //   npm run discover                      # = audit --propose
 //   npm run discover -- --apply           # create the proposed mirror jobs
 import { execFile } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { envFileFromArgs, flag, loadEnvFile } from "./env.js";
+import { calendarToCron, fmtDelta, isRelevant, jobMatchesCronEntry, nextRunOf, normalizeCommand, parseCrontab, parseSystemdTimestamp, scriptPathFromCommand, wrappedCronLine, type CronEntry } from "./discover-lib.js";
+import { envFileFromArgs, flag, loadEnvFile, shq } from "./env.js";
 
 const execFileP = promisify(execFile);
 const argv = process.argv.slice(2);
@@ -30,7 +34,7 @@ const { containerInfo, dockerAvailable } = await import("../services/docker.js")
 const { health: jellyfinHealth } = await import("../services/jellyfin.js");
 const { rconCommand } = await import("../services/rcon.js");
 const { listScripts } = await import("../services/scripts.js");
-const { listBackups } = await import("../services/backups.js");
+const { listBackups, worldFolders } = await import("../services/backups.js");
 const { directusHealth } = await import("../services/directus.js");
 const { pgStats } = await import("../services/postgres.js");
 const { tailscaleStatus } = await import("../services/tailscale.js");
@@ -47,12 +51,18 @@ interface Check {
 const checks: Check[] = [];
 const add = (area: string, name: string, status: Status, detail: string, gate = false) => checks.push({ area, name, status, detail, gate });
 
-async function sh(cmd: string, args: string[], timeout = 8000): Promise<string | null> {
+async function run(cmd: string, args: string[], timeout = 8000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
-    return (await execFileP(cmd, args, { timeout, maxBuffer: 1 << 20 })).stdout;
-  } catch {
-    return null;
+    const r = await execFileP(cmd, args, { timeout, maxBuffer: 1 << 20 });
+    return { ok: true, stdout: r.stdout, stderr: r.stderr };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    return { ok: false, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
   }
+}
+async function sh(cmd: string, args: string[], timeout = 8000): Promise<string | null> {
+  const r = await run(cmd, args, timeout);
+  return r.ok ? r.stdout : null;
 }
 async function exists(p: string): Promise<boolean> {
   try {
@@ -69,12 +79,20 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
     return fallback;
   }
 }
+/** A stuck mount (autofs, dead NFS) must not hang the audit: give up on a path after a few seconds. */
+function withTimeout<T>(p: Promise<T>, fallback: T, ms = 3000): Promise<T> {
+  return Promise.race([p, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms).unref())]);
+}
+const ls = (dir: string): Promise<string[]> => withTimeout(fs.readdir(dir).catch(() => [] as string[]), []);
+const statOrNull = (p: string) => withTimeout(fs.stat(p).catch(() => null), null);
+const when = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: cfg.timezone, weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 // ---- environment --------------------------------------------------------------
 
 add("env", "env file", envLoaded ? "pass" : "fail", envLoaded ? envFile : `${envFile} not found (pass --env FILE)`, true);
 add("env", "demo flags", cfg.demo || cfg.authDisabled ? "fail" : "pass", cfg.demo || cfg.authDisabled ? "DEMO and/or AUTH_DISABLED are set — never on the server" : "DEMO / AUTH_DISABLED unset", true);
 add("env", "dashboard key", !cfg.dashboardKey ? "fail" : cfg.dashboardKey === "demo-key-not-secret" ? "fail" : "pass", !cfg.dashboardKey ? "DASHBOARD_KEY unset" : cfg.dashboardKey === "demo-key-not-secret" ? "DASHBOARD_KEY is the demo key" : "set", true);
+add("env", "timezone", "pass", `${cfg.timezone} (schedules are evaluated in this zone)`);
 
 // ---- status: minecraft, docker, jellyfin, directus, postgres, tailscale -------
 
@@ -119,9 +137,10 @@ try {
 }
 
 add("status", "minecraft folder", (await exists(cfg.minecraft.dir)) ? "pass" : "fail", cfg.minecraft.dir, true);
+const worldNames = await worldFolders();
 const worlds: string[] = [];
-for (const w of ["world", "world_nether", "world_the_end"]) if (await exists(path.join(cfg.minecraft.dir, w))) worlds.push(w);
-add("status", "world folders", worlds.length ? "pass" : "warn", worlds.length ? worlds.join(", ") : `none of world/world_nether/world_the_end in ${cfg.minecraft.dir} — check level-name`);
+for (const w of worldNames) if (await exists(path.join(cfg.minecraft.dir, w))) worlds.push(w);
+add("status", "world folders", worlds.length ? "pass" : "warn", worlds.length ? `${worlds.join(", ")} (level-name "${worldNames[0]}")` : `none of ${worldNames.join("/")} in ${cfg.minecraft.dir} — check level-name in server.properties`);
 
 const d = await directusHealth();
 add("status", "directus", d.state === "ok" ? "pass" : d.state === "degraded" ? "warn" : "fail", d.status ? `health ${d.status}` : (d.error ?? "unreachable"));
@@ -138,7 +157,7 @@ add("status", "tailscale serve", serve.includes(`:${cfg.port}`) || serve.include
 for (const r of cfg.mediaRoots) {
   let ok = false;
   try {
-    await fs.access(r.path, (await import("node:fs")).constants.W_OK);
+    await fs.access(r.path, fsConstants.W_OK);
     ok = true;
   } catch {
     ok = false;
@@ -167,45 +186,136 @@ interface JobRec {
   cron: string;
   enabled: boolean;
   seeded?: boolean;
-  options: { timer?: string; script?: string; managedBy?: string; command?: string };
+  options: { timer?: string; script?: string; managedBy?: string; command?: string; cronSource?: string };
 }
 const jobs = await readJson<JobRec[]>(path.join(cfg.dataDir, "jobs.json"), []);
 const seeded = jobs.filter((j) => j.seeded || ["Nightly world backup", "Daily restart"].includes(j.name));
 add("data", "seeded demo jobs", seeded.length ? "fail" : "pass", seeded.length ? `${seeded.map((j) => `"${j.name}"`).join(", ")} — run: npm run clear-demo-data -- --yes` : "none", true);
 
-// ---- jobs vs real timers -----------------------------------------------------------
+// ---- the real schedule: systemd timers + crontabs ------------------------------------
 
 interface Timer {
   unit: string;
   activates: string;
-  next: string | null;
-  last: string | null;
+  nextMs: number | null;
+  lastMs: number | null;
 }
-const timersRaw = await sh("systemctl", ["list-timers", "--all", "--no-pager", "--output=json"]);
-let timers: Timer[] = [];
-if (timersRaw) {
-  try {
-    timers = (JSON.parse(timersRaw) as { unit: string; activates: string; next?: string | number | null; last?: string | number | null }[]).map((t) => ({
-      unit: t.unit,
-      activates: t.activates,
-      next: t.next ? String(t.next) : null,
-      last: t.last ? String(t.last) : null,
-    }));
-  } catch {
-    timers = [];
+
+async function timestampMs(v: string | null): Promise<number | null> {
+  const direct = parseSystemdTimestamp(v);
+  if (direct !== null || !v || v === "n/a") return direct;
+  const out = await sh("date", ["-d", v, "+%s"]); // GNU date understands systemd's "Thu 2026-10-16 04:00:00 CEST"
+  return out && /^\d+/.test(out.trim()) ? Number(out.trim()) * 1000 : null;
+}
+
+async function listTimers(): Promise<Timer[]> {
+  const json = await sh("systemctl", ["list-timers", "--all", "--no-pager", "--output=json"]);
+  if (json) {
+    try {
+      const rows = JSON.parse(json) as { unit: string; activates: string; next?: string | number | null; last?: string | number | null }[];
+      return rows.map((t) => ({ unit: t.unit, activates: t.activates, nextMs: parseSystemdTimestamp(t.next ?? null), lastMs: parseSystemdTimestamp(t.last ?? null) }));
+    } catch {
+      // fall through to the text format
+    }
   }
+  // systemd < 246 has no JSON output: UNIT and ACTIVATES are the last two columns.
+  const text = await sh("systemctl", ["list-timers", "--all", "--no-pager", "--no-legend"]);
+  if (!text) return [];
+  const timers: Timer[] = [];
+  for (const line of text.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 2 || !cols[cols.length - 2].endsWith(".timer")) continue;
+    const u = cols[cols.length - 2];
+    const next = (await sh("systemctl", ["show", u, "-p", "NextElapseUSecRealtime", "--value", "--no-pager"]))?.trim() ?? null;
+    timers.push({ unit: u, activates: cols[cols.length - 1], nextMs: await timestampMs(next), lastMs: null });
+  }
+  return timers;
 }
-const relevant = timers.filter((t) => /mine|mc|paper|backup|update|restart|world|server/i.test(`${t.unit} ${t.activates}`) && !/apt|snapd|logrotate|man-db|fstrim|motd|e2scrub|systemd-|dpkg|ua-|fwupd/i.test(t.unit));
+
+/** "1h 30min", "45s", "0" → ms (systemd span syntax, the common cases). */
+function spanMs(s: string): number {
+  let ms = 0;
+  for (const m of s.matchAll(/(\d+(?:\.\d+)?)\s*(ms|us|usec|msec|s|sec|min|m|h|hr|d|w)?\b/g)) {
+    const n = Number(m[1]);
+    const u = m[2] ?? "s";
+    ms += n * (u === "us" || u === "usec" ? 0.001 : u === "ms" || u === "msec" ? 1 : u === "min" || u === "m" ? 60_000 : u === "h" || u === "hr" ? 3_600_000 : u === "d" ? 86_400_000 : u === "w" ? 604_800_000 : 1000);
+  }
+  return ms;
+}
+
+const timers = await listTimers();
+const relevant = timers.filter((t) => isRelevant(`${t.unit} ${t.activates}`, t.unit));
+
+async function readCron(): Promise<{ entries: CronEntry[]; notes: string[] }> {
+  const entries: CronEntry[] = [];
+  const notes: string[] = [];
+  const me = os.userInfo().username;
+  const mine = await run("crontab", ["-l"]);
+  if (mine.ok) entries.push(...parseCrontab(mine.stdout, `crontab (${me})`, { user: me }));
+  const etc = await fs.readFile("/etc/crontab", "utf8").catch(() => null);
+  if (etc) entries.push(...parseCrontab(etc, "/etc/crontab", { systemTable: true }));
+  for (const f of await ls("/etc/cron.d")) {
+    if (f.startsWith(".") || /\.(dpkg-\w+|rpm\w*|bak|disabled|orig)$/.test(f)) continue;
+    const t = await fs.readFile(path.join("/etc/cron.d", f), "utf8").catch(() => null);
+    if (t) entries.push(...parseCrontab(t, `/etc/cron.d/${f}`, { systemTable: true }));
+  }
+  // Other users' crontabs need root: root's and the Minecraft folder owner's.
+  const users = new Set<string>(["root"]);
+  const uid = (await statOrNull(cfg.minecraft.dir))?.uid ?? null;
+  if (uid !== null) {
+    const name = (await sh("id", ["-nu", String(uid)]))?.trim();
+    if (name) users.add(name);
+  }
+  for (const u of users) {
+    if (u === me) continue;
+    const r = await run("sudo", ["-n", "crontab", "-l", "-u", u]);
+    if (r.ok) entries.push(...parseCrontab(r.stdout, `crontab (${u})`, { user: u }));
+    else if (!/no crontab for/i.test(r.stderr)) notes.push(`could not read ${u}'s crontab without a password — check by hand: sudo crontab -l -u ${u}`);
+  }
+  return { entries: entries.filter((e) => isRelevant(e.command)), notes };
+}
+const cron = await readCron();
+
+add("jobs", "real schedule found", relevant.length || cron.entries.length ? "pass" : "warn", `${relevant.length} relevant timer(s)${relevant.length ? `: ${relevant.map((t) => t.unit).join(", ")}` : ""}; ${cron.entries.length} relevant cron entr${cron.entries.length === 1 ? "y" : "ies"}${cron.entries.length ? `: ${cron.entries.map((e) => `${e.source} → ${e.script ? path.basename(e.script) : e.command.slice(0, 40)}`).join(", ")}` : ""}`);
+for (const note of cron.notes) add("jobs", "crontab access", "warn", note);
+
+// ---- jobs vs real timers / cron ------------------------------------------------------------
+
 const externals = jobs.filter((j) => j.type === "external");
-add("jobs", "external mirror jobs", externals.length ? "pass" : relevant.length ? "fail" : "warn", externals.length ? externals.map((j) => `"${j.name}" (${j.cron})`).join("; ") : relevant.length ? `none, but ${relevant.length} relevant timer(s) exist — run: npm run discover` : "none, and no relevant timers found", true);
+add("jobs", "external mirror jobs", externals.length ? "pass" : relevant.length || cron.entries.length ? "fail" : "warn", externals.length ? externals.map((j) => `"${j.name}" (${j.cron})`).join("; ") : relevant.length || cron.entries.length ? "none, but a real schedule exists — run: npm run discover" : "none, and no relevant timers or cron entries found", true);
+
 const unmirrored = relevant.filter((t) => !externals.some((j) => j.options.timer === t.unit));
-if (relevant.length) add("jobs", "timers mirrored", unmirrored.length ? "fail" : "pass", unmirrored.length ? `not mirrored: ${unmirrored.map((t) => t.unit).join(", ")}` : `all ${relevant.length} relevant timer(s) mirrored`, true);
+if (relevant.length) add("jobs", "timers mirrored", unmirrored.length ? "fail" : "pass", unmirrored.length ? `not mirrored: ${unmirrored.map((t) => t.unit).join(", ")} — run: npm run discover` : `all ${relevant.length} relevant timer(s) mirrored`, true);
+
+const unmirroredCron = cron.entries.filter((e) => e.cron && !externals.some((j) => jobMatchesCronEntry(j, e)));
+if (cron.entries.length) add("jobs", "cron entries mirrored", unmirroredCron.length ? "fail" : "pass", unmirroredCron.length ? `not mirrored: ${unmirroredCron.map((e) => `${e.source}: ${e.line}`).join(" | ")} — run: npm run discover` : `all ${cron.entries.length} relevant cron entr${cron.entries.length === 1 ? "y" : "ies"} mirrored`, true);
+
 for (const j of externals) {
   if (j.options.timer) {
-    const exec = (await sh("systemctl", ["show", j.options.timer.replace(/\.timer$/, ".service"), "-p", "ExecStart", "--no-pager"])) ?? "";
-    add("jobs", `output tracking: ${j.name}`, /hl-run/.test(exec) ? "pass" : "fail", /hl-run/.test(exec) ? `${j.options.timer} wraps hl-run` : `${j.options.timer} does not run through hl-run — npm run wrap-service -- ${j.options.timer}`, true);
-  } else if (j.options.script) {
-    add("jobs", `output tracking: ${j.name}`, "warn", `cron-managed; confirmed only once ${j.options.script} output has been seen via hl-run`);
+    const service = j.options.timer.replace(/\.timer$/, ".service");
+    const exec = (await sh("systemctl", ["show", service, "-p", "ExecStart", "--no-pager"])) ?? "";
+    add("jobs", `output tracking: ${j.name}`, /hl-run/.test(exec) ? "pass" : "fail", /hl-run/.test(exec) ? `${service} runs through hl-run` : `${service} does not run through hl-run — sudo npm run wrap-service -- ${service} --apply --test`, true);
+
+    // Does the dashboard's cron expression agree with systemd about the next run?
+    const t = timers.find((x) => x.unit === j.options.timer);
+    if (!t) {
+      add("jobs", `schedule: ${j.name}`, "fail", `${j.options.timer} is not a timer on this machine (systemctl list-timers --all)`, true);
+      continue;
+    }
+    const [cronNext] = nextRunOf(j.cron, cfg.timezone);
+    if (!cronNext) add("jobs", `schedule: ${j.name}`, "fail", `"${j.cron}" is not a valid cron expression`, true);
+    else if (t.nextMs === null) add("jobs", `schedule: ${j.name}`, "warn", `${t.unit} reports no next run (inactive?) — cannot verify "${j.cron}"`);
+    else {
+      const jitter = spanMs(((await sh("systemctl", ["show", t.unit, "-p", "RandomizedDelayUSec", "--value", "--no-pager"])) ?? "0").trim());
+      const diff = cronNext.getTime() - t.nextMs;
+      const ok = Math.abs(diff) <= 60_000 + jitter;
+      add("jobs", `schedule: ${j.name}`, ok ? "pass" : "fail", ok ? `"${j.cron}" agrees with systemd — next ${when(t.nextMs)}` : `"${j.cron}" → next ${when(cronNext.getTime())}, but systemd says ${when(t.nextMs)} (${fmtDelta(diff)} apart) — fix the schedule or TZ`, true);
+    }
+  } else {
+    const entry = cron.entries.find((e) => jobMatchesCronEntry(j, e));
+    if (entry) add("jobs", `output tracking: ${j.name}`, entry.wrapped ? "pass" : "fail", entry.wrapped ? `${entry.source} line runs through hl-run` : `${entry.source} line is not wrapped — replace it with:\n      ${wrappedCronLine(entry)}`, true);
+    else if (j.options.script) add("jobs", `output tracking: ${j.name}`, "warn", `cron-managed but no matching crontab line is readable here; confirmed only once ${j.options.script} output has been seen via hl-run`);
+    else add("jobs", `output tracking: ${j.name}`, "warn", "cron-managed with no script name or command — the dashboard cannot tell whether it ran");
   }
 }
 const enabledBuiltins = jobs.filter((j) => j.enabled && (j.type === "backup" || j.type === "restart"));
@@ -234,6 +344,9 @@ else {
     add("alerts", "ingestion test", "fail", (e as Error).message, true);
   }
 }
+const hlRunInstalled = await exists("/usr/local/bin/hl-run");
+const hlEnv = await exists("/etc/homelab-hl-run.env");
+add("alerts", "hl-run installed", hlRunInstalled ? "pass" : relevant.length || cron.entries.length ? "fail" : "warn", hlRunInstalled ? `/usr/local/bin/hl-run${hlEnv ? " + /etc/homelab-hl-run.env" : " (no /etc/homelab-hl-run.env — cron lines must export HOMELAB_KEY themselves)"}` : "missing — sudo npm run wrap-service -- --install-hl-run", relevant.length > 0 || cron.entries.length > 0);
 
 // ---- VPN -------------------------------------------------------------------------
 
@@ -246,60 +359,152 @@ try {
 }
 add("vpn", "vpn interface", vpnIfaces.length ? "pass" : "warn", vpnIfaces.length ? vpnIfaces.join(", ") + (cfg.vpn.iface ? ` (VPN_INTERFACE=${cfg.vpn.iface})` : " — set VPN_INTERFACE") : "no wireguard/tun interface found (VPN down, or VPN_PROVIDER/INTERFACE needed)");
 
-// ---- proposals ---------------------------------------------------------------------
+// ---- discovery: script folders, backup roots, mirror jobs ---------------------------------------
 
 interface Proposal {
   name: string;
   type: "external";
   cron: string | null;
   enabled: boolean;
-  options: { managedBy: string; timer: string; command: string; script?: string; graceMinutes: number };
+  options: { managedBy: string; timer?: string; cronSource?: string; command: string; script?: string; graceMinutes: number };
   note?: string;
 }
+interface BackupRoot {
+  path: string;
+  dated: number;
+  dashboard: number;
+  archive: number;
+  total: number;
+}
 
-function calendarToCron(cal: string): string | null {
-  const c = cal.trim();
-  const dow: Record<string, string> = { Sun: "0", Mon: "1", Tue: "2", Wed: "3", Thu: "4", Fri: "5", Sat: "6" };
-  if (/^daily$/i.test(c)) return "0 0 * * *";
-  if (/^weekly$/i.test(c)) return "0 0 * * 1";
-  if (/^hourly$/i.test(c)) return "0 * * * *";
-  // [Dow[,Dow|..Dow]] [*-*-* ]HH:MM[:SS]
-  const m = c.match(/^(?:([A-Za-z]{3}(?:[,.]{1,2}[A-Za-z]{3})*)\s+)?(?:\*-\*-(\*|\d{2})\s+)?(\*|\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (!m) return null;
-  const [, days, dom, hh, mm] = m;
-  let dowField = "*";
-  if (days) {
-    if (days.includes("..")) {
-      const [a, b] = days.split("..");
-      if (!(a in dow) || !(b in dow)) return null;
-      dowField = `${dow[a]}-${dow[b]}`;
-    } else {
-      const parts = days.split(",");
-      if (!parts.every((p) => p in dow)) return null;
-      dowField = parts.map((p) => dow[p]).join(",");
-    }
+const DATED_RE = /^mcworld_\d{4}_\d{2}_\d{2}$/;
+const DASH_RE = /^mc-\d{8}-\d{6}\.tar\.gz$/;
+
+const SYSTEM_PATH_RE = /^\/(proc|sys|dev|usr|bin|sbin|lib|lib64|etc|tmp|run|boot|snap|var\/(log|lib|cache|run|tmp))(\/|$)/;
+
+/** Absolute paths a script mentions (quoted ones may contain spaces) — the folder itself and its parent, unverified. */
+async function pathsMentionedIn(file: string): Promise<string[]> {
+  const text = await fs.readFile(file, "utf8").catch(() => "");
+  if (!text || text.length > 400_000) return [];
+  const found = new Set<string>();
+  for (const m of text.matchAll(/["'](\/[^"'\n{}%$]{2,200})["']|(?<=[\s=(,])(\/[\w./-]{2,200})/g)) {
+    const raw = (m[1] ?? m[2]).replace(/\/+$/, "");
+    for (const candidate of [raw, path.dirname(raw)]) if (candidate.length > 1 && !SYSTEM_PATH_RE.test(candidate)) found.add(candidate);
   }
-  return `${Number(mm)} ${hh === "*" ? "*" : Number(hh)} ${dom && dom !== "*" ? Number(dom) : "*"} * ${dowField}`;
+  return [...found];
+}
+
+/**
+ * Look for backup-shaped entries under the usual places and the paths the scripts
+ * mention. Runs `find` as one child process per start path, each with a hard
+ * timeout, so a dead NFS/autofs mount stalls one probe instead of wedging the
+ * audit (direct fs calls on a stuck mount park a Node I/O thread for good).
+ */
+async function discoverBackupRoots(hints: Iterable<string>): Promise<BackupRoot[]> {
+  const mc = cfg.minecraft.dir;
+  const starts = [...new Set([...cfg.backups.dirs, mc, path.dirname(mc), "/home", "/root", "/mnt", "/media", "/srv", "/opt", "/var/backups", "/backup", "/backups", os.homedir(), ...hints])].filter((p) => path.isAbsolute(p) && !SYSTEM_PATH_RE.test(p)).slice(0, 60);
+  const expr = [
+    "-mindepth", "1", "-maxdepth", "4",
+    "(", "-name", "node_modules", "-o", "-name", ".git", "-o", "-name", ".cache", "-o", "-name", "Library", "-o", "-name", "snap", "-o", "-name", "proc", ")", "-prune", "-o",
+    "(",
+      "(", "-type", "d", "-name", "mcworld_[0-9][0-9][0-9][0-9]_[0-9][0-9]_[0-9][0-9]", ")",
+      "-o", "(", "-type", "f", "-name", "mc-[0-9]*-[0-9]*.tar.gz", ")",
+      "-o", "(", "-type", "f", "(", "-iname", "*world*.tar*", "-o", "-iname", "*world*.zip", "-o", "-iname", "*minecraft*.tar*", "-o", "-iname", "*minecraft*.zip", "-o", "-iname", "*mc*backup*", "-o", "-iname", "*backup*mc*", ")", ")",
+    ")", "-print0",
+  ];
+  const probe = async (start: string): Promise<string[]> => {
+    const child = execFileP("find", [start, ...expr], { timeout: 20_000, killSignal: "SIGKILL", maxBuffer: 8 << 20 }).then((r) => r.stdout, (e: { stdout?: string }) => e.stdout ?? "");
+    return (await withTimeout(child, "", 25_000)).split("\0").filter(Boolean);
+  };
+  const results = await Promise.all(starts.map(probe));
+  const byRoot = new Map<string, BackupRoot>();
+  for (const p of new Set(results.flat())) {
+    const name = path.basename(p);
+    const root = path.dirname(p);
+    if (DATED_RE.test(path.basename(root))) continue; // archives inside mcworld_…/ belong to that folder, not a root of their own
+    const entry = byRoot.get(root) ?? { path: root, dated: 0, dashboard: 0, archive: 0, total: 0 };
+    if (DATED_RE.test(name)) entry.dated++;
+    else if (DASH_RE.test(name)) entry.dashboard++;
+    else entry.archive++;
+    entry.total++;
+    byRoot.set(root, entry);
+  }
+  return [...byRoot.values()].sort((a, b) => b.total - a.total);
 }
 
 const proposals: Proposal[] = [];
 const suggestedScriptDirs = new Set<string>();
+const scriptFiles = new Set<string>();
+let backupRoots: BackupRoot[] = [];
+const envSuggestions: string[] = [];
+
 if (propose) {
+  // scripts the real schedule runs
+  const noteScript = (p: string | null) => {
+    if (!p) return;
+    if (path.isAbsolute(p)) {
+      suggestedScriptDirs.add(path.dirname(p));
+      scriptFiles.add(p);
+    }
+  };
   for (const t of unmirrored) {
     const cal = ((await sh("systemctl", ["show", t.unit, "-p", "TimersCalendar", "--value", "--no-pager"])) ?? "").match(/OnCalendar=([^;}]+)/)?.[1]?.trim() ?? "";
     const exec = ((await sh("systemctl", ["cat", t.activates, "--no-pager"])) ?? "").split("\n").filter((l) => /^\s*ExecStart=/.test(l)).pop()?.replace(/^\s*ExecStart=/, "").trim() ?? "";
-    const scriptPath = exec.match(/((?:"[^"]+"|\S+)\.(?:py|sh))/)?.[1]?.replace(/^"|"$/g, "");
-    if (scriptPath) suggestedScriptDirs.add(path.dirname(scriptPath));
-    const cron = calendarToCron(cal);
+    const scriptPath = scriptPathFromCommand(exec);
+    noteScript(scriptPath);
+    let cronExpr = calendarToCron(cal);
+    let note: string | undefined;
+    if (!cronExpr) note = `OnCalendar "${cal}" could not be translated to cron — set the schedule by hand`;
+    else if (t.nextMs !== null) {
+      const [next] = nextRunOf(cronExpr, cfg.timezone);
+      const jitter = spanMs(((await sh("systemctl", ["show", t.unit, "-p", "RandomizedDelayUSec", "--value", "--no-pager"])) ?? "0").trim());
+      if (next && Math.abs(next.getTime() - t.nextMs) > 60_000 + jitter) {
+        note = `translated "${cal}" → "${cronExpr}" but systemd's next run is ${when(t.nextMs)} (cron says ${when(next.getTime())}) — set the schedule by hand`;
+        cronExpr = null;
+      } else if (next) note = `verified: next run ${when(t.nextMs)} matches systemd`;
+    }
     proposals.push({
       name: t.unit.replace(/\.timer$/, "").replace(/[-_]/g, " "),
       type: "external",
-      cron,
+      cron: cronExpr,
       enabled: true,
       options: { managedBy: "systemd timer", timer: t.unit, command: exec, script: scriptPath ? path.basename(scriptPath) : undefined, graceMinutes: 30 },
-      note: cron ? undefined : `OnCalendar "${cal}" could not be translated to cron — set the schedule by hand`,
+      note,
     });
   }
+  for (const e of unmirroredCron) {
+    noteScript(e.script);
+    const base = e.script ? path.basename(e.script).replace(/\.(py|sh)$/, "").replace(/[-_]/g, " ") : normalizeCommand(e.command).split(" ").slice(0, 3).join(" ");
+    proposals.push({
+      name: `${base} (${e.user ?? "cron"})`,
+      type: "external",
+      cron: e.cron,
+      enabled: true,
+      options: { managedBy: "cron", cronSource: e.source, command: normalizeCommand(e.command), script: e.script ? path.basename(e.script) : undefined, graceMinutes: 30 },
+      note: e.wrapped ? "already wrapped with hl-run" : `not wrapped — in ${e.source} replace the line with:\n#   ${wrappedCronLine(e)}`,
+    });
+  }
+  for (const s of scripts.scripts) scriptFiles.add(path.join(s.dir, s.name));
+  for (const dir of suggestedScriptDirs) for (const f of await ls(dir)) if (/\.(py|sh)$/.test(f)) scriptFiles.add(path.join(dir, f));
+  for (const f of scriptFiles) if (SYSTEM_PATH_RE.test(f)) scriptFiles.delete(f);
+
+  // backup roots: folders the scripts mention + the usual places
+  const hints = new Set<string>();
+  for (const f of scriptFiles) for (const p of await pathsMentionedIn(f)) hints.add(p);
+  backupRoots = await discoverBackupRoots(hints);
+
+  const configuredScriptDirsOk = scripts.dirs.length > 0 && scripts.dirs.every((d) => d.exists);
+  const scriptDirsToSuggest = [...new Set([...(configuredScriptDirsOk ? scripts.dirs.map((d) => d.path) : []), ...suggestedScriptDirs])];
+  if (scriptDirsToSuggest.length && (!configuredScriptDirsOk || [...suggestedScriptDirs].some((d) => !scripts.dirs.some((x) => x.path === d)))) envSuggestions.push(`SCRIPTS_DIR=${shq(scriptDirsToSuggest.join(","))}`);
+
+  const configuredRootsOk = backups.roots.length > 0 && backups.roots.every((r) => r.exists && r.count > 0);
+  if (backupRoots.length && (!configuredRootsOk || !backupRoots.some((r) => cfg.backups.dirs.includes(r.path)))) {
+    const best = backupRoots[0];
+    envSuggestions.push(`BACKUP_DIR=${shq(backupRoots.filter((r) => r.total >= Math.max(1, best.total / 4)).map((r) => r.path).join(","))}`);
+    if (best.dated >= best.dashboard && best.dated >= best.archive) envSuggestions.push("BACKUP_FORMAT=dated-folder");
+  }
+  const backupScript = [...scriptFiles].map((f) => path.basename(f)).find((n) => /backup/i.test(n));
+  if (backupScript && cfg.backups.method === "builtin") envSuggestions.push(`BACKUP_METHOD=script:${backupScript}`);
 }
 
 // ---- report ------------------------------------------------------------------------
@@ -309,7 +514,7 @@ const fullyConnected = gates.every((c) => c.status === "pass");
 const fails = checks.filter((c) => c.status === "fail").length;
 
 if (asJson) {
-  console.log(JSON.stringify({ fullyConnected, checks, proposals, suggestedScriptDirs: [...suggestedScriptDirs], timers: relevant }, null, 2));
+  console.log(JSON.stringify({ fullyConnected, checks, proposals, envSuggestions, suggestedScriptDirs: [...suggestedScriptDirs], backupRoots, timers: relevant, cron: cron.entries }, null, 2));
 } else {
   const icon: Record<Status, string> = { pass: "✔", warn: "!", fail: "✖", skip: "·" };
   let area = "";
@@ -322,26 +527,35 @@ if (asJson) {
   }
   console.log(`\n${fullyConnected ? "FULLY CONNECTED — every gated check passed." : `NOT fully connected — ${fails} failure(s). Fix the ✖ lines above (gated ones block the verdict).`}`);
   if (propose) {
-    console.log("\n== Proposed configuration ==");
-    if (suggestedScriptDirs.size) console.log(`SCRIPTS_DIR="${[...suggestedScriptDirs].join(",")}"`);
-    if (!proposals.length) console.log("No unmirrored timers to propose.");
+    console.log("\n== Discovered ==");
+    console.log(`timers: ${relevant.length ? relevant.map((t) => `${t.unit}${t.nextMs ? ` (next ${when(t.nextMs)})` : ""}`).join(", ") : "none relevant"}`);
+    console.log(`cron:   ${cron.entries.length ? cron.entries.map((e) => `${e.source}: ${e.line}`).join("\n        ") : "none relevant"}`);
+    console.log(`backup roots: ${backupRoots.length ? backupRoots.map((r) => `${r.path} (${[r.dated && `${r.dated} dated folders`, r.dashboard && `${r.dashboard} dashboard archives`, r.archive && `${r.archive} archives`].filter(Boolean).join(", ")})`).join("; ") : "none found — look for the mcworld_YYYY_MM_DD folders by hand"}`);
+    console.log("\n== Proposed /etc/homelab-dashboard.env changes ==");
+    console.log(envSuggestions.length ? envSuggestions.join("\n") : "(none — SCRIPTS_DIR / BACKUP_DIR already point at what was found)");
+    console.log("\n== Proposed mirror jobs ==");
+    if (!proposals.length) console.log("No unmirrored timers or cron entries.");
     for (const p of proposals) {
-      console.log(`\n# ${p.options.timer}${p.note ? `  — ${p.note}` : ""}`);
+      console.log(`\n# ${p.options.timer ?? p.options.cronSource}${p.note ? `  — ${p.note}` : ""}`);
       console.log(JSON.stringify({ name: p.name, type: p.type, cron: p.cron ?? "0 4 * * *", enabled: p.enabled, options: p.options }));
     }
     if (proposals.length && !applyProposals) console.log("\nRe-run with --apply to create these jobs in the running dashboard (fix any untranslated schedules first).");
   }
 }
 
-if (propose && applyProposals && serverUp) {
+if (propose && applyProposals) {
+  if (!serverUp) console.log(`\nCannot apply: dashboard not reachable at ${base}. Start it (sudo systemctl start homelab-dashboard) and re-run.`);
   for (const p of proposals) {
+    if (!serverUp) break;
     if (!p.cron) {
-      console.log(`skip ${p.options.timer}: schedule needs manual entry`);
+      console.log(`skip ${p.options.timer ?? p.options.cronSource}: schedule needs manual entry`);
       continue;
     }
-    const res = await fetch(`${base}/api/jobs`, { method: "POST", headers: { ...auth, "Content-Type": "application/json", "X-Homelab-Agent": "audit-install" }, body: JSON.stringify({ name: p.name, type: p.type, cron: p.cron, enabled: p.enabled, options: p.options }) });
-    console.log(`${res.ok ? "created" : `failed (${res.status})`}: ${p.name}`);
+    const res = await fetch(`${base}/api/jobs`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ name: p.name, type: p.type, cron: p.cron, enabled: p.enabled, options: p.options }) });
+    console.log(`${res.ok ? "created" : `failed (${res.status}: ${(await res.text()).slice(0, 200)})`}: ${p.name}`);
   }
 }
 
-process.exit(fullyConnected ? 0 : 1);
+// Let piped stdout drain before exiting (on macOS pipe writes are asynchronous and
+// process.exit() would truncate the report).
+process.stdout.write("", () => process.exit(fullyConnected ? 0 : 1));

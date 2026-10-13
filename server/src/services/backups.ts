@@ -17,12 +17,24 @@ import { runScriptAndWait } from "./scripts.js";
 import type { BackupFile, BackupsPayload } from "../types.js";
 
 const execFileP = promisify(execFile);
-// [INSTALLER] PLACEHOLDER: Paper's default world folders. Check `level-name` in
-// the real server.properties — if the world is not called "world", add the real
-// names here (Paper names the other dimensions <level-name>_nether / _the_end).
-// Only matters if the built-in backup is used; the owner's own backup script /
-// timer is the live mechanism today (BACKUP_METHOD=script:<name> to use it).
-const WORLDS = ["world", "world_nether", "world_the_end"];
+
+/**
+ * Paper's world folders: <level-name>, <level-name>_nether, <level-name>_the_end,
+ * with level-name read from server.properties in MC_DIR (default "world"). Only the
+ * built-in backup uses this; the owner's own backup script / timer is the live
+ * mechanism today (BACKUP_METHOD=script:<name> to use it).
+ */
+export async function worldFolders(): Promise<string[]> {
+  let level = "world";
+  try {
+    const props = await fs.readFile(path.join(cfg.minecraft.dir, "server.properties"), "utf8");
+    const m = props.match(/^\s*level-name\s*=\s*(.+?)\s*$/m);
+    if (m?.[1]) level = m[1];
+  } catch {
+    // no server.properties readable: Paper's default
+  }
+  return [level, `${level}_nether`, `${level}_the_end`];
+}
 
 const DASH_RE = /^mc-\d{8}-\d{6}\.tar\.gz$/;
 const DATED_RE = /^mcworld_\d{4}_\d{2}_\d{2}$/;
@@ -173,9 +185,10 @@ export async function runBackup(keep = cfg.backups.keep): Promise<BackupResult> 
 
   const root = cfg.backups.dir;
   await fs.mkdir(root, { recursive: true });
+  const names = await worldFolders();
   const worlds: string[] = [];
-  for (const w of WORLDS) if (await exists(path.join(cfg.minecraft.dir, w))) worlds.push(w);
-  if (!worlds.length) throw new Error(`No world folders found in ${cfg.minecraft.dir}`);
+  for (const w of names) if (await exists(path.join(cfg.minecraft.dir, w))) worlds.push(w);
+  if (!worlds.length) throw new Error(`No world folders (${names.join(", ")}) found in ${cfg.minecraft.dir} — check level-name in server.properties`);
 
   const now = new Date();
   const saving = await pauseSaving();

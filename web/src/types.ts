@@ -114,6 +114,7 @@ export interface JobOptions {
   managedBy?: string;
   graceMinutes?: number;
   timer?: string;
+  cronSource?: string;
 }
 
 export interface Job {

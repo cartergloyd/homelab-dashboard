@@ -49,6 +49,9 @@ server/   Express 5 + ws, TypeScript (ESM, NodeNext → use .js import suffixes)
     docker systemd rcon slp jellyfin directus postgres files storage tailscale
     backups scheduler status logs alerts scripts context
   src/mcp.ts          stdio MCP server — thin client over the REST API
+  src/tools/          CLIs: audit-install (+ --propose = discover), clear-demo-data,
+                      wrap-service; discover-lib.ts is pure (OnCalendar→cron, crontab
+                      parsing, mirror matching) and tested by server/test-discover.mjs
 web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
   src/pages/          Dashboard, Database, groups.tsx (Media/Minecraft/System stack
                       the original pages as sections), Jellyfin, Files, Minecraft,
@@ -65,8 +68,10 @@ Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (type
 `backup`, `restart`, `command`, `script`, `external`), run with node-cron in `TZ`,
 history in `data/job-runs.json`. `external` jobs are mirrors of cron/systemd-timer
 jobs: the dashboard marks "due now" in the feed and waits for the script's hl-run
-output instead of running anything. Two built-in defaults are seeded disabled on
-first start only. Never hard-code a schedule — add or change jobs through the API/UI.
+output instead of running anything. A non-demo install seeds **no** jobs; `npm run
+discover` mirrors the real systemd timers and crontab lines (demo mode seeds four
+flagged `seeded: true`). Never hard-code a schedule — add or change jobs through the
+API/UI.
 
 Auth model: the app binds `127.0.0.1:3000`; `tailscale serve` fronts it and injects
 `Tailscale-User-Login`. Those headers are trusted only on loopback connections and
@@ -115,10 +120,15 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       / `BACKUP_FORMAT`; multi-folder `SCRIPTS_DIR` with a loud missing-folder error;
       external jobs carry `timer` + output-tracking state; tools `audit:install`,
       `discover`, `clear-demo-data`, `wrap-service`; hl-run accepts `DASHBOARD_KEY`.
-- [ ] Cron entries are not auto-discovered by `discover` (only systemd timers) — mirror by hand
+- [x] `discover` also reads crontabs (user, /etc/crontab, /etc/cron.d, root + Minecraft
+      owner via sudo -n), finds script folders and backup roots, verifies each OnCalendar→cron
+      translation against systemd's next elapse, and prints the wrapped cron line;
+      `wrap-service --install-hl-run` + `/etc/homelab-hl-run.env`; hl-run streams
+      line-by-line (PYTHONUNBUFFERED) and survives an unreachable dashboard
+- [x] Codex registration syntax verified against developers.openai.com/codex/mcp
+      (`codex mcp add <name> --env K=V -- <cmd>`; `[mcp_servers.<name>]` in config.toml)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
-- [ ] Codex registration syntax verified against current docs (marked "verify" in UI/docs)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
 
 ### Agent etiquette (read before acting on the server)
@@ -193,6 +203,18 @@ override the placeholders wherever they conflict:
   `external` jobs — real cron expressions, display-only — and the cron commands are
   wrapped with `hl-run` so output lands in the feed and the mirrored job is marked
   OK/failed. Do not convert them to built-in jobs or re-time them without Carter.
+- 2026-10-13 **A mirror's schedule is verified, not trusted.** `audit:install` compares
+  node-cron's next run of each timer-backed mirror with systemd's `NextElapse` and fails
+  on disagreement; `discover` does the same before proposing. Cron-backed mirrors are
+  matched to the actual crontab line (command or script+schedule) and fail the audit
+  until that line runs through hl-run.
+- 2026-10-13 hl-run reads `/etc/homelab-hl-run.env` (HOMELAB_URL + HOMELAB_KEY only,
+  written by `wrap-service --install-hl-run`) when cron/systemd give it no environment.
+  The full dashboard env is never handed to maintenance scripts (it holds the Jellyfin
+  key and the Postgres password).
+- 2026-10-13 The audit/discover tools probe unknown paths only through `find` child
+  processes with hard timeouts; a direct fs call on a dead mount (autofs/NFS) parks a
+  Node I/O thread forever and the process can never exit — seen on the dev Mac's `/home`.
 
 ## How to run & verify
 

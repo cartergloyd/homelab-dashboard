@@ -34,7 +34,7 @@ function ConnectModal({ onClose }: { onClose: () => void }) {
       raw: `claude mcp add homelab -e HOMELAB_URL=http://127.0.0.1:3000 -e HOMELAB_KEY=${key ?? "<DASHBOARD_KEY>"} -- node ${node}`,
     },
     {
-      title: "Codex CLI (check against current Codex docs)",
+      title: "Codex CLI",
       cmd: `codex mcp add homelab --env HOMELAB_URL=${location.origin} --env HOMELAB_KEY=${shownKey} -- node ${node}`,
       raw: `codex mcp add homelab --env HOMELAB_URL=${location.origin} --env HOMELAB_KEY=${key ?? "<DASHBOARD_KEY>"} -- node ${node}`,
     },
