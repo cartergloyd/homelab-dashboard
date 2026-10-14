@@ -122,7 +122,7 @@ export function Minecraft() {
           <h3 style={{ marginBottom: 8 }}>Live server alerts</h3>
           <AlertsFeed height={520} />
         </div>
-        <div>
+        <div id="assistant">
           <h3 style={{ marginBottom: 8 }}>Assistant</h3>
           <AssistantWidget />
         </div>

@@ -1,4 +1,5 @@
 // Brief maintenance reports filed by agents (or people) for later human review.
+// A report may be linked to the sidecar incident / run it answers.
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -10,6 +11,7 @@ import { publish } from "./alerts.js";
 const MAX = 200;
 let reports: AgentReport[] = [];
 const file = () => path.join(cfg.dataDir, "agent-reports.json");
+const listeners = new Set<(r: AgentReport) => void>();
 
 async function save(): Promise<void> {
   reports = reports.slice(0, MAX);
@@ -33,21 +35,36 @@ export async function initReports(): Promise<void> {
         reviewed: false,
         reviewedBy: null,
         reviewedAt: null,
+        incidentId: null,
+        runId: null,
       });
       await save().catch(() => {});
     }
   }
 }
 
+/** The sidecar listens so it can attach reports to incidents. */
+export function onReport(fn: (r: AgentReport) => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export function listReports(limit = 50, includeReviewed = true): AgentReport[] {
   return (includeReviewed ? reports : reports.filter((r) => !r.reviewed)).slice(0, limit);
 }
 
-export async function addReport(agent: string, title: string, body: string): Promise<AgentReport> {
-  const report: AgentReport = { id: crypto.randomUUID(), ts: new Date().toISOString(), agent, title: title.trim(), body: body.trim(), reviewed: false, reviewedBy: null, reviewedAt: null };
+export async function addReport(agent: string, title: string, body: string, link: { incidentId?: string | null; runId?: string | null } = {}): Promise<AgentReport> {
+  const report: AgentReport = { id: crypto.randomUUID(), ts: new Date().toISOString(), agent, title: title.trim(), body: body.trim(), reviewed: false, reviewedBy: null, reviewedAt: null, incidentId: link.incidentId ?? null, runId: link.runId ?? null };
   reports.unshift(report);
+  for (const fn of listeners) {
+    try {
+      fn(report);
+    } catch {
+      // a listener must not break filing
+    }
+  }
   await save();
-  publish({ source: "agent", kind: "agent", level: "info", tags: ["maintenance", "report"], text: `${agent} filed a report: ${report.title}`, meta: { agent } });
+  publish({ source: "agent", kind: "agent", level: "info", tags: ["maintenance", "report"], text: `${agent} filed a report: ${report.title}`, meta: { agent, incidentId: report.incidentId ?? undefined } });
   return report;
 }
 

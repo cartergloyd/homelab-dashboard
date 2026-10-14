@@ -133,8 +133,22 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       journald, apt, snap revisions, dashboard backups past retention, Minecraft log
       archives, trash, tmp, core dumps) with display-only commands; MCP tools
       `storage_tree`, `storage_largest`, `storage_reclaim`; Dashboard shows the total.
+- [x] Issue #5 **Assistant sidecar** (`services/sidecar.ts`, `services/agentRunner.ts`,
+      `AssistantWidget`): the feed is grouped into **incidents** (errors, failed jobs/scripts,
+      3× the same warning in 10 min; fingerprinted, deduped, cooldown), a supervised
+      **queue** launches the owner's signed-in Codex / Claude Code on them one at a time
+      (quiet period first), output is parsed (Codex `--json`, Claude `stream-json`) into a
+      **conversation** the owner can type into, sessions are **resumed** across runs, risky
+      actions (restart/stop, destructive RCON) are **gated behind approvals** the owner
+      grants in the panel (409 to the agent → it stops → resumed with the decision),
+      reports carry `incidentId`, alert rows are clickable → "Ask about this", lifecycle
+      phases off/idle/queued/investigating/waiting-approval/acting/failed. Demo mode runs a
+      simulated agent so the whole loop can be watched ("Simulate incident").
+      MCP: `request_approval`, `list_incidents`, `get_incident`; `submit_report(incidentId)`.
+- [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
+      Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
-- [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
+- [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
 
 ### Agent etiquette (read before acting on the server)
@@ -225,6 +239,13 @@ override the placeholders wherever they conflict:
   shell command a human (or an agent with its own shell) would run; the dashboard only
   measures. Folders the service user cannot read show as lower bounds with a notice —
   no sudo rule for `du`/`find` (find -exec would be root code execution).
+- 2026-10-14 **Sidecar safety model.** Humans (Tailscale identity) are never gated. Agents
+  (dashboard key) hit a 409 on restart/stop/destructive RCON while `requireApproval` is
+  on; the dashboard files an approval request, the agent is told to end its turn, and the
+  owner's decision resumes the same session with a continuation prompt. An approval is
+  spent once (`consumed`). Incidents never re-trigger within the cooldown; one agent run at
+  a time; `maxRunMinutes` kills a runaway run. The sidecar never deletes or edits anything
+  itself — only the agent does, inside its workspace, through the same API the UI uses.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

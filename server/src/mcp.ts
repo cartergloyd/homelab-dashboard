@@ -150,17 +150,54 @@ server.registerTool(
 server.registerTool(
   "minecraft_rcon",
   { title: "Run a Minecraft console command", description: "Send a command to the Paper server over RCON (e.g. list, say hello, whitelist add Name, save-all, tps) and return its output.", inputSchema: { command: z.string().min(1).max(500) } },
-  async ({ command }) => text((await call<{ output: string }>("POST", "/api/minecraft/command", { command })).output || "(no output)"),
+  async ({ command }) => {
+    try {
+      return text((await call<{ output: string }>("POST", "/api/minecraft/command", { command })).output || "(no output)");
+    } catch (e) {
+      if (/Approval required/.test((e as Error).message)) return text(`NOT RUN. ${(e as Error).message}`);
+      throw e;
+    }
+  },
 );
 
 server.registerTool(
   "minecraft_service",
-  { title: "Start / stop / restart Minecraft", description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online.", inputSchema: { action: z.enum(["start", "stop", "restart"]) } },
-  async ({ action }) => {
-    await call("POST", "/api/minecraft/action", { action });
-    return text(`Minecraft ${action} requested. Check server_status in ~30 s.`);
+  {
+    title: "Start / stop / restart Minecraft",
+    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. When the sidecar requires approval, stop/restart return NOT RUN with an approval request: end your turn and the dashboard resumes you with the owner's decision.",
+    inputSchema: { action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional().describe("why — shown to the owner if approval is needed") },
+  },
+  async ({ action, reason }) => {
+    try {
+      await call("POST", "/api/minecraft/action", { action, reason });
+      return text(`Minecraft ${action} requested. Check server_status in ~30 s.`);
+    } catch (e) {
+      if (/Approval required/.test((e as Error).message)) return text(`NOT RUN. ${(e as Error).message}`);
+      throw e;
+    }
   },
 );
+
+// ---- sidecar: incidents & approvals (issue #5) ---------------------------------------
+
+server.registerTool(
+  "request_approval",
+  {
+    title: "Ask the owner for approval",
+    description: "Before a risky step (restart/stop, destructive RCON, deleting files, changing timers) ask the owner. Returns immediately with the request id; the owner answers in the dashboard and the sidecar resumes you with the decision — so after calling this, STOP and end your turn. If a matching approval was already granted, the gated tool simply works.",
+    inputSchema: { action: z.string().min(1).max(80).describe('short id, e.g. "minecraft_service:restart", "rcon:stop", "delete:old-backups"'), reason: z.string().min(1).max(1000).describe("what you want to do and why, in plain words"), incidentId: z.string().max(40).optional() },
+  },
+  async ({ action, reason, incidentId }) => {
+    const a = await call<{ id: string; status: string }>("POST", "/api/sidecar/approvals", { action, reason, incidentId });
+    return text(`Approval ${a.id} is ${a.status} for "${action}". End your turn now; the dashboard will resume you when the owner decides.`);
+  },
+);
+
+server.registerTool("list_incidents", { title: "List incidents", description: "Incidents the sidecar has grouped from the alerts feed (open first): id, status, title, count, first/last seen, linked runs/reports/approvals.", inputSchema: { all: z.boolean().default(false).describe("include resolved/dismissed older than 48 h") } }, async ({ all }) =>
+  text(await call("GET", `/api/sidecar/incidents?limit=50${all ? "&all=1" : ""}`)),
+);
+
+server.registerTool("get_incident", { title: "Get one incident", description: "Full detail of an incident incl. the raw sample lines.", inputSchema: { id: z.string().min(1).max(40) } }, async ({ id }) => text(await call("GET", `/api/sidecar/incidents/${encodeURIComponent(id)}`)));
 
 server.registerTool("list_scripts", { title: "List maintenance scripts", description: "Scripts in the dashboard's scripts folder (*.py, *.sh) with their last run.", inputSchema: {} }, async () => text(await call("GET", "/api/scripts")));
 
@@ -256,12 +293,14 @@ server.registerTool(
       summary: z.string().min(1).max(2000).describe("what happened and why it mattered"),
       actionsTaken: z.string().max(3000).optional().describe("bullet list of what you changed or ran"),
       followUp: z.string().max(2000).optional().describe("anything a human should decide or check"),
+      contextSuggestions: z.string().max(2000).optional().describe("changes you suggest to the instructions & context file (not applied automatically)"),
+      incidentId: z.string().max(40).optional().describe("the sidecar incident this report answers (from your prompt or list_incidents)"),
     },
   },
-  async ({ title, summary, actionsTaken, followUp }) => {
-    const body = [`Summary: ${summary.trim()}`, actionsTaken ? `Actions taken:\n${actionsTaken.trim()}` : "", followUp ? `Follow-up for a human:\n${followUp.trim()}` : ""].filter(Boolean).join("\n\n");
-    const r = await call<{ id: string }>("POST", "/api/reports", { title, body });
-    return text(`Report filed (${r.id}).`);
+  async ({ title, summary, actionsTaken, followUp, contextSuggestions, incidentId }) => {
+    const body = [`Summary: ${summary.trim()}`, actionsTaken ? `Actions taken:\n${actionsTaken.trim()}` : "", followUp ? `Follow-up for a human:\n${followUp.trim()}` : "", contextSuggestions ? `Suggested context updates:\n${contextSuggestions.trim()}` : ""].filter(Boolean).join("\n\n");
+    const r = await call<{ id: string }>("POST", "/api/reports", { title, body, incidentId });
+    return text(`Report filed (${r.id})${incidentId ? ` for incident #${incidentId}` : ""}.`);
   },
 );
 

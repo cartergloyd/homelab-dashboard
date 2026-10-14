@@ -1,9 +1,11 @@
 // Live Server Alerts: the Minecraft log, scheduled jobs, script output and agent
 // actions in one feed, with a one-click "Problems & maintenance" filter.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { alertsSocketUrl } from "../api";
+import { useQuery } from "@tanstack/react-query";
+import { alertsSocketUrl, api } from "../api";
+import { selectAlert, useSelectedAlert } from "../alertSelection";
 import { useEventSocket } from "../hooks/useEventSocket";
-import type { AlertEvent, AlertSource } from "../types";
+import type { AlertEvent, AlertSource, Incident } from "../types";
 
 const GROUPS: { id: string; label: string; sources: AlertSource[] }[] = [
   { id: "minecraft", label: "Minecraft", sources: ["minecraft"] },
@@ -61,6 +63,14 @@ export function AlertsFeed({ height = 460 }: { height?: number | string }) {
   const [filter, setFilter] = useState("");
   const [follow, setFollow] = useState(true);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const selected = useSelectedAlert();
+  // which rows belong to a sidecar incident (for the marker + tooltip)
+  const incidents = useQuery({ queryKey: ["sidecar", "incidents"], queryFn: () => api.get<Incident[]>("/sidecar/incidents?limit=100"), refetchInterval: 10_000 });
+  const incidentOf = useMemo(() => {
+    const m = new Map<string, Incident>();
+    for (const inc of incidents.data ?? []) for (const id of inc.alertIds) m.set(id, inc);
+    return m;
+  }, [incidents.data]);
 
   useEffect(() => writeLS("alerts.problemsOnly", problemsOnly), [problemsOnly]);
   useEffect(() => writeLS("alerts.groups", groups), [groups]);
@@ -135,13 +145,23 @@ export function AlertsFeed({ height = 460 }: { height?: number | string }) {
       </div>
       <div className="log-body ev-body" ref={bodyRef} onScroll={onScroll}>
         {shown.length === 0 && <span className="skeleton">{problemsOnly ? "No problems or maintenance events yet — that's good." : "Waiting for events…"}</span>}
-        {shown.map((e) => (
-          <div key={e.id} className={`ev ev-${e.level}${e.kind !== "log" || e.tags.includes("maintenance") ? " ev-maint" : ""}`} title={new Date(e.ts).toLocaleString()}>
-            <span className="ev-time">{time(e.ts)}</span>
-            <span className={`ev-src src-${e.source}`}>{e.meta?.script ?? e.meta?.label ?? SOURCE_LABEL[e.source]}</span>
-            <span className="ev-text">{e.text}</span>
-          </div>
-        ))}
+        {shown.map((e) => {
+          const inc = incidentOf.get(e.id) ?? (e.meta?.incidentId ? (incidents.data ?? []).find((i) => i.id === e.meta?.incidentId) : undefined);
+          return (
+            <div
+              key={e.id}
+              className={`ev ev-${e.level}${e.kind !== "log" || e.tags.includes("maintenance") ? " ev-maint" : ""}${selected?.id === e.id ? " ev-selected" : ""}${inc ? " ev-incident" : ""}`}
+              title={`${new Date(e.ts).toLocaleString()}${inc ? ` · incident #${inc.id} (${inc.status}): ${inc.title}` : ""} — click to select for the Assistant`}
+              onClick={() => selectAlert(e)}
+              role="button"
+            >
+              <span className="ev-time">{time(e.ts)}</span>
+              <span className={`ev-src src-${e.source}`}>{e.meta?.script ?? e.meta?.label ?? SOURCE_LABEL[e.source]}</span>
+              <span className="ev-text">{e.text}</span>
+              {inc && <span className="ev-inc mono" title={`incident #${inc.id}`}>#{inc.id}</span>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

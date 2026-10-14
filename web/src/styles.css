@@ -1158,3 +1158,145 @@ table.table {
     display: none;
   }
 }
+
+/* ---- assistant sidecar (issue #5) ---------------------------------------- */
+.ev {
+  cursor: pointer;
+}
+.ev-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 4px;
+}
+.ev-inc {
+  flex: none;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 25%, transparent);
+  color: var(--ink);
+  align-self: center;
+}
+.sidecar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.sidecar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.approval {
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.convo {
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.turn {
+  max-width: 92%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.turn.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.turn.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.turn.system {
+  align-self: center;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  padding: 2px 6px;
+}
+.turn-meta {
+  display: block;
+  font-size: 10px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+.chatbox {
+  display: flex;
+  gap: 6px;
+}
+.chatbox textarea {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+  max-height: 120px;
+}
+.incident {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: start;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+.incident.active {
+  border-color: color-mix(in srgb, var(--critical) 45%, transparent);
+}
+.incident .actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.phase-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+  background: var(--muted);
+}
+.phase-dot.busy {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.phase-dot.ok {
+  background: var(--good);
+}
+.phase-dot.warn {
+  background: var(--warning);
+}
+.phase-dot.bad {
+  background: var(--critical);
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}

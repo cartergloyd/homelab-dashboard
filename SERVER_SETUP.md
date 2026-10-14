@@ -254,6 +254,33 @@ Running `claude` inside `/opt/homelab-dashboard` picks the connector up automati
 The connector's tools can restart Minecraft, run scripts and edit `CLAUDE.md` — that is the
 owner's explicit choice. Every call is attributed in the alerts feed and the Assistant widget.
 
+**Assistant sidecar (issue #5).** The Assistant panel on the Minecraft tab can run the
+agent *for* the owner: new errors, failed jobs/scripts and repeated warnings become
+incidents, and the sidecar launches the chosen CLI headlessly on the server, one incident at
+a time, with the owner's approval required before restart/stop/destructive RCON. For that
+to work on the server:
+
+1. Install the CLI **for the service user** and log it in once (interactive):
+   `sudo -u homelab -H codex login` (or `claude` once and sign in). Codex is the default;
+   switch in Settings & connect. The CLI must be on the unit's PATH — add
+   `Environment=PATH=/usr/local/bin:/usr/bin:/bin:<folder>` to `homelab-dashboard.service`
+   if `which codex` says somewhere else. The panel shows "not on the dashboard's PATH" with
+   the exact path list when this is wrong.
+2. Codex is launched as `codex exec --json -C "<MC_DIR>" --sandbox workspace-write
+   --skip-git-repo-check <prompt>` and resumed with `codex exec resume --json <thread_id>
+   <prompt>`; Claude Code as `claude -p --output-format stream-json --verbose
+   --permission-mode bypassPermissions --mcp-config data/sidecar-mcp.json [--resume <id>]`.
+   **Verify `codex exec --help` on the installed version**: if `--json` or `resume` is
+   missing, remove them in `services/agentRunner.ts` `commandFor()` — plain-text output
+   still streams into the feed; only the tidy conversation and session resume are lost.
+3. Turn it on in the panel (Settings & connect → "Assistant on"). Settings live in
+   `data/sidecar.json`; incidents in `data/incidents.json`; approvals in
+   `data/approvals.json`; the conversation in `data/sidecar-conversation.jsonl`. The agent's
+   workspace is `MC_DIR`.
+4. Test: in Settings → "Run a one-off task now" with a harmless task ("list the players and
+   file a short report"). The panel should show the agent's messages, the feed its tool
+   calls, and a report should appear on the Dashboard with the incident/run link.
+
 Smoke test from the server: `cd /opt/homelab-dashboard/server && HOMELAB_KEY=… node test-mcp.mjs`.
 
 ## 6c. Scheduled jobs (Minecraft → Maintenance)
@@ -445,6 +472,7 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 - [ ] Owner's terminal `claude` (or `codex`) lists the `homelab` MCP tools
 - [ ] **World backups** panel lists the existing `mcworld_…` folders (marked "existing") before any dashboard-made backup
 - [ ] Every mirrored timer **and cron line** shows "Output tracking connected"; `npm run discover` proposes nothing new
+- [ ] Assistant panel: runner shows as available; a one-off task produces messages in the panel and a report on the Dashboard; a restart attempt by the agent shows up as an approval request instead of restarting
 - [ ] `npm run audit:install` ends with **FULLY CONNECTED**
 
 ## Troubleshooting

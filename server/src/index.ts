@@ -14,6 +14,7 @@ import { initContext } from "./services/context.js";
 import { initReports } from "./services/reports.js";
 import { initScheduler } from "./services/scheduler.js";
 import { initScripts } from "./services/scripts.js";
+import { initSidecar } from "./services/sidecar.js";
 import { refreshFolders } from "./services/storage.js";
 import { attachLogSocket } from "./ws.js";
 
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
   await initContext();
   await initReports();
   await initScheduler();
+  await initSidecar();
   void refreshFolders();
 
   const app = express();

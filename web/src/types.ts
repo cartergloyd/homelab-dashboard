@@ -296,6 +296,7 @@ export interface AlertEvent {
     agent?: string;
     exitCode?: number | null;
     label?: string;
+    incidentId?: string;
   };
 }
 
@@ -318,6 +319,8 @@ export interface AgentPresence {
 export type AgentRunner = "codex" | "claude";
 export type AgentRunStatus = "running" | "exited" | "failed";
 
+export type AgentRunKind = "manual" | "incident" | "continuation" | "chat";
+
 export interface AgentRun {
   id: string;
   runner: AgentRunner;
@@ -328,6 +331,83 @@ export interface AgentRun {
   exitCode: number | null;
   status: AgentRunStatus;
   lines: number;
+  kind: AgentRunKind;
+  incidentId: string | null;
+  sessionId: string | null;
+}
+
+export type SidecarPhase = "off" | "idle" | "queued" | "investigating" | "waiting-approval" | "acting" | "reporting" | "failed";
+export type IncidentStatus = "open" | "investigating" | "waiting-approval" | "resolved" | "dismissed" | "failed";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "consumed" | "expired";
+
+export interface SidecarSettings {
+  enabled: boolean;
+  runner: AgentRunner;
+  autoTrigger: boolean;
+  requireApproval: boolean;
+  cooldownMinutes: number;
+  quietSeconds: number;
+  workspace: string;
+  maxRunMinutes: number;
+}
+
+export interface Incident {
+  id: string;
+  fingerprint: string;
+  title: string;
+  source: AlertSource;
+  level: AlertLevel;
+  status: IncidentStatus;
+  firstSeen: string;
+  lastSeen: string;
+  count: number;
+  alertIds: string[];
+  samples: string[];
+  runIds: string[];
+  reportIds: string[];
+  approvalIds: string[];
+  note: string | null;
+}
+
+export interface Approval {
+  id: string;
+  ts: string;
+  action: string;
+  reason: string;
+  requestedBy: string;
+  incidentId: string | null;
+  runId: string | null;
+  status: ApprovalStatus;
+  decidedBy: string | null;
+  decidedAt: string | null;
+}
+
+export interface ConversationTurn {
+  id: string;
+  ts: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  runId: string | null;
+  incidentId: string | null;
+}
+
+export interface SidecarState {
+  phase: SidecarPhase;
+  since: string;
+  detail: string | null;
+  currentIncidentId: string | null;
+  currentRunId: string | null;
+  queue: string[];
+  lastRun: AgentRun | null;
+  runnerAvailable: boolean | null;
+  runnerNote: string | null;
+}
+
+export interface SidecarPayload {
+  settings: SidecarSettings;
+  state: SidecarState;
+  incidents: Incident[];
+  approvals: Approval[];
 }
 
 export interface ScriptRun {
@@ -357,6 +437,8 @@ export interface AgentReport {
   reviewed: boolean;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  incidentId?: string | null;
+  runId?: string | null;
 }
 
 export interface ContextPayload {

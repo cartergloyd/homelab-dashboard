@@ -24,6 +24,7 @@ import { getVersion, listHistory, readContext, restoreVersion, writeContext } fr
 import { addReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
+import * as sidecar from "./services/sidecar.js";
 import type { AgentRunner, AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
 export const api = express.Router();
@@ -193,14 +194,20 @@ api.get("/minecraft/players", async (_req, res) => {
 });
 
 api.post("/minecraft/action", async (req, res) => {
-  const { action } = z.object({ action: z.enum(["start", "stop", "restart"]) }).parse(req.body);
+  const { action, reason } = z.object({ action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional() }).parse(req.body);
+  // agents need the owner's approval for stop/restart when the sidecar says so (issue #5)
+  if (action !== "start") await sidecar.gate(`minecraft_service:${action}`, user(res), reason ?? `${action} the Minecraft server`);
   logAction(res, `${action} Minecraft service`);
   await minecraftAction(action);
   res.json({ ok: true });
 });
 
+const RISKY_RCON = /^\/?\s*(stop|ban|ban-ip|pardon|deop|op|kill|whitelist\s+(off|remove))\b/i;
+
 api.post("/minecraft/command", async (req, res) => {
-  const { command } = z.object({ command: z.string().max(500) }).parse(req.body);
+  const { command, reason } = z.object({ command: z.string().max(500), reason: z.string().max(500).optional() }).parse(req.body);
+  const risky = command.trim().match(RISKY_RCON);
+  if (risky) await sidecar.gate(`rcon:${risky[1].toLowerCase().replace(/\s+/g, " ")}`, user(res), reason ?? `RCON: ${command.trim()}`);
   const output = await minecraftCommand(command);
   logAction(res, `RCON: ${command.trim()}`);
   res.json({ output });
@@ -382,9 +389,88 @@ api.get("/reports", (req, res) => {
 });
 
 api.post("/reports", async (req, res) => {
-  const body = z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(8000) }).parse(req.body);
+  const body = z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(8000), incidentId: z.string().trim().max(40).optional(), runId: z.string().trim().max(60).optional() }).parse(req.body);
   const u = user(res);
-  res.status(201).json(await addReport(u.viaKey ? u.name : u.name || u.login, body.title, body.body));
+  res.status(201).json(await addReport(u.viaKey ? u.name : u.name || u.login, body.title, body.body, { incidentId: body.incidentId ?? null, runId: body.runId ?? null }));
+});
+
+// ---- assistant sidecar (issue #5) ---------------------------------------------
+
+api.get("/sidecar", (_req, res) => {
+  res.json(sidecar.getPayload());
+});
+
+api.put("/sidecar/settings", async (req, res) => {
+  const patch = z
+    .object({
+      enabled: z.boolean().optional(),
+      runner: z.enum(["codex", "claude"]).optional(),
+      autoTrigger: z.boolean().optional(),
+      requireApproval: z.boolean().optional(),
+      cooldownMinutes: z.number().int().min(1).max(1440).optional(),
+      quietSeconds: z.number().int().min(0).max(600).optional(),
+      maxRunMinutes: z.number().int().min(1).max(180).optional(),
+    })
+    .parse(req.body ?? {});
+  res.json(await sidecar.updateSettings(patch, user(res).name));
+});
+
+api.get("/sidecar/conversation", (req, res) => {
+  res.json(sidecar.getConversation(Math.min(500, Number(req.query.limit) || 100)));
+});
+
+api.post("/sidecar/chat", (req, res) => {
+  const body = z.object({ text: z.string().trim().min(1).max(4000), alertId: z.string().optional() }).parse(req.body);
+  const alert = body.alertId ? (query({ limit: 5000 }).find((e) => e.id === body.alertId) ?? null) : null;
+  const turn = sidecar.chat(body.text, user(res).name, alert);
+  logAction(res, `asked the assistant: ${body.text.slice(0, 80)}`);
+  res.status(201).json(turn);
+});
+
+api.get("/sidecar/incidents", (req, res) => {
+  res.json(sidecar.listIncidents(Math.min(200, Number(req.query.limit) || 40), req.query.all === "1"));
+});
+
+api.get("/sidecar/incidents/:id", (req, res) => {
+  res.json(sidecar.getIncident(String(req.params.id)));
+});
+
+api.post("/sidecar/incidents/:id/investigate", (req, res) => {
+  const inc = sidecar.investigateIncident(String(req.params.id), user(res).name);
+  logAction(res, `asked the assistant to investigate incident #${inc.id}`);
+  res.json(inc);
+});
+
+api.post("/sidecar/incidents/:id/dismiss", (req, res) => {
+  const { note } = z.object({ note: z.string().max(300).optional() }).parse(req.body ?? {});
+  res.json(sidecar.dismissIncident(String(req.params.id), user(res).name, note));
+});
+
+api.post("/sidecar/incidents/:id/resolve", (req, res) => {
+  const { note } = z.object({ note: z.string().max(300).optional() }).parse(req.body ?? {});
+  res.json(sidecar.resolveIncident(String(req.params.id), user(res).name, note));
+});
+
+api.get("/sidecar/approvals", (req, res) => {
+  res.json(sidecar.listApprovals(req.query.all === "1"));
+});
+
+/** Agents ask here (MCP request_approval); the owner answers below. */
+api.post("/sidecar/approvals", async (req, res) => {
+  const body = z.object({ action: z.string().trim().min(1).max(80), reason: z.string().trim().min(1).max(1000), incidentId: z.string().trim().max(40).optional() }).parse(req.body);
+  const u = user(res);
+  res.status(201).json(await sidecar.requestApproval(body.action, body.reason, u.name, null, body.incidentId ?? null));
+});
+
+api.post("/sidecar/approvals/:id", async (req, res) => {
+  const { decision } = z.object({ decision: z.enum(["approve", "deny"]) }).parse(req.body);
+  const a = await sidecar.decideApproval(String(req.params.id), decision, user(res).name);
+  res.json(a);
+});
+
+api.post("/sidecar/simulate", (req, res) => {
+  const { kind } = z.object({ kind: z.enum(["exception", "warn", "job"]).default("exception") }).parse(req.body ?? {});
+  res.status(201).json(sidecar.simulateIncident(kind));
 });
 
 api.post("/reports/:id/review", async (req, res) => {
