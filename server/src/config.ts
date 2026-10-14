@@ -37,11 +37,13 @@ const Env = z.object({
   ALLOWED_LOGINS: csv,
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
+  SYSTEMD_USER: flag,
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
   JELLYFIN_PUBLIC_URL: z.string().optional(),
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_CONTAINER: z.string().default("jellyfin"),
+  QBITTORRENT_PUBLIC_URL: z.string().optional(),
   // "Movies=/srv/media/movies,Shows=/srv/media/shows"
   MEDIA_ROOTS: csv,
 
@@ -120,12 +122,16 @@ export const cfg = {
   allowedLogins: env.ALLOWED_LOGINS,
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
+  systemdUser: env.SYSTEMD_USER,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   jellyfin: {
     url: env.JELLYFIN_URL.replace(/\/$/, ""),
     publicUrl: (env.JELLYFIN_PUBLIC_URL ?? env.JELLYFIN_URL).replace(/\/$/, ""),
     apiKey: env.JELLYFIN_API_KEY,
     container: env.JELLYFIN_CONTAINER,
+  },
+  qbittorrent: {
+    publicUrl: env.QBITTORRENT_PUBLIC_URL?.replace(/\/$/, "") ?? null,
   },
   mediaRoots: parseRoots(env.MEDIA_ROOTS),
   minecraft: {

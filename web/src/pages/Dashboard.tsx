@@ -43,6 +43,11 @@ export function Dashboard() {
             <a className="btn" href={config.data?.links.jellyfin} target="_blank" rel="noreferrer">
               <Icons.external width={14} height={14} /> Jellyfin
             </a>
+            {config.data?.links.qbittorrent && (
+              <a className="btn" href={config.data.links.qbittorrent} target="_blank" rel="noreferrer">
+                <Icons.external width={14} height={14} /> qBittorrent
+              </a>
+            )}
             <a className="btn" href={config.data?.links.directus} target="_blank" rel="noreferrer">
               <Icons.external width={14} height={14} /> Directus
             </a>

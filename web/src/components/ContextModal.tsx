@@ -1,4 +1,5 @@
-// "Instructions & context": view/edit the CLAUDE.md agents read, with a change log.
+// "Instructions & context": view/edit the Minecraft server context agents read,
+// with a change log.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
@@ -50,7 +51,7 @@ export function ContextModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal title="Instructions & context" onClose={onClose} wide>
+    <Modal title="Minecraft instructions & context" onClose={onClose} wide>
       <div className="row spread" style={{ marginBottom: 10 }}>
         <div className="tabs">
           <button className={`btn sm ${tab === "editor" ? "primary" : "ghost"}`} onClick={() => setTab("editor")}>
@@ -68,7 +69,7 @@ export function ContextModal({ onClose }: { onClose: () => void }) {
       {tab === "editor" && (
         <div className="stack">
           <p className="dim small" style={{ margin: 0 }}>
-            This is the file connected agents read before they act (and the notes future sessions start from). Say what you want them to do and not do. Every save is kept in the change log.
+            This is the Minecraft server context connected agents read before they act. Keep operational rules, known harmless alerts, repair patterns, and follow-up instructions here. Every save is kept in the change log.
           </p>
           <textarea className="input mono" rows={22} value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} style={{ resize: "vertical", lineHeight: 1.5 }} />
           <div className="row">
