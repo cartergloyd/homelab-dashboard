@@ -1303,3 +1303,97 @@ table.table {
     opacity: 1;
   }
 }
+
+/* ---- storage explorer: tree + treemap (issue #4) ---------------------------- */
+.explorer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.explorer-tree {
+  min-width: 0;
+}
+.explorer-map {
+  min-width: 0;
+  position: sticky;
+  top: 8px;
+}
+.treemap {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tm {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--surface);
+  border-radius: 3px;
+  background: var(--accent);
+  overflow: hidden;
+  transition: opacity 0.15s;
+}
+.tm.files {
+  background: var(--ink);
+}
+.tm.clickable {
+  cursor: pointer;
+}
+.tm.clickable:hover {
+  opacity: 1 !important;
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+.tm-text {
+  padding: 4px 6px;
+  color: var(--accent-ink);
+  min-width: 0;
+}
+.tm.files .tm-text {
+  color: var(--page);
+}
+.tm-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tm-sub {
+  font-size: 11px;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-meta {
+  display: block;
+  font-weight: 400;
+}
+.badge.warn {
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--ink);
+}
+.input.sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+  .explorer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .explorer-map {
+    position: static;
+  }
+  .treemap {
+    height: 220px;
+  }
+}

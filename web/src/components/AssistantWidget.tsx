@@ -404,6 +404,7 @@ export function AssistantWidget() {
         <button className="btn" onClick={() => setModal("settings")}>
           <Icons.plug width={14} height={14} /> Settings &amp; connect
         </button>
+        {/* [DEMO] demo-only button: fakes a server error so the sidecar loop can be watched (see DEMO_INDEX.md) */}
         {config.data?.demo && (
           <button className="btn ghost" disabled={simulate.isPending} onClick={() => simulate.mutate("exception")} title="Demo: publish a fake server exception to watch the sidecar react">
             Simulate incident

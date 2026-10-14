@@ -88,6 +88,7 @@ if (demoCreated.length) {
 
 // 5. warnings that are not data
 if (cfg.dashboardKey === "demo-key-not-secret") console.log("! DASHBOARD_KEY is the demo key — set a real one (openssl rand -hex 24).");
+// [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
 if (cfg.demo) console.log("! DEMO is set in this environment — never set it on the server.");
 
 if (!actions.length) {

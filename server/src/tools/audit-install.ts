@@ -90,6 +90,7 @@ const when = (ms: number) => new Date(ms).toLocaleString("en-US", { timeZone: cf
 // ---- environment --------------------------------------------------------------
 
 add("env", "env file", envLoaded ? "pass" : "fail", envLoaded ? envFile : `${envFile} not found (pass --env FILE)`, true);
+// [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
 add("env", "demo flags", cfg.demo || cfg.authDisabled ? "fail" : "pass", cfg.demo || cfg.authDisabled ? "DEMO and/or AUTH_DISABLED are set — never on the server" : "DEMO / AUTH_DISABLED unset", true);
 add("env", "dashboard key", !cfg.dashboardKey ? "fail" : cfg.dashboardKey === "demo-key-not-secret" ? "fail" : "pass", !cfg.dashboardKey ? "DASHBOARD_KEY unset" : cfg.dashboardKey === "demo-key-not-secret" ? "DASHBOARD_KEY is the demo key" : "set", true);
 add("env", "timezone", "pass", `${cfg.timezone} (schedules are evaluated in this zone)`);
@@ -174,6 +175,12 @@ for (const r of backups.roots) add("backups", "root", r.exists ? (r.count ? "pas
 const byFormat = backups.backups.reduce<Record<string, number>>((acc, b) => ((acc[b.format] = (acc[b.format] ?? 0) + 1), acc), {});
 add("backups", "formats found", backups.backups.length ? "pass" : "warn", backups.backups.length ? Object.entries(byFormat).map(([k, v]) => `${k}: ${v}`).join(", ") : "no existing backups recognised (mc-*.tar.gz, mcworld_YYYY_MM_DD/, *.tar.gz)");
 add("backups", "method", cfg.backups.method === "builtin" ? "warn" : "pass", cfg.backups.method === "builtin" ? `BACKUP_METHOD=builtin (${cfg.backups.format}) — set script:<name> to use the owner's own backup script` : cfg.backups.method);
+
+// ---- storage explorer engine (issue #4) ----------------------------------------------
+
+const ncduVer = (await sh("ncdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
+const gduVer = (await sh("gdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
+add("storage", "disk scanner", ncduVer || gduVer ? "pass" : "warn", ncduVer ? `ncdu ${ncduVer} (TreeSize view with file ages and owners)` : gduVer ? `gdu ${gduVer} (ncdu-format export; no file ages/owners)` : "neither ncdu nor gdu installed — the explorer falls back to du -a (slow, no ages/owners). Fix: sudo apt install ncdu");
 
 // ---- data dir: demo leakage ------------------------------------------------------
 

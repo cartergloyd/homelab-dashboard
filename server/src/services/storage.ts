@@ -1,35 +1,26 @@
-// Storage: filesystem capacity (df), measured folder sizes (du), and — issue #4 —
-// a TreeSize-style explorer (size of every sub-folder of a path), the largest
-// files under a path, and a "reclaimable space" report. Every measurement runs
-// in the background with a timeout and is cached; GETs return `measuring: true`
-// until the result lands, so the UI/agents poll instead of waiting on `du`.
-// Nothing in this module deletes anything.
+// Storage: filesystem capacity (df), measured sizes of the folders the dashboard
+// manages (du), and the "reclaimable space" report (issue #4). The TreeSize-style
+// explorer lives in services/diskscan.ts (ncdu / gdu / du engines). Nothing in this
+// module deletes anything.
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { cfg } from "../config.js";
 import * as demo from "../demo.js";
-import { HttpError } from "../errors.js";
 import { sleep } from "../util.js";
 import { listBackups } from "./backups.js";
 import { dockerDiskUsage } from "./docker.js";
-import type { Filesystem, FolderUsage, LargestFile, LargestPayload, ReclaimItem, ReclaimPayload, StoragePayload, StorageTreePayload, TreeEntry } from "../types.js";
+import type { Filesystem, FolderUsage, ReclaimItem, ReclaimPayload, StoragePayload } from "../types.js";
 
 const execFileP = promisify(execFile);
 const TTL_MS = 15 * 60_000;
-const EXPLORER_TTL_MS = 10 * 60_000;
-const DU_TIMEOUT = 15 * 60_000;
-const BLOCKED = /^\/(proc|sys|dev|run)(\/|$)/;
+const RECLAIM_TTL_MS = 10 * 60_000;
 
 let folderCache: { folders: FolderUsage[]; refreshedAt: string | null } = { folders: [], refreshedAt: null };
 let refreshing: Promise<void> | null = null;
 
-function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what} timed out`)), ms).unref())]);
-}
-
-/** Runs a measuring tool; tools like du/find exit 1 on unreadable entries but still print, so keep partial stdout. */
+/** Runs a measuring tool; du exits 1 on unreadable entries but still prints, so keep partial stdout. */
 async function measure(cmd: string, args: string[], timeout: number): Promise<{ stdout: string; partial: boolean; failed: boolean }> {
   try {
     const r = await execFileP(cmd, args, { timeout, maxBuffer: 64 << 20, killSignal: "SIGKILL" });
@@ -41,11 +32,12 @@ async function measure(cmd: string, args: string[], timeout: number): Promise<{ 
   }
 }
 
-// ---- filesystems + folder sizes (original) ---------------------------------------
+// ---- filesystems + folder sizes ----------------------------------------------------
 
 let fsCache: { at: number; rows: Filesystem[] } | null = null;
 
 export async function filesystems(): Promise<Filesystem[]> {
+  // [DEMO] demo-mode branch — fake df output; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.filesystems();
   if (fsCache && Date.now() - fsCache.at < 30_000) return fsCache.rows;
   const { stdout } = await execFileP("df", ["-kP"], { timeout: 10_000 });
@@ -115,148 +107,11 @@ export async function storage(): Promise<StoragePayload> {
   };
 }
 
-// ---- explorer: one folder's children ---------------------------------------------------
-
-const treeCache = new Map<string, StorageTreePayload>();
-const treeJobs = new Map<string, Promise<void>>();
-
-async function safeDir(input: string): Promise<string> {
-  if (input && !input.startsWith("/")) throw new HttpError(400, "Path must be absolute");
-  const p = path.resolve(input || "/");
-  if (BLOCKED.test(p)) throw new HttpError(400, `${p} cannot be measured`);
-  if (cfg.demo) return p; // demo paths are imaginary
-  const st = await withTimeout(fs.stat(p), 5000, `stat ${p}`).catch(() => null);
-  if (!st) throw new HttpError(404, `${p} is not reachable`);
-  if (!st.isDirectory()) throw new HttpError(400, `${p} is not a folder`);
-  return p;
-}
-
-function mountFor(p: string, list: Filesystem[]): StorageTreePayload["mount"] {
-  let best: Filesystem | null = null;
-  for (const f of list) if ((p === f.mount || p.startsWith(f.mount.endsWith("/") ? f.mount : `${f.mount}/`)) && (!best || f.mount.length > best.mount.length)) best = f;
-  return best ? { mount: best.mount, totalBytes: best.totalBytes, usedBytes: best.usedBytes } : null;
-}
-
-const fresh = (at: string | null, ttl = EXPLORER_TTL_MS) => !!at && Date.now() - Date.parse(at) < ttl;
-
-function emptyTree(p: string): StorageTreePayload {
-  return { path: p, parent: p === "/" ? null : path.dirname(p), measuring: false, measuredAt: null, totalBytes: null, entries: [], partial: false, mount: null };
-}
-
-async function measureTree(p: string): Promise<StorageTreePayload> {
-  // -x: stay on this filesystem (other mounts have their own meter); -d 1: children only
-  const du = await measure("du", ["-x", "-k", "-d", "1", "--", p], DU_TIMEOUT);
-  if (du.failed) throw new Error("du is not available or produced no output");
-  const dirs: TreeEntry[] = [];
-  let total = 0;
-  for (const line of du.stdout.split("\n")) {
-    const m = line.match(/^(\d+)\s+(.*)$/);
-    if (!m) continue;
-    const bytes = Number(m[1]) * 1024;
-    if (m[2] === p) total = bytes;
-    else dirs.push({ name: path.basename(m[2]), path: m[2], bytes, kind: "dir" });
-  }
-  // files directly in this folder (du -d 1 only lists sub-folders)
-  const files: TreeEntry[] = [];
-  let fileBytes = 0;
-  const names = await fs.readdir(p, { withFileTypes: true }).catch(() => []);
-  for (const e of names.slice(0, 5000)) {
-    if (!e.isFile()) continue;
-    const full = path.join(p, e.name);
-    const st = await fs.stat(full).catch(() => null);
-    if (!st) continue;
-    fileBytes += st.size;
-    files.push({ name: e.name, path: full, bytes: st.size, kind: "file" });
-  }
-  files.sort((a, b) => b.bytes - a.bytes);
-  const shown = files.slice(0, 25);
-  const entries = [...dirs, ...shown].sort((a, b) => b.bytes - a.bytes);
-  const rest = files.length - shown.length;
-  if (rest > 0) entries.push({ name: `${rest} more file${rest === 1 ? "" : "s"}`, path: p, bytes: fileBytes - shown.reduce((s, f) => s + f.bytes, 0), kind: "files" });
-  return { ...emptyTree(p), measuredAt: new Date().toISOString(), totalBytes: total || dirs.reduce((s, d) => s + d.bytes, 0) + fileBytes, entries, partial: du.partial, mount: mountFor(p, await filesystems().catch(() => [])) };
-}
-
-function trim<T>(cache: Map<string, T>, max = 300): void {
-  while (cache.size > max) cache.delete(cache.keys().next().value as string);
-}
-
-export async function storageTree(input: string, refresh = false): Promise<StorageTreePayload> {
-  const p = await safeDir(input);
-  const cached = treeCache.get(p);
-  if (cached && !refresh && fresh(cached.measuredAt)) return { ...cached, measuring: treeJobs.has(p) };
-  if (cfg.demo) {
-    const t = { ...demo.storageTree(p), mount: mountFor(p, demo.filesystems()) };
-    treeCache.set(p, t);
-    return t;
-  }
-  if (!treeJobs.has(p)) {
-    const job = measureTree(p)
-      .then(
-        (t) => treeCache.set(p, t),
-        (e) => treeCache.set(p, { ...(cached ?? emptyTree(p)), measuredAt: new Date().toISOString(), error: (e as Error).message }),
-      )
-      .then(() => trim(treeCache))
-      .finally(() => treeJobs.delete(p));
-    treeJobs.set(p, job);
-  }
-  return { ...(cached ?? emptyTree(p)), measuring: true };
-}
-
-// ---- largest files under a path -------------------------------------------------------
-
-const MIN_LARGE = 20 * 1024 * 1024;
-const largestCache = new Map<string, LargestPayload>();
-const largestJobs = new Map<string, Promise<void>>();
-
-async function measureLargest(p: string, limit: number): Promise<LargestPayload> {
-  // GNU find prints size, mtime and path in one pass; -xdev stays on this filesystem.
-  let r = await measure("find", [p, "-xdev", "-type", "f", "-size", `+${MIN_LARGE / 1024}k`, "-printf", "%s\\t%T@\\t%p\\n"], DU_TIMEOUT);
-  let files: LargestFile[] = [];
-  if (!r.failed && /^\d+\t/m.test(r.stdout)) {
-    for (const line of r.stdout.split("\n")) {
-      const m = line.match(/^(\d+)\t([\d.]+)\t(.*)$/);
-      if (m) files.push({ path: m[3], bytes: Number(m[1]), modified: new Date(Number(m[2]) * 1000).toISOString() });
-    }
-  } else {
-    // BSD find (no -printf): list, then stat
-    r = await measure("find", [p, "-xdev", "-type", "f", "-size", `+${MIN_LARGE / 1024}k`, "-print0"], DU_TIMEOUT);
-    if (r.failed) throw new Error("find is not available");
-    for (const f of r.stdout.split("\0").filter(Boolean).slice(0, 5000)) {
-      const st = await fs.stat(f).catch(() => null);
-      if (st) files.push({ path: f, bytes: st.size, modified: st.mtime.toISOString() });
-    }
-  }
-  files = files.sort((a, b) => b.bytes - a.bytes).slice(0, limit);
-  return { path: p, measuring: false, measuredAt: new Date().toISOString(), minBytes: MIN_LARGE, files, partial: r.partial };
-}
-
-export async function largestFiles(input: string, limit = 50, refresh = false): Promise<LargestPayload> {
-  const p = await safeDir(input);
-  const key = `${p}\u0000${limit}`;
-  const cached = largestCache.get(key);
-  if (cached && !refresh && fresh(cached.measuredAt)) return { ...cached, measuring: largestJobs.has(key) };
-  if (cfg.demo) {
-    const l = demo.largestFiles(p, limit);
-    largestCache.set(key, l);
-    return l;
-  }
-  if (!largestJobs.has(key)) {
-    const job = measureLargest(p, limit)
-      .then(
-        (l) => largestCache.set(key, l),
-        (e) => largestCache.set(key, { path: p, measuring: false, measuredAt: new Date().toISOString(), minBytes: MIN_LARGE, files: cached?.files ?? [], partial: false, error: (e as Error).message }),
-      )
-      .then(() => trim(largestCache))
-      .finally(() => largestJobs.delete(key));
-    largestJobs.set(key, job);
-  }
-  return { path: p, measuring: true, measuredAt: cached?.measuredAt ?? null, minBytes: MIN_LARGE, files: cached?.files ?? [], partial: false };
-}
-
 // ---- reclaimable space --------------------------------------------------------------------
 
 let reclaimCache: ReclaimPayload | null = null;
 let reclaimJob: Promise<void> | null = null;
+const fresh = (at: string | null) => !!at && Date.now() - Date.parse(at) < RECLAIM_TTL_MS;
 
 /** `du -sk -x` of one path; null when missing/unreadable. */
 async function duBytes(p: string, timeout = 120_000): Promise<{ bytes: number | null; partial: boolean }> {
@@ -352,6 +207,7 @@ async function measureReclaim(): Promise<ReclaimPayload> {
 
 export async function reclaimable(refresh = false): Promise<ReclaimPayload> {
   if (reclaimCache && !refresh && fresh(reclaimCache.measuredAt)) return { ...reclaimCache, measuring: reclaimJob !== null };
+  // [DEMO] demo-mode branch — a fixed reclaimable-space list; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return (reclaimCache = demo.reclaim());
   if (!reclaimJob) {
     reclaimJob = measureReclaim()

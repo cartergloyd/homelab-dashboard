@@ -8,6 +8,7 @@ export const LOG_SOURCES: LogSource[] = ["minecraft", "jellyfin", "directus", "p
 
 /** Starts tailing a source; resolves to a function that stops it. `onEnd` fires if the tail dies on its own. */
 export async function openLogStream(source: LogSource, onLine: (line: string) => void, onEnd?: () => void): Promise<() => void> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.logStream(source, onLine);
   switch (source) {
     case "minecraft":

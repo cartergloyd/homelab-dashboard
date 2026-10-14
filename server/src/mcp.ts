@@ -118,19 +118,29 @@ server.registerTool(
 server.registerTool("storage", { title: "Storage", description: "Filesystem usage (df) and measured folder sizes (du).", inputSchema: {} }, async () => text(await call("GET", "/api/storage")));
 
 server.registerTool(
+  "storage_scan",
+  {
+    title: "Disk scans (TreeSize engine)",
+    description: "Status of the ncdu/gdu disk scans the explorer is built on: engine, scanned roots, totals, when each finished. Pass root to start (or re-run) a scan of that filesystem/folder; scans run one at a time in the background.",
+    inputSchema: { root: z.string().optional().describe("start a scan of this folder (absolute path); omit to just read status") },
+  },
+  async ({ root }) => text(root ? await call("POST", "/api/storage/scan", { root }) : await call("GET", "/api/storage/scan")),
+);
+
+server.registerTool(
   "storage_tree",
   {
-    title: "Storage explorer",
-    description: "TreeSize-style view of one folder: size of each sub-folder and the largest files directly in it, sorted by size, plus the disk it lives on. Returns measuring:true while du runs — call again in a few seconds. Drill down by calling it with a sub-folder path.",
+    title: "Storage explorer: one folder",
+    description: "TreeSize-style view of a folder from the last scan: its total, every sub-folder with size / file count / newest change, the largest files in the whole subtree, and (top 3 levels) size by file type, by age and by owner. Drill down by calling it with a sub-folder path. 404 = no scan covers it yet (use storage_scan).",
     inputSchema: { path: z.string().default("/") },
   },
-  async ({ path: p }) => text(await call("GET", `/api/storage/tree?path=${encodeURIComponent(p)}`)),
+  async ({ path: p }) => text(await call("GET", `/api/storage/scan/dir?path=${encodeURIComponent(p)}`)),
 );
 
 server.registerTool(
   "storage_largest",
-  { title: "Largest files", description: "The biggest files (>20 MB) under a path on the same filesystem, largest first. Returns measuring:true while find runs — call again shortly.", inputSchema: { path: z.string().default("/"), limit: z.number().int().min(1).max(200).default(50) } },
-  async ({ path: p, limit }) => text(await call("GET", `/api/storage/largest?path=${encodeURIComponent(p)}&limit=${limit}`)),
+  { title: "Largest files", description: "The biggest files under a path according to the last scan, largest first, with modification time and owner where the engine reports them.", inputSchema: { path: z.string().default("/"), limit: z.number().int().min(1).max(200).default(40) } },
+  async ({ path: p, limit }) => text(await call("GET", `/api/storage/scan/top?path=${encodeURIComponent(p)}&limit=${limit}`)),
 );
 
 server.registerTool(

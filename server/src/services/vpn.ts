@@ -329,6 +329,7 @@ function classify(p: Probe): VpnServicePath[] {
 // ---- main --------------------------------------------------------------------
 
 export async function vpnStatus(force = false): Promise<VpnPayload> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.vpn();
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return cache.payload;
 

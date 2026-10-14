@@ -85,6 +85,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   scripts, alert rules, deploy templates — carries a `[INSTALLER]` comment saying what
   to replace it with. `grep -rn "\[INSTALLER\]" .` lists them; SERVER_SETUP § 0 is
   the checklist. When you add a new guess, tag it the same way.
+- **`[DEMO]` tags mark demo-only code.** Every `if (cfg.demo)` branch, fixture, demo-only
+  route or button carries a `[DEMO]` comment, and `DEMO_INDEX.md` lists each file with
+  what it fakes and what the real install provides. `npm run demo:index` prints the tags;
+  `npm test` fails when a file with demo code is missing from the index. New demo code →
+  tag it and add a row.
 - One service module per integration. Never let a missing dependency crash boot —
   return `unavailable`/`null` and let the UI say so.
 - Validate request bodies with zod at the route; throw `HttpError(status, msg)`.
@@ -127,12 +132,16 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       line-by-line (PYTHONUNBUFFERED) and survives an unreachable dashboard
 - [x] Codex registration syntax verified against developers.openai.com/codex/mcp
       (`codex mcp add <name> --env K=V -- <cmd>`; `[mcp_servers.<name>]` in config.toml)
-- [x] Issue #4 storage explorer (System → Storage): TreeSize-style drill-down of any
-      folder (`du -x -d 1` in the background, cached, polled), largest files under a path
-      (`find -printf`), and a "Reclaimable space" report (Docker df via the socket,
-      journald, apt, snap revisions, dashboard backups past retention, Minecraft log
-      archives, trash, tmp, core dumps) with display-only commands; MCP tools
-      `storage_tree`, `storage_largest`, `storage_reclaim`; Dashboard shows the total.
+- [x] Issue #4 storage explorer (System → Storage), **built on proven scanners**: ncdu
+      (preferred; documented JSON export) or gdu (same format, faster), `du -x -a` as the
+      fallback — `services/diskscan.ts` parses the export as a stream into a directory
+      tree with per-folder aggregates, the largest files per subtree, and type / age /
+      owner statistics for the top 3 levels; scans run one at a time per mount, persist
+      under `data/diskscan/`, re-run every `DISK_SCAN_INTERVAL_HOURS`. UI: breadcrumb tree
+      with bars, squarified treemap, Largest files / By type / By age / By owner tabs,
+      "Scan this folder" for deep stats. Plus the "Reclaimable space" report (display-only
+      commands). MCP: `storage_scan`, `storage_tree`, `storage_largest`, `storage_reclaim`.
+      Tests: `server/test-diskscan.mjs`.
 - [x] Issue #5 **Assistant sidecar** (`services/sidecar.ts`, `services/agentRunner.ts`,
       `AssistantWidget`): the feed is grouped into **incidents** (errors, failed jobs/scripts,
       3× the same warning in 10 min; fingerprinted, deduped, cooldown), a supervised
@@ -239,6 +248,12 @@ override the placeholders wherever they conflict:
   shell command a human (or an agent with its own shell) would run; the dashboard only
   measures. Folders the service user cannot read show as lower bounds with a notice —
   no sudo rule for `du`/`find` (find -exec would be root code execution).
+- 2026-10-14 **Scanning is delegated to ncdu/gdu, not reimplemented.** Carter asked for the
+  most robust open-source TreeSize equivalent rather than a from-scratch scanner. ncdu's
+  JSON export (https://dev.yorhel.nl/ncdu/jsonfmt) is the interchange format; gdu writes
+  the same format (verify `ncdu -f` reads a `gdu -o` file on the server); `du -a` is only a
+  fallback. Our code owns the streaming parse, the aggregates and the UI. Demo mode feeds
+  a generated ncdu export through the same parser so the code path is identical.
 - 2026-10-14 **Sidecar safety model.** Humans (Tailscale identity) are never gated. Agents
   (dashboard key) hit a 409 on restart/stop/destructive RCON while `requireApproval` is
   on; the dashboard files an approval request, the agent is told to end its turn, and the

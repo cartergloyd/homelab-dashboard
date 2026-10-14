@@ -26,6 +26,7 @@ const ACTIVE = new Set<Incident["status"]>(["open", "investigating", "waiting-ap
 const APPROVAL_TTL_MS = 24 * 3600_000;
 
 const DEFAULTS = (): SidecarSettings => ({
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   enabled: cfg.demo,
   runner: "codex",
   autoTrigger: true,
@@ -252,6 +253,7 @@ function manualPrompt(task: string): string {
 
 // ---- demo: a simulated agent -------------------------------------------------------------
 
+// [DEMO] a simulated agent stands in for codex/claude in demo mode (see DEMO_INDEX.md)
 function simulateAgent(inc: Incident | null, continuation: string | undefined, runner: AgentRunner, userText?: string): LaunchOptions["simulate"] {
   const name = `${RUNNER_NAME[runner]} (demo)`;
   return async (emit, say) => {
@@ -564,6 +566,7 @@ export function resolveIncident(id: string, by: string, note?: string): Incident
 }
 
 /** Demo only: inject an error into the feed so the whole loop can be watched. */
+// [DEMO] demo-only: inject a fake error into the feed (see DEMO_INDEX.md)
 export function simulateIncident(kind: "exception" | "warn" | "job" = "exception"): AlertEvent {
   if (!cfg.demo) throw new HttpError(403, "Only in demo mode");
   if (kind === "job") return publish({ source: "jobs", kind: "job", level: "error", tags: ["maintenance"], text: 'Job "Semi-weekly world backup" failed: backup_world.py exited 1: tar: world/region/r.0.0.mca: file changed as we read it', meta: { job: "Semi-weekly world backup" } });

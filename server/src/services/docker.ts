@@ -23,6 +23,7 @@ export interface DockerDiskUsage {
 
 /** `docker system df` through the socket: what `docker system prune` would reclaim. */
 export async function dockerDiskUsage(): Promise<DockerDiskUsage | null> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return { imagesTotal: 6.1 * 1024 ** 3, imagesUnused: 2.3 * 1024 ** 3, imagesUnusedCount: 4, buildCache: 1.1 * 1024 ** 3, volumesUnused: 420 * 1024 ** 2, volumesUnusedCount: 2 };
   if (!dockerAvailable()) return null;
   try {

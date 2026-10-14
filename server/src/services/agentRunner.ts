@@ -59,6 +59,7 @@ export function stopRun(id: string): boolean {
 
 /** Is the runner's CLI installed for the dashboard's user? */
 export async function runnerAvailable(runner: AgentRunner): Promise<{ ok: boolean; note: string }> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return { ok: true, note: "demo: a simulated agent stands in for the CLI" };
   const bin = runner === "codex" ? "codex" : "claude";
   for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {

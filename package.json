@@ -17,7 +17,8 @@
     "discover": "node server/dist/tools/audit-install.js --propose",
     "clear-demo-data": "node server/dist/tools/clear-demo-data.js",
     "wrap-service": "node server/dist/tools/wrap-service.js",
-    "test": "node server/test-discover.mjs"
+    "demo:index": "node server/dist/tools/demo-index.js",
+    "test": "node server/test-discover.mjs && node server/test-diskscan.mjs && node server/dist/tools/demo-index.js --check"
   },
   "engines": {
     "node": ">=20.19"

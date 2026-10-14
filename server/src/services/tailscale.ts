@@ -16,6 +16,7 @@ interface RawPeer {
 }
 
 export async function tailscaleStatus(): Promise<TailscalePayload> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.tailscale();
   try {
     const { stdout } = await execFileP("tailscale", ["status", "--json"], { timeout: 8000 });

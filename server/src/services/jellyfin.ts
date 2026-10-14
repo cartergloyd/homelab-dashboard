@@ -21,6 +21,7 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 /** Unauthenticated liveness probe. Returns latency in ms, or throws. */
 export async function health(): Promise<number> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return 4;
   const t = Date.now();
   const res = await fetch(`${cfg.jellyfin.url}/health`, { signal: AbortSignal.timeout(4000) });

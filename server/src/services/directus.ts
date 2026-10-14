@@ -3,6 +3,7 @@ import type { DatabasePayload, ServiceState } from "../types.js";
 
 export async function directusHealth(): Promise<DatabasePayload["directus"]> {
   const url = cfg.directus.publicUrl;
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return { state: "ok", status: "ok", url, latencyMs: 6 };
   const t = Date.now();
   try {

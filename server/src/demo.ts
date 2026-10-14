@@ -1,3 +1,6 @@
+// [DEMO] THIS WHOLE FILE IS DEMO-ONLY. Fixtures and fake service answers for `npm run demo`
+// (DEMO=1). A real install never imports anything from here at runtime except through the
+// `if (cfg.demo)` branches listed in DEMO_INDEX.md.
 // DEMO=1 fixtures. Lets the whole UI run on a laptop with no Docker, systemd,
 // Tailscale, Jellyfin or Minecraft present. Files and backups still operate on
 // real (throwaway) directories under DATA_DIR/demo so those flows can be exercised.
@@ -14,7 +17,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "./config.js";
-import type { LargestPayload, ReclaimPayload, StorageTreePayload, TreeEntry } from "./types.js";
+import type { ReclaimPayload } from "./types.js";
 import type {
   ContainerInfo,
   DatabasePayload,
@@ -362,35 +365,100 @@ function findNode(p: string): Node | null {
   return node;
 }
 
-export function storageTree(p: string): StorageTreePayload {
-  const node = findNode(p);
-  const base = { path: p, parent: p === "/" ? null : path.dirname(p), measuring: false, measuredAt: new Date().toISOString(), partial: false, mount: null };
-  if (node === null) return { ...base, totalBytes: null, entries: [], error: `${p} does not exist in the demo disk` };
-  if (typeof node === "number" || Array.isArray(node)) return { ...base, totalBytes: nodeSize(node), entries: [{ name: "contents (not broken down in the demo)", path: p, bytes: nodeSize(node), kind: "files" }] };
-  const entries: TreeEntry[] = [];
-  for (const [name, child] of Object.entries(node)) {
-    const childPath = path.join(p, name);
-    if (Array.isArray(child)) entries.push({ name: `${child[1]} more files`, path: p, bytes: child[0], kind: "files" });
-    else entries.push({ name, path: childPath, bytes: DEMO_MOUNTS.includes(childPath) ? 0 : nodeSize(child, childPath), kind: typeof child === "number" && isFileName(name) ? "file" : "dir" });
+// [DEMO] A generated ncdu-format export of the imaginary disk above. The real
+// engine (services/diskscan.ts) parses it exactly as it would parse `ncdu -o -` on
+// the server, so the explorer's code path is identical; only the data is fake.
+// Format: https://dev.yorhel.nl/ncdu/jsonfmt  — see DEMO_INDEX.md.
+const DEMO_UIDS: [RegExp, number][] = [
+  [/^\/home\/gold/, 1000],
+  [/^\/srv\/media/, 1000],
+  [/^\/var\/lib\/docker/, 0],
+  [/^\/var\/backups/, 1000],
+];
+const DEMO_EXT: [RegExp, string][] = [
+  [/media\/movies|media\/shows/, "mkv"],
+  [/media\/music/, "flac"],
+  [/Minecraft Server\/(world|world_nether|world_the_end)/, "mca"],
+  [/Minecraft Server\/logs/, "log.gz"],
+  [/Minecraft Server\/plugins/, "jar"],
+  [/crash-reports/, "txt"],
+  [/docker\/overlay2|docker\/image|docker\/containers/, "bin"],
+  [/docker\/volumes/, "db"],
+  [/snapd/, "snap"],
+  [/journal/, "journal"],
+  [/\/log\b/, "log"],
+  [/apt/, "deb"],
+  [/backups/, "tar.gz"],
+  [/\.cache/, "cache"],
+  [/usr|opt|boot/, "so"],
+];
+const hash = (s: string) => {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  return h;
+};
+const demoMtime = (p: string, i = 0) => Math.floor(Date.now() / 1000) - (hash(`${p}#${i}`) % (720 * 86400));
+const demoUid = (p: string) => DEMO_UIDS.find(([re]) => re.test(p))?.[1] ?? 0;
+const demoExt = (p: string) => DEMO_EXT.find(([re]) => re.test(p))?.[1] ?? "bin";
+
+/** Spread `bytes` over `count` fake files, a few big ones and a long tail. */
+function demoFiles(dirPath: string, bytes: number, count: number): string[] {
+  const n = Math.max(1, Math.min(count, 400));
+  const weights: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const w = 1 / (i + 1) ** 1.3;
+    weights.push(w);
+    sum += w;
   }
-  entries.sort((a, b) => b.bytes - a.bytes);
-  return { ...base, totalBytes: nodeSize(node, p), entries };
+  const ext = demoExt(dirPath);
+  const base = path.basename(dirPath).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "item";
+  return weights.map((w, i) => {
+    const size = Math.max(512, Math.round((bytes * w) / sum));
+    const info = { name: `${base}-${String(i + 1).padStart(3, "0")}.${ext}`, asize: size, dsize: size, mtime: demoMtime(dirPath, i), uid: demoUid(dirPath), gid: demoUid(dirPath), mode: 33188 };
+    return JSON.stringify(info);
+  });
 }
 
-export function largestFiles(p: string, limit: number): LargestPayload {
-  const files: LargestPayload["files"] = [];
-  const walk = (node: Node, at: string) => {
-    if (Array.isArray(node)) return;
-    if (typeof node === "number") {
-      if (isFileName(path.basename(at)) && node > 20 * MB) files.push({ path: at, bytes: node, modified: new Date(Date.now() - (node % 97) * 86_400_000).toISOString() });
-      else if (!isFileName(path.basename(at)) && node > 5 * GB) for (let i = 1; i <= 3; i++) files.push({ path: path.join(at, `large-item-${i}.bin`), bytes: Math.round(node / (9 + i * 7)), modified: new Date(Date.now() - i * 11 * 86_400_000).toISOString() });
+export function ncduExport(root: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const parts: string[] = [`[1,2,{"progname":"ncdu","progver":"2.3 (demo fixture)","timestamp":${now}},`];
+  const emitDir = (name: string, dirPath: string, node: Node, isRoot: boolean) => {
+    const info: Record<string, unknown> = { name: isRoot ? dirPath : name, asize: 4096, dsize: 4096, mtime: demoMtime(dirPath), uid: demoUid(dirPath), gid: demoUid(dirPath), mode: 16877 };
+    if (!isRoot && DEMO_MOUNTS.includes(dirPath)) {
+      // another filesystem: ncdu -x lists the mount point but does not descend
+      info.excluded = "otherfs";
+      parts.push(`[${JSON.stringify(info)}]`);
       return;
     }
-    for (const [k, v] of Object.entries(node)) if (k !== "__files") walk(v, path.join(at, k));
+    parts.push(`[${JSON.stringify(info)}`);
+    if (typeof node === "number") {
+      if (isFileName(name)) {
+        // should not happen (files are emitted by the parent); treat as a file-only dir
+        for (const f of demoFiles(dirPath, node, 1)) parts.push(`,${f}`);
+      } else for (const f of demoFiles(dirPath, node, 6 + (hash(dirPath) % 20))) parts.push(`,${f}`);
+    } else if (Array.isArray(node)) {
+      for (const f of demoFiles(dirPath, node[0], node[1])) parts.push(`,${f}`);
+    } else {
+      for (const [childName, child] of Object.entries(node)) {
+        const childPath = path.join(dirPath, childName);
+        if (Array.isArray(child)) for (const f of demoFiles(dirPath, child[0], child[1])) parts.push(`,${f}`);
+        else if (typeof child === "number" && isFileName(childName)) {
+          const info = { name: childName, asize: child, dsize: child, mtime: demoMtime(childPath), uid: demoUid(childPath), gid: demoUid(childPath), mode: 33188 };
+          parts.push(`,${JSON.stringify(info)}`);
+        } else {
+          parts.push(",");
+          emitDir(childName, childPath, child, false);
+        }
+      }
+    }
+    parts.push("]");
   };
-  const node = findNode(p);
-  if (node !== null) walk(node, p);
-  return { path: p, measuring: false, measuredAt: new Date().toISOString(), minBytes: 20 * MB, files: files.sort((a, b) => b.bytes - a.bytes).slice(0, limit), partial: false };
+  const node = findNode(root);
+  if (node === null) throw new Error(`${root} does not exist in the demo disk`);
+  emitDir(path.basename(root) || "/", root, node, true);
+  parts.push("]");
+  return parts.join("");
 }
 
 export function reclaim(): ReclaimPayload {

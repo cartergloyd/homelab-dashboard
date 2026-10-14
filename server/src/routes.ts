@@ -14,7 +14,8 @@ import { pgStats } from "./services/postgres.js";
 import { getPlayers, minecraftAction, minecraftCommand, minecraftStatus } from "./services/minecraft.js";
 import * as sched from "./services/scheduler.js";
 import { deleteBackup, listBackups, runBackup } from "./services/backups.js";
-import { filesystems, largestFiles, reclaimable, refreshFolders, storage, storageTree } from "./services/storage.js";
+import { filesystems, reclaimable, refreshFolders, storage } from "./services/storage.js";
+import { cancelScan, dirView, overview as scanOverview, startScan, topFiles } from "./services/diskscan.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -468,6 +469,7 @@ api.post("/sidecar/approvals/:id", async (req, res) => {
   res.json(a);
 });
 
+// [DEMO] demo-only endpoint: publishes a fake error so the sidecar loop can be watched; refused unless DEMO=1 (see DEMO_INDEX.md)
 api.post("/sidecar/simulate", (req, res) => {
   const { kind } = z.object({ kind: z.enum(["exception", "warn", "job"]).default("exception") }).parse(req.body ?? {});
   res.status(201).json(sidecar.simulateIncident(kind));
@@ -489,14 +491,29 @@ api.post("/storage/refresh", async (_req, res) => {
   res.status(202).json({ ok: true });
 });
 
-// Storage explorer (issue #4). `du` runs in the background; GET returns
-// `measuring: true` until the result is cached, so clients poll.
-api.get("/storage/tree", async (req, res) => {
-  res.json(await storageTree(str(req.query.path) || "/", req.query.refresh === "1"));
+// Storage explorer (issue #4): ncdu/gdu/du scans of whole filesystems, browsed from
+// memory. GET /storage/scan lists engines, roots and scan status; POST starts one.
+api.get("/storage/scan", async (_req, res) => {
+  res.json(await scanOverview());
 });
 
-api.get("/storage/largest", async (req, res) => {
-  res.json(await largestFiles(str(req.query.path) || "/", Math.min(200, Number(req.query.limit) || 50), req.query.refresh === "1"));
+api.post("/storage/scan", async (req, res) => {
+  const { root } = z.object({ root: z.string().trim().min(1).max(1024).optional() }).parse(req.body ?? {});
+  const target = root ?? (await scanOverview()).roots[0] ?? "/";
+  logAction(res, `started a disk scan of ${target}`);
+  res.status(202).json(await startScan(target));
+});
+
+api.delete("/storage/scan", (_req, res) => {
+  res.json({ cancelled: cancelScan() });
+});
+
+api.get("/storage/scan/dir", (req, res) => {
+  res.json(dirView(str(req.query.path) || "/", str(req.query.root) || undefined));
+});
+
+api.get("/storage/scan/top", (req, res) => {
+  res.json(topFiles(str(req.query.path) || "/", Math.min(200, Number(req.query.limit) || 40), str(req.query.root) || undefined));
 });
 
 api.get("/storage/reclaim", async (req, res) => {

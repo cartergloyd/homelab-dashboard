@@ -44,7 +44,8 @@ npm run discover -- --apply  # create the proposed external (mirror-only) jobs
 npm run clear-demo-data -- --yes
 sudo npm run wrap-service -- --install-hl-run                    # hl-run + /etc/homelab-hl-run.env
 sudo npm run wrap-service -- mc-backup.service --apply --test    # route a timer's output into the feed
-node server/test-discover.mjs                                    # unit checks for the discovery helpers
+npm test                                                         # discovery + disk-scan unit checks, demo-index coverage
+npm run demo:index                                               # list every [DEMO] tag (see DEMO_INDEX.md)
 ```
 
 ## Development

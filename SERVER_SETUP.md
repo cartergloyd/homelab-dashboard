@@ -391,16 +391,37 @@ edits a timer, a crontab or a script — they print; you apply.
 
 ## 6f. Storage explorer (System → Storage)
 
-Works with no configuration: `du -x -d 1` on whatever folder is opened (background,
-cached 10 min), `find -xdev -size +20M` for the largest files, and a reclaimable-space
-report (Docker via the socket, `journalctl --disk-usage`, apt cache, disabled snap
-revisions, dashboard-made backups past `BACKUP_KEEP`, `MC_DIR/logs`, trash, tmp, core
-dumps). Folders the service user cannot read show as **lower bounds** with a notice; the
-usual gap is `/var/lib/docker` and other users' home folders. Do **not** add a sudo rule
-for `du`/`find` to close that gap — `find -exec` as root is code execution. If the owner
-wants the full picture, make the service user a member of the groups that own those
-folders, or accept the lower bound. The report never deletes anything: each line carries
-the command to run by hand (or to hand to an agent that has its own shell).
+The TreeSize-style view is fed by a **real scanner**, not by the dashboard crawling the
+disk itself:
+
+```bash
+sudo apt install ncdu          # preferred: documented JSON export, file ages + owners
+# or: sudo apt install gdu     # faster parallel scanner, same export format (no ages/owners)
+```
+
+`services/diskscan.ts` runs `ncdu -x -e -0 --exclude-kernfs -o - <root>` (or `gdu -n -p -x
+-o -`, or `du -x -a` if neither is installed) for every mounted filesystem from `df`, parses
+the export as a stream, and keeps the folder tree, the largest files per folder and
+type/age/owner statistics for the top three levels in memory and under `data/diskscan/`.
+Browsing is instant; scans run one at a time in the background and repeat every
+`DISK_SCAN_INTERVAL_HOURS` (default 24; 0 = only on request). Env:
+
+| Variable | Meaning |
+|---|---|
+| `DISK_SCANNER` | `auto` (ncdu → gdu → du), or force `ncdu` / `gdu` / `du` |
+| `DISK_SCAN_ROOTS` | folders to scan, comma-separated (default: every `df` mount) |
+| `DISK_SCAN_INTERVAL_HOURS` | automatic re-scan period |
+| `DISK_SCAN_EXCLUDE` | extra exclude patterns (ncdu `--exclude`, gdu `--ignore-dirs-pattern`, du `--exclude`) |
+
+Folders the service user cannot read are flagged (`read_error`) and their size is a
+lower bound; the usual gap is `/var/lib/docker` and other users' home folders. Do **not**
+add a sudo rule for the scanner to close that gap — ncdu can spawn a shell and `find -exec`
+is code execution; if the owner wants the full picture, add the service user to the
+groups that own those folders. `npm run audit:install` reports which engine is present
+(`[storage] disk scanner`). Verify in the UI: the engine badge shows `ncdu <version>`,
+a scan of `/` finishes, and drilling into `/home/gold/Minecraft Server` shows the worlds.
+The "Reclaimable space" card never deletes anything: each line carries the command to run
+by hand (or to hand to an agent).
 
 ## 6d. VPN tab
 

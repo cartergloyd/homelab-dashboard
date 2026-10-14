@@ -194,39 +194,81 @@ export interface StoragePayload {
   refreshing: boolean;
 }
 
-export interface TreeEntry {
+// ---- storage explorer (issue #4): ncdu/gdu-powered TreeSize view ------------------
+
+export type DiskScanEngine = "ncdu" | "gdu" | "du" | "demo";
+
+export interface ScanFile {
   name: string;
   path: string;
-  bytes: number;
-  kind: "dir" | "file" | "files";
+  /** disk usage (st_blocks) */
+  dsize: number;
+  /** apparent size */
+  asize: number;
+  /** unix seconds; null when the engine does not report it (du) */
+  mtime: number | null;
+  uid: number | null;
+  ext: string;
 }
 
-export interface StorageTreePayload {
+export interface ScanDirSummary {
+  name: string;
   path: string;
-  parent: string | null;
-  measuring: boolean;
-  measuredAt: string | null;
-  totalBytes: number | null;
-  entries: TreeEntry[];
-  partial: boolean;
+  dsize: number;
+  asize: number;
+  /** files in the whole subtree */
+  files: number;
+  dirs: number;
+  /** newest mtime in the subtree */
+  mtime: number | null;
+  /** files directly in this folder */
+  ownFiles: number;
+  ownBytes: number;
+  readError: boolean;
+  /** "otherfs" | "kernfs" | "pattern" … when the scanner skipped it */
+  excluded: string | null;
+  hasChildren: boolean;
+}
+
+export interface ScanStats {
+  ext: { ext: string; bytes: number; count: number }[];
+  age: { label: string; bytes: number; count: number }[];
+  owners: { uid: number; name: string | null; bytes: number; count: number }[];
+  /** statistics are kept for the top levels of a scan only */
+  available: boolean;
+}
+
+export interface DiskScanSummary {
+  id: string;
+  root: string;
+  engine: DiskScanEngine;
+  engineVersion: string | null;
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  progress: { dirs: number; files: number };
+  totals: { dsize: number; asize: number; files: number; dirs: number; readErrors: number; excluded: number };
   mount: { mount: string; totalBytes: number; usedBytes: number } | null;
-  error?: string;
 }
 
-export interface LargestFile {
-  path: string;
-  bytes: number;
-  modified: string | null;
+export interface DiskScanOverview {
+  engine: { preferred: DiskScanEngine; available: { ncdu: string | null; gdu: string | null }; note: string };
+  roots: string[];
+  scans: DiskScanSummary[];
+  running: string | null;
+  intervalHours: number;
 }
 
-export interface LargestPayload {
-  path: string;
-  measuring: boolean;
-  measuredAt: string | null;
-  minBytes: number;
-  files: LargestFile[];
-  partial: boolean;
-  error?: string;
+export interface DirViewPayload {
+  scan: DiskScanSummary;
+  dir: ScanDirSummary;
+  parent: string | null;
+  children: ScanDirSummary[];
+  /** largest files in the subtree */
+  top: ScanFile[];
+  stats: ScanStats;
 }
 
 export interface ReclaimItem {

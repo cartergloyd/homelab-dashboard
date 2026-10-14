@@ -1,30 +1,15 @@
-// Storage: capacity per filesystem, the configured folders, and (issue #4) a
-// TreeSize-style explorer — drill into any folder to see where the space goes —
-// plus the largest files and a "reclaimable space" report with the commands to
-// run. The page never deletes anything.
-import { useEffect, useState } from "react";
+// Storage: capacity per filesystem, the TreeSize-style explorer (ncdu/gdu scans),
+// a "reclaimable space" report with the commands to run, and the folders the
+// dashboard manages. The page never deletes anything.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { Icons } from "../components/icons";
+import { StorageExplorer } from "../components/StorageExplorer";
 import { Card, ErrorNotice, Meter, PageHead, useToast } from "../components/ui";
-import { fmtBytes, fmtDateTime, fmtRelative } from "../format";
-import type { LargestPayload, ReclaimPayload, StoragePayload, StorageTreePayload } from "../types";
+import { fmtBytes, fmtRelative } from "../format";
+import type { ReclaimPayload, StoragePayload } from "../types";
 
-const LS_KEY = "storage.explorer.path";
 const pollWhileMeasuring = (q: { state: { data?: { measuring?: boolean } } }) => (q.state.data?.measuring ? 2000 : 60_000);
-
-function crumbs(p: string): { label: string; path: string }[] {
-  const parts = p.split("/").filter(Boolean);
-  const out = [{ label: "/", path: "/" }];
-  let acc = "";
-  for (const part of parts) {
-    acc += `/${part}`;
-    out.push({ label: part, path: acc });
-  }
-  return out;
-}
-
-const pct = (n: number, of: number | null | undefined) => (of ? `${((n / of) * 100).toFixed(of && n / of < 0.1 ? 1 : 0)}%` : "");
 
 /** Compact line for the Dashboard's Storage card. */
 export function ReclaimHint() {
@@ -33,140 +18,14 @@ export function ReclaimHint() {
   if (!d) return null;
   return (
     <div className="small muted" style={{ marginTop: 4 }}>
-      {d.measuring && !d.measuredAt ? "Measuring reclaimable space…" : <>≈ <strong style={{ color: "var(--ink)" }}>{fmtBytes(d.totalBytes)}</strong> reclaimable without touching media, worlds or backups</>}
+      {d.measuring && !d.measuredAt ? (
+        "Measuring reclaimable space…"
+      ) : (
+        <>
+          ≈ <strong style={{ color: "var(--ink)" }}>{fmtBytes(d.totalBytes)}</strong> reclaimable without touching media, worlds or backups
+        </>
+      )}
     </div>
-  );
-}
-
-function Explorer() {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const [path, setPath] = useState<string>(() => {
-    try {
-      return localStorage.getItem(LS_KEY) || "/";
-    } catch {
-      return "/";
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEY, path);
-    } catch {
-      // ignore
-    }
-  }, [path]);
-
-  const tree = useQuery({ queryKey: ["storage", "tree", path], queryFn: () => api.get<StorageTreePayload>(`/storage/tree?path=${encodeURIComponent(path)}`), refetchInterval: pollWhileMeasuring });
-  const largest = useQuery({ queryKey: ["storage", "largest", path], queryFn: () => api.get<LargestPayload>(`/storage/largest?path=${encodeURIComponent(path)}&limit=25`), refetchInterval: pollWhileMeasuring });
-  const remeasure = useMutation({
-    mutationFn: () => Promise.all([api.get(`/storage/tree?path=${encodeURIComponent(path)}&refresh=1`), api.get(`/storage/largest?path=${encodeURIComponent(path)}&limit=25&refresh=1`)]),
-    onSuccess: () => {
-      toast("Measuring again…");
-      qc.invalidateQueries({ queryKey: ["storage", "tree", path] });
-      qc.invalidateQueries({ queryKey: ["storage", "largest", path] });
-    },
-    onError: (e: Error) => toast(e.message, "error"),
-  });
-
-  const t = tree.data;
-  const total = t?.totalBytes ?? null;
-  const diskPct = t?.mount && total ? (total / t.mount.totalBytes) * 100 : null;
-  const copy = (s: string) => navigator.clipboard.writeText(s).then(() => toast("Copied"), () => toast("Could not copy", "error"));
-
-  return (
-    <>
-      <Card
-        title="Where the space goes"
-        actions={
-          <div className="row" style={{ gap: 8 }}>
-            {t?.measuredAt && <span className="muted small">Measured {fmtRelative(t.measuredAt)}</span>}
-            <button className="btn sm" disabled={!!t?.measuring || remeasure.isPending} onClick={() => remeasure.mutate()}>
-              <Icons.refresh width={13} height={13} /> Re-measure
-            </button>
-          </div>
-        }
-      >
-        <div className="crumbs">
-          {crumbs(path).map((c, i, arr) => (
-            <span key={c.path} className="row" style={{ gap: 4 }}>
-              {i > 0 && <span className="muted">›</span>}
-              <button className={`crumb ${i === arr.length - 1 ? "current" : ""}`} onClick={() => setPath(c.path)} disabled={i === arr.length - 1}>
-                {c.label}
-              </button>
-            </span>
-          ))}
-          <span style={{ flex: 1 }} />
-          {total !== null && (
-            <span className="small nowrap">
-              <strong>{fmtBytes(total)}</strong>
-              {t?.mount && (
-                <span className="muted">
-                  {" "}
-                  · {diskPct !== null ? `${diskPct.toFixed(diskPct < 10 ? 1 : 0)}%` : ""} of {t.mount.mount} ({fmtBytes(t.mount.totalBytes)})
-                </span>
-              )}
-            </span>
-          )}
-          <button className="btn sm ghost mono" onClick={() => copy(path)} title="Copy path">
-            copy
-          </button>
-        </div>
-        <ErrorNotice error={tree.error} />
-        {t?.error && <div className="notice error">{t.error}</div>}
-        {t?.partial && <div className="notice">Some folders here could not be read by the dashboard's user, so these sizes are lower bounds. Compare with the disk meter above; the gap is what it cannot see (often /var/lib/docker or other users' homes).</div>}
-        {t?.measuring && <div className="skeleton">Measuring {path} with du — big folders take a minute; this page keeps polling.</div>}
-        {t && !t.measuring && t.entries.length === 0 && !t.error && <div className="muted small">Empty folder.</div>}
-        <div className="tree">
-          {(t?.entries ?? []).map((e) => {
-            const share = total ? (e.bytes / total) * 100 : 0;
-            return (
-              <div key={`${e.kind}:${e.path}:${e.name}`} className={`tree-row ${e.kind === "dir" ? "clickable" : ""}`} onClick={e.kind === "dir" ? () => setPath(e.path) : undefined} role={e.kind === "dir" ? "button" : undefined} title={e.path}>
-                <span className="tree-name truncate">
-                  {e.kind === "dir" ? <Icons.folder width={13} height={13} /> : <Icons.file width={13} height={13} />} {e.name}
-                  {e.kind === "dir" && <Icons.chevron width={12} height={12} className="muted" />}
-                </span>
-                <span className="tree-bar" aria-hidden>
-                  <span className="tree-fill" style={{ width: `${Math.max(0.5, share)}%` }} />
-                </span>
-                <span className="tree-pct muted small nowrap">{pct(e.bytes, total)}</span>
-                <span className="tree-size nowrap">{fmtBytes(e.bytes)}</span>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card title={`Largest files under ${path}`} actions={<span className="muted small">{largest.data?.measuring ? "Searching…" : largest.data?.measuredAt ? `${largest.data.files.length} files over ${fmtBytes(largest.data.minBytes)}` : ""}</span>}>
-        <ErrorNotice error={largest.error} />
-        {largest.data?.error && <div className="notice error">{largest.data.error}</div>}
-        {largest.data?.measuring && !largest.data.files.length && <div className="skeleton">Running find on this filesystem…</div>}
-        {largest.data && !largest.data.measuring && largest.data.files.length === 0 && !largest.data.error && <div className="muted small">No files over {fmtBytes(largest.data.minBytes)} here.</div>}
-        {!!largest.data?.files.length && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th className="num">Size</th>
-                <th>Modified</th>
-                <th>File</th>
-              </tr>
-            </thead>
-            <tbody>
-              {largest.data.files.map((f) => (
-                <tr key={f.path}>
-                  <td className="num nowrap">{fmtBytes(f.bytes)}</td>
-                  <td className="nowrap muted small">{f.modified ? fmtDateTime(f.modified) : "–"}</td>
-                  <td className="mono small truncate" style={{ maxWidth: 520 }} title={f.path}>
-                    <button className="linkish" onClick={() => setPath(f.path.slice(0, f.path.lastIndexOf("/")) || "/")} title="Open the folder">
-                      {f.path}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
-    </>
   );
 }
 
@@ -245,7 +104,7 @@ export function Storage() {
     <>
       <PageHead
         title="Storage"
-        sub="Capacity per disk, the folders the dashboard manages, and a TreeSize-style explorer to see where the space goes and what can be reclaimed."
+        sub="Capacity per disk, a TreeSize-style explorer built on ncdu/gdu scans, what can be reclaimed, and the folders the dashboard manages."
         actions={
           <button className="btn" disabled={d?.refreshing || refresh.isPending} onClick={() => refresh.mutate()}>
             <Icons.refresh width={14} height={14} /> {d?.refreshing ? "Measuring…" : "Re-measure folders"}
@@ -273,7 +132,7 @@ export function Storage() {
       </div>
 
       <div className="stack" style={{ gap: 14 }}>
-        <Explorer />
+        <StorageExplorer />
         <Reclaim />
         <Card title="Managed folders" actions={<span className="muted small">{d?.refreshedAt ? `Measured ${fmtRelative(d.refreshedAt)}` : d?.refreshing ? "Measuring…" : "Not measured yet"}</span>}>
           <table className="table">

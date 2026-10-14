@@ -47,6 +47,7 @@ async function checkPostgres(): Promise<ServiceStatus> {
   const t = Date.now();
   const s = await pgStats();
   if (s.connected) return result("postgres", "PostgreSQL", "ok", `${s.version ?? "connected"} · ${fmtBytes(s.sizeBytes ?? 0)} · ${s.tables} tables`, Date.now() - t);
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (!cfg.postgres.url && !cfg.demo) return result("postgres", "PostgreSQL", "unavailable", "PG_URL not set");
   return result("postgres", "PostgreSQL", "down", s.error ?? "Connection failed");
 }

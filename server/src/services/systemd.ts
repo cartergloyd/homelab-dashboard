@@ -15,6 +15,7 @@ function unitName(unit: string): string {
 
 /** `systemctl show` needs no privileges, so this works for any unit. */
 export async function unitState(unit: string): Promise<UnitState | null> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.unitState(unit);
   try {
     const { stdout } = await execFileP(

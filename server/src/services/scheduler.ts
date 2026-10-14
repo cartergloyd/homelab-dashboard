@@ -75,6 +75,7 @@ async function writeJson(file: string, data: unknown): Promise<void> {
 // by `npm run discover` / `npm run audit:install --propose` (SERVER_SETUP § 6c).
 // `npm run clear-demo-data` removes anything flagged `seeded`.
 function defaultJobs(): Job[] {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (!cfg.demo) return [];
   const createdAt = new Date().toISOString();
   const seeded = true;

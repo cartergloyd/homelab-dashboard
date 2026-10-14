@@ -95,7 +95,8 @@ function Shell() {
           <span className="brand-dot" aria-hidden />
           <div>
             <strong>Home server</strong>
-            <small>{config.data?.demo ? "demo mode" : "over Tailscale"}</small>
+            {/* [DEMO] the header badge says "demo mode" while DEMO=1 (see DEMO_INDEX.md) */}
+              <small>{config.data?.demo ? "demo mode" : "over Tailscale"}</small>
           </div>
         </div>
         <Nav variant="sidebar" />

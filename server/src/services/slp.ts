@@ -54,6 +54,7 @@ function flattenText(c: ChatComponent | string | undefined): string {
 }
 
 export async function pingServer(host = cfg.minecraft.host, port = cfg.minecraft.port, timeoutMs = 4000): Promise<McPing | null> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.ping();
   return new Promise<McPing | null>((resolve, reject) => {
     const started = Date.now();

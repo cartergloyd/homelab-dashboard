@@ -32,6 +32,7 @@ const csv = z
 const Env = z.object({
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default("127.0.0.1"),
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   DEMO: flag,
   AUTH_DISABLED: flag,
   ALLOWED_LOGINS: csv,
@@ -94,6 +95,16 @@ const Env = z.object({
   VPN_GEO_TOKEN: z.string().optional(),
   // Declared split-tunnel exceptions when detection can't see them: "Minecraft=25565/tcp,Jellyfin=8096/tcp"
   VPN_EXCEPTIONS: csv,
+
+  // Storage explorer (issue #4): the TreeSize view is fed by ncdu (preferred) or gdu —
+  // proven scanners with an ncdu-format JSON export — falling back to `du -a`.
+  DISK_SCANNER: z.enum(["auto", "ncdu", "gdu", "du"]).default("auto"),
+  // folders to scan (default: every mounted filesystem from df); each scan stays on one filesystem
+  DISK_SCAN_ROOTS: csv,
+  // re-scan automatically every N hours (0 = only when asked from the UI / MCP)
+  DISK_SCAN_INTERVAL_HOURS: z.coerce.number().min(0).max(720).default(24),
+  // extra exclude patterns handed to the scanner (ncdu --exclude / gdu --ignore-dirs-pattern / du --exclude)
+  DISK_SCAN_EXCLUDE: csv,
 });
 
 const env = Env.parse(process.env);
@@ -181,6 +192,12 @@ export const cfg = {
     ? env.ALERT_SOURCES.filter((s): s is LogSource => (ALL_LOG_SOURCES as string[]).includes(s))
     : ALL_LOG_SOURCES) as LogSource[],
   // which env vars were set explicitly, so demo mode only fills the gaps
+  diskScan: {
+    scanner: env.DISK_SCANNER,
+    roots: splitPaths(env.DISK_SCAN_ROOTS.join(",")),
+    intervalHours: env.DISK_SCAN_INTERVAL_HOURS,
+    exclude: env.DISK_SCAN_EXCLUDE,
+  },
   explicit: {
     mediaRoots: env.MEDIA_ROOTS.length > 0,
     mcDir: process.env.MC_DIR !== undefined,

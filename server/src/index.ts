@@ -11,6 +11,7 @@ import { statusOf } from "./errors.js";
 import { api } from "./routes.js";
 import { startHub } from "./services/alerts.js";
 import { initContext } from "./services/context.js";
+import { initDiskScan } from "./services/diskscan.js";
 import { initReports } from "./services/reports.js";
 import { initScheduler } from "./services/scheduler.js";
 import { initScripts } from "./services/scripts.js";
@@ -31,6 +32,7 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 
 async function main(): Promise<void> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) await bootstrapDemo();
   fs.mkdirSync(cfg.dataDir, { recursive: true });
   await startHub();
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
   await initReports();
   await initScheduler();
   await initSidecar();
+  await initDiskScan();
   void refreshFolders();
 
   const app = express();

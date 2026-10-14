@@ -24,6 +24,7 @@ function encode(id: number, type: number, body: string): Buffer {
 }
 
 export async function rconCommand(command: string, timeoutMs = 6000): Promise<string> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.rcon(command);
   const { host, port, password } = cfg.minecraft.rcon;
   if (!password) throw new Error("RCON_PASSWORD is not set");
