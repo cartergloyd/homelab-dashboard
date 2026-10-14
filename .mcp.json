@@ -1,12 +1,8 @@
 {
   "mcpServers": {
     "homelab": {
-      "command": "node",
-      "args": ["server/dist/mcp.js"],
-      "env": {
-        "HOMELAB_URL": "${HOMELAB_URL:-http://127.0.0.1:3000}",
-        "HOMELAB_KEY": "${HOMELAB_KEY}"
-      }
+      "command": "bash",
+      "args": ["-lc", "set -a; source /home/gold/server-platform/homelab-dashboard.env; exec node /home/gold/server-platform/homelab-dashboard-src/server/dist/mcp.js"]
     }
   }
 }
