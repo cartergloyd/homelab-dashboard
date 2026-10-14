@@ -128,6 +128,10 @@ export interface JobOptions {
   managedBy?: string;
   /** external job: minutes to wait for the script's output before reporting it missing */
   graceMinutes?: number;
+  /** external job mirrored from a systemd timer: the .timer unit name */
+  timer?: string;
+  /** external job mirrored from a crontab: where the line lives, e.g. "crontab (gold)" or "/etc/cron.d/minecraft" */
+  cronSource?: string;
 }
 
 export interface Job {
@@ -138,6 +142,8 @@ export interface Job {
   enabled: boolean;
   options: JobOptions;
   createdAt: string;
+  /** true for demo-seeded jobs; `npm run clear-demo-data` removes these */
+  seeded?: boolean;
 }
 
 export interface JobRun {
@@ -155,12 +161,36 @@ export interface JobView extends Job {
   nextRun: string | null;
   lastRun: JobRun | null;
   running: boolean;
+  /** external jobs only: is the real job's output reaching the alerts feed? */
+  outputTracking: "connected" | "not-connected" | "unknown" | null;
 }
+
+export type BackupFormat = "dashboard" | "dated-folder" | "archive";
 
 export interface BackupFile {
   name: string;
+  /** absolute path of the archive or dated folder */
+  path: string;
+  /** backup root it was found under */
+  root: string;
+  format: BackupFormat;
   bytes: number;
   mtime: string;
+  /** only backups the dashboard itself created may be deleted from the UI */
+  deletable: boolean;
+}
+
+export interface BackupsPayload {
+  roots: { path: string; exists: boolean; count: number }[];
+  backups: BackupFile[];
+  method: string;
+  format: string;
+  writeDir: string;
+}
+
+export interface ScriptsPayload {
+  dirs: { path: string; exists: boolean; count: number }[];
+  scripts: ScriptInfo[];
 }
 
 export interface Filesystem {
@@ -184,6 +214,102 @@ export interface StoragePayload {
   folders: FolderUsage[];
   refreshedAt: string | null;
   refreshing: boolean;
+}
+
+// ---- storage explorer (issue #4): ncdu/gdu-powered TreeSize view ------------------
+
+export type DiskScanEngine = "ncdu" | "gdu" | "du" | "demo";
+
+export interface ScanFile {
+  name: string;
+  path: string;
+  /** disk usage (st_blocks) */
+  dsize: number;
+  /** apparent size */
+  asize: number;
+  /** unix seconds; null when the engine does not report it (du) */
+  mtime: number | null;
+  uid: number | null;
+  ext: string;
+}
+
+export interface ScanDirSummary {
+  name: string;
+  path: string;
+  dsize: number;
+  asize: number;
+  /** files in the whole subtree */
+  files: number;
+  dirs: number;
+  /** newest mtime in the subtree */
+  mtime: number | null;
+  /** files directly in this folder */
+  ownFiles: number;
+  ownBytes: number;
+  readError: boolean;
+  /** "otherfs" | "kernfs" | "pattern" … when the scanner skipped it */
+  excluded: string | null;
+  hasChildren: boolean;
+}
+
+export interface ScanStats {
+  ext: { ext: string; bytes: number; count: number }[];
+  age: { label: string; bytes: number; count: number }[];
+  owners: { uid: number; name: string | null; bytes: number; count: number }[];
+  /** statistics are kept for the top levels of a scan only */
+  available: boolean;
+}
+
+export interface DiskScanSummary {
+  id: string;
+  root: string;
+  engine: DiskScanEngine;
+  engineVersion: string | null;
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  progress: { dirs: number; files: number };
+  totals: { dsize: number; asize: number; files: number; dirs: number; readErrors: number; excluded: number };
+  mount: { mount: string; totalBytes: number; usedBytes: number } | null;
+}
+
+export interface DiskScanOverview {
+  engine: { preferred: DiskScanEngine; available: { ncdu: string | null; gdu: string | null }; note: string };
+  roots: string[];
+  scans: DiskScanSummary[];
+  running: string | null;
+  intervalHours: number;
+}
+
+export interface DirViewPayload {
+  scan: DiskScanSummary;
+  dir: ScanDirSummary;
+  parent: string | null;
+  children: ScanDirSummary[];
+  /** largest files in the subtree */
+  top: ScanFile[];
+  stats: ScanStats;
+}
+
+export interface ReclaimItem {
+  id: string;
+  label: string;
+  /** null = could not be measured (not readable, tool missing) */
+  bytes: number | null;
+  detail: string;
+  /** display-only: what a human (or agent) would run to reclaim it; null when the dashboard handles it */
+  command: string | null;
+  /** counted in the reclaimable total */
+  actionable: boolean;
+}
+
+export interface ReclaimPayload {
+  items: ReclaimItem[];
+  totalBytes: number;
+  measuring: boolean;
+  measuredAt: string | null;
 }
 
 export interface TailscalePeer {
@@ -244,6 +370,8 @@ export interface AlertEvent {
     agent?: string;
     exitCode?: number | null;
     label?: string;
+    /** sidecar: the incident this event belongs to / was produced for */
+    incidentId?: string;
   };
 }
 
@@ -266,6 +394,8 @@ export interface AgentPresence {
 export type AgentRunner = "codex" | "claude";
 export type AgentRunStatus = "running" | "exited" | "failed";
 
+export type AgentRunKind = "manual" | "incident" | "continuation" | "chat";
+
 export interface AgentRun {
   id: string;
   runner: AgentRunner;
@@ -276,6 +406,161 @@ export interface AgentRun {
   exitCode: number | null;
   status: AgentRunStatus;
   lines: number;
+  /** why it was started (sidecar) */
+  kind: AgentRunKind;
+  incidentId: string | null;
+  /** runner session id, so the next run can resume the same conversation */
+  sessionId: string | null;
+}
+
+// ---- sidecar assistant (issue #5) ----------------------------------------------
+
+export type SidecarPhase = "off" | "idle" | "queued" | "investigating" | "waiting-approval" | "acting" | "reporting" | "failed";
+export type IncidentStatus = "open" | "investigating" | "waiting-approval" | "resolved" | "dismissed" | "failed";
+export type ApprovalStatus = "pending" | "approved" | "denied" | "consumed" | "expired";
+
+export interface SidecarSettings {
+  /** master switch: off = the panel is a plain chat, nothing is launched automatically */
+  enabled: boolean;
+  runner: AgentRunner;
+  /** launch the agent on new actionable incidents */
+  autoTrigger: boolean;
+  /** agents must get the owner's approval before restart/stop/destructive RCON */
+  requireApproval: boolean;
+  /** the same incident does not re-trigger within this window */
+  cooldownMinutes: number;
+  /** wait for the burst of alerts to settle before launching */
+  quietSeconds: number;
+  /** the agent's working directory / sandbox root */
+  workspace: string;
+  maxRunMinutes: number;
+}
+
+export interface Incident {
+  id: string;
+  fingerprint: string;
+  title: string;
+  source: AlertSource;
+  level: AlertLevel;
+  status: IncidentStatus;
+  firstSeen: string;
+  lastSeen: string;
+  count: number;
+  alertIds: string[];
+  /** last few raw lines, for the agent's prompt and the UI */
+  samples: string[];
+  runIds: string[];
+  reportIds: string[];
+  approvalIds: string[];
+  note: string | null;
+  /** what the agent's report said it did: fixed something, checked and found nothing to do, or needs a human */
+  outcome: ReportOutcome | null;
+}
+
+export interface Approval {
+  id: string;
+  ts: string;
+  /** e.g. "minecraft_service:restart", "rcon:stop" */
+  action: string;
+  reason: string;
+  requestedBy: string;
+  incidentId: string | null;
+  runId: string | null;
+  status: ApprovalStatus;
+  decidedBy: string | null;
+  decidedAt: string | null;
+}
+
+export interface ConversationTurn {
+  id: string;
+  ts: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  runId: string | null;
+  incidentId: string | null;
+}
+
+export interface SidecarState {
+  phase: SidecarPhase;
+  since: string;
+  detail: string | null;
+  currentIncidentId: string | null;
+  currentRunId: string | null;
+  queue: string[];
+  lastRun: AgentRun | null;
+  /** is the chosen runner's CLI installed for the dashboard's user? null = unknown */
+  runnerAvailable: boolean | null;
+  runnerNote: string | null;
+}
+
+export type ReportOutcome = "fixed" | "no-action" | "needs-human";
+
+/** One resolved incident with everything the agent did about it (for the Repairs list). */
+export interface RepairItem {
+  incident: Incident;
+  reports: AgentReport[];
+  approvals: Approval[];
+  /** the agent's tool calls and messages for this incident, from the feed */
+  actions: { ts: string; text: string }[];
+  runs: AgentRun[];
+}
+
+export interface RepairsPayload {
+  /** incidents the agent fixed (outcome = fixed) */
+  repaired: number;
+  /** incidents the agent checked but left alone */
+  checked: number;
+  /** incidents waiting on a human decision after the agent reported */
+  needsHuman: number;
+  items: RepairItem[];
+}
+
+// ---- staged updates: Paper + plugins, installed / staged / upstream -------------------
+
+export interface UpdateVersion {
+  version: string | null;
+  /** Paper build number */
+  build?: number | null;
+  /** ISO: release date upstream, or file date for installed/staged jars */
+  date: string | null;
+  file?: string | null;
+  channel?: string | null;
+  url?: string | null;
+  /** where the upstream answer came from: papermc, modrinth, hangar, github */
+  source?: string | null;
+  mcVersion?: string | null;
+}
+
+export type UpdateStatus = "up-to-date" | "staged" | "update-available" | "unknown";
+
+export interface UpdateItem {
+  kind: "paper" | "plugin";
+  name: string;
+  installed: UpdateVersion | null;
+  staged: UpdateVersion | null;
+  latest: UpdateVersion | null;
+  status: UpdateStatus;
+  note: string | null;
+}
+
+export interface StagedUpdatePayload {
+  items: UpdateItem[];
+  mcVersion: string | null;
+  newestMcVersion: string | null;
+  stagingDirs: { path: string; exists: boolean; files: number }[];
+  /** the dashboard job (usually the mirrored update/restart timer) that applies staged files */
+  nextApply: { job: string; at: string | null } | null;
+  lastFetch: string | null;
+  checkedAt: string | null;
+  upstreamChecked: boolean;
+  notes: string[];
+}
+
+export interface SidecarPayload {
+  settings: SidecarSettings;
+  state: SidecarState;
+  incidents: Incident[];
+  approvals: Approval[];
 }
 
 export interface ScriptRun {
@@ -290,6 +575,7 @@ export interface ScriptRun {
 
 export interface ScriptInfo {
   name: string;
+  dir: string;
   kind: "python" | "shell";
   running: boolean;
   lastRun: ScriptRun | null;
@@ -304,6 +590,10 @@ export interface AgentReport {
   reviewed: boolean;
   reviewedBy: string | null;
   reviewedAt: string | null;
+  /** sidecar: the incident / run this report answers */
+  incidentId?: string | null;
+  runId?: string | null;
+  outcome?: ReportOutcome | null;
 }
 
 export interface ContextPayload {
@@ -334,6 +624,51 @@ export interface ContextVersion extends ContextHistoryEntry {
   diff: DiffLine[];
 }
 
+// ---- VPN -----------------------------------------------------------------
+
+export interface GeoInfo {
+  ip: string;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  org: string | null;
+  timezone: string | null;
+  hostname: string | null;
+}
+
+/** How a service's traffic leaves the machine while the VPN is up. */
+export type VpnPath = "bypass" | "vpn" | "isp" | "local" | "unknown";
+
+export interface VpnServicePath {
+  name: string;
+  port: string;
+  path: VpnPath;
+  evidence: string;
+  advice: string;
+  needed: "required" | "recommended" | "optional" | "none";
+}
+
+export interface VpnPayload {
+  checkedAt: string;
+  state: "connected" | "disconnected" | "unknown";
+  provider: string | null;
+  protocol: string | null;
+  iface: string | null;
+  endpoint: { host: string; port: number | null; geo: GeoInfo | null } | null;
+  exit: GeoInfo | null;
+  home: GeoInfo | null;
+  handshakeAgoSec: number | null;
+  transfer: { rxBytes: number; txBytes: number } | null;
+  connectedSince: string | null;
+  killSwitch: boolean | null;
+  dns: string[];
+  dnsNote: string | null;
+  defaultRouteDev: string | null;
+  services: VpnServicePath[];
+  diagnostics: Record<string, string>;
+  notes: string[];
+}
+
 export interface AppConfigPayload {
   demo: boolean;
   user: { login: string; name: string };
@@ -342,7 +677,7 @@ export interface AppConfigPayload {
   timezone: string;
   logSources: LogSource[];
   alertSources: AlertSource[];
-  scriptsDir: string;
+  scriptsDirs: string[];
   contextFile: string;
   /** absolute path of server/dist/mcp.js on this machine, for the connect snippet */
   mcpScript: string;

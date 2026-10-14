@@ -49,6 +49,9 @@ server/   Express 5 + ws, TypeScript (ESM, NodeNext → use .js import suffixes)
     docker systemd rcon slp jellyfin directus postgres files storage tailscale
     backups scheduler status logs alerts scripts context
   src/mcp.ts          stdio MCP server — thin client over the REST API
+  src/tools/          CLIs: audit-install (+ --propose = discover), clear-demo-data,
+                      wrap-service; discover-lib.ts is pure (OnCalendar→cron, crontab
+                      parsing, mirror matching) and tested by server/test-discover.mjs
 web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
   src/pages/          Dashboard, Database, groups.tsx (Media/Minecraft/System stack
                       the original pages as sections), Jellyfin, Files, Minecraft,
@@ -65,8 +68,10 @@ Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (type
 `backup`, `restart`, `command`, `script`, `external`), run with node-cron in `TZ`,
 history in `data/job-runs.json`. `external` jobs are mirrors of cron/systemd-timer
 jobs: the dashboard marks "due now" in the feed and waits for the script's hl-run
-output instead of running anything. Two built-in defaults are seeded disabled on
-first start only. Never hard-code a schedule — add or change jobs through the API/UI.
+output instead of running anything. A non-demo install seeds **no** jobs; `npm run
+discover` mirrors the real systemd timers and crontab lines (demo mode seeds four
+flagged `seeded: true`). Never hard-code a schedule — add or change jobs through the
+API/UI.
 
 Auth model: the app binds `127.0.0.1:3000`; `tailscale serve` fronts it and injects
 `Tailscale-User-Login`. Those headers are trusted only on loopback connections and
@@ -80,6 +85,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   scripts, alert rules, deploy templates — carries a `[INSTALLER]` comment saying what
   to replace it with. `grep -rn "\[INSTALLER\]" .` lists them; SERVER_SETUP § 0 is
   the checklist. When you add a new guess, tag it the same way.
+- **`[DEMO]` tags mark demo-only code.** Every `if (cfg.demo)` branch, fixture, demo-only
+  route or button carries a `[DEMO]` comment, and `DEMO_INDEX.md` lists each file with
+  what it fakes and what the real install provides. `npm run demo:index` prints the tags;
+  `npm test` fails when a file with demo code is missing from the index. New demo code →
+  tag it and add a row.
 - One service module per integration. Never let a missing dependency crash boot —
   return `unavailable`/`null` and let the UI say so.
 - Validate request bodies with zod at the route; throw `HttpError(status, msg)`.
@@ -106,8 +116,58 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 - [x] **Step 6** MCP server (`server/src/mcp.ts`), `.mcp.json`, registration docs
 - [x] Maintenance reports: agents file brief write-ups (`submit_report`), owner marks
       them reviewed (`services/reports.ts`, `ReportsCard`)
-- [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
-- [ ] Codex registration syntax verified against current docs (marked "verify" in UI/docs)
+- [x] VPN tab: state, provider/protocol, exit IP + location, datacenter (endpoint geo),
+      handshake/transfer, DNS, kill switch, and a per-service traffic map (bypass /
+      through VPN) with advice. Provider-agnostic probing; `[INSTALLER]` placeholders.
+- [x] Issue #2 install hardening: zero jobs on a non-demo install (`seeded` flag on demo
+      ones); backups discovered in `mc-*.tar.gz`, `mcworld_YYYY_MM_DD/` and `*.tar.gz`
+      layouts with source shown and only dashboard-made ones deletable; `BACKUP_METHOD`
+      / `BACKUP_FORMAT`; multi-folder `SCRIPTS_DIR` with a loud missing-folder error;
+      external jobs carry `timer` + output-tracking state; tools `audit:install`,
+      `discover`, `clear-demo-data`, `wrap-service`; hl-run accepts `DASHBOARD_KEY`.
+- [x] `discover` also reads crontabs (user, /etc/crontab, /etc/cron.d, root + Minecraft
+      owner via sudo -n), finds script folders and backup roots, verifies each OnCalendar→cron
+      translation against systemd's next elapse, and prints the wrapped cron line;
+      `wrap-service --install-hl-run` + `/etc/homelab-hl-run.env`; hl-run streams
+      line-by-line (PYTHONUNBUFFERED) and survives an unreachable dashboard
+- [x] Codex registration syntax verified against developers.openai.com/codex/mcp
+      (`codex mcp add <name> --env K=V -- <cmd>`; `[mcp_servers.<name>]` in config.toml)
+- [x] Issue #4 storage explorer (System → Storage), **built on proven scanners**: ncdu
+      (preferred; documented JSON export) or gdu (same format, faster), `du -x -a` as the
+      fallback — `services/diskscan.ts` parses the export as a stream into a directory
+      tree with per-folder aggregates, the largest files per subtree, and type / age /
+      owner statistics for the top 3 levels; scans run one at a time per mount, persist
+      under `data/diskscan/`, re-run every `DISK_SCAN_INTERVAL_HOURS`. UI: breadcrumb tree
+      with bars, squarified treemap, Largest files / By type / By age / By owner tabs,
+      "Scan this folder" for deep stats. Plus the "Reclaimable space" report (display-only
+      commands). MCP: `storage_scan`, `storage_tree`, `storage_largest`, `storage_reclaim`.
+      Tests: `server/test-diskscan.mjs`.
+- [x] Issue #5 **Assistant sidecar** (`services/sidecar.ts`, `services/agentRunner.ts`,
+      `AssistantWidget`): the feed is grouped into **incidents** (errors, failed jobs/scripts,
+      3× the same warning in 10 min; fingerprinted, deduped, cooldown), a supervised
+      **queue** launches the owner's signed-in Codex / Claude Code on them one at a time
+      (quiet period first), output is parsed (Codex `--json`, Claude `stream-json`) into a
+      **conversation** the owner can type into, sessions are **resumed** across runs, risky
+      actions (restart/stop, destructive RCON) are **gated behind approvals** the owner
+      grants in the panel (409 to the agent → it stops → resumed with the decision),
+      reports carry `incidentId`, alert rows are clickable → "Ask about this", lifecycle
+      phases off/idle/queued/investigating/waiting-approval/acting/failed. Demo mode runs a
+      simulated agent so the whole loop can be watched ("Simulate incident").
+      MCP: `request_approval`, `list_incidents`, `get_incident`; `submit_report(incidentId)`.
+- [x] Assistant tile "repairs by the agent": reports carry an `outcome` (fixed / no-action /
+      needs-human; inferred from wording when the agent omits it), incidents inherit the
+      strongest outcome, `GET /api/sidecar/repairs` lists each reported incident with the
+      agent's tool calls, approvals and reports; the tile counts `fixed` and opens the list.
+- [x] "Staged update" card on the Minecraft tab (`services/updates.ts`): installed Paper build
+      and plugin versions read from the jars (own zip reader → plugin.yml / paper-plugin.yml),
+      staged jars in `UPDATE_STAGING_DIR` (or plugins/update, updates, staged, staging),
+      latest upstream with release dates (PaperMC, Modrinth, Hangar, GitHub; `PLUGIN_SOURCES`
+      maps names; `UPDATE_CHECK=0` disables), next apply job, last fetch. MCP `staged_updates`.
+      Tests: `server/test-updates.mjs`.
+- [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
+      Codex version on the server (plain-text output still works, resume is skipped if absent)
+- [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
+- [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
 
 ### Agent etiquette (read before acting on the server)
@@ -117,6 +177,23 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 3. Prefer the smallest fix. Run a script or job rather than hand-rolling commands when one exists.
 4. When done, `submit_report` with what you saw, what you did, and what a human should decide.
 5. If you learn something durable about this server, `append_instructions` with a short note.
+
+## Known facts about the live server (from the first install attempt, issue #2)
+
+Learned on 2026-10-13 when an installer ran this branch on the real machine. These
+override the placeholders wherever they conflict:
+
+- Minecraft lives under a path **with a space**: `/home/gold/Minecraft Server`. Quote it
+  everywhere (env, units, shell snippets).
+- Backups are **dated folders**, not single archives: `mcworld_YYYY_MM_DD/world.tar.gz`.
+  The dashboard's `mc-YYYYMMDD-HHMMSS.tar.gz` format is only what *it* creates.
+- Maintenance scripts are **not** in `/opt/homelab-scripts`; the real folder was not
+  recorded — discover it (`SCRIPTS_DIR`) rather than assume.
+- Real **systemd timers** already exist: an update-fetch timer and a backup/update/restart
+  timer. Mirror them as `external` jobs; do not add dashboard-run equivalents.
+- The seeded default jobs showed up in production → treat any job named "Nightly world
+  backup" / "Daily restart" in `data/jobs.json` on the server as demo leakage to remove.
+- Open work for all of this is tracked in GitHub issue #2 (deferred by the owner).
 
 ## Decisions log
 
@@ -146,13 +223,63 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
   landing page.
 - 2026-10-13 Demo mode edits a copy of this file (`data/demo/CLAUDE.md`), never the
   repo's, so smoke tests can write freely.
-- 2026-10-13 Seeded jobs start **disabled**. The owner already has backup/restart
-  scripts; the dashboard must not add a second nightly backup on its own.
+- 2026-10-13 **A non-demo install seeds no jobs at all** (was: two disabled seeds, which
+  still leaked into production — issue #2). Demo seeds carry `seeded: true` so
+  `clear-demo-data` can remove them.
+- 2026-10-13 The dashboard **never deletes a backup it did not create** (tracked in
+  `data/backups-created.json`); existing `mcworld_…` folders show as "existing".
+- 2026-10-13 Install verification is a command, not a feeling: `npm run audit:install`
+  must print FULLY CONNECTED; "it looks connected" is not acceptance.
+- 2026-10-13 VPN: the server runs a VPN with split-tunnel exceptions for Minecraft and
+  Jellyfin; the client and mechanism are unknown, so `services/vpn.ts` probes (CLIs,
+  WireGuard, ip rule, nft/iptables marks, geo) rather than assuming. Guidance baked into
+  the traffic map: Tailscale MUST bypass (it carries the dashboard), Directus/Dashboard
+  ride on Tailscale, Postgres is loopback-only, Minecraft needs a bypass, Jellyfin only
+  if reached from the internet. The page is read-only on purpose until the real client
+  is known.
 - 2026-10-13 **The live server keeps its existing semi-weekly restart + backup
   motion (cron + Python scripts) unchanged.** The dashboard mirrors them as
   `external` jobs — real cron expressions, display-only — and the cron commands are
   wrapped with `hl-run` so output lands in the feed and the mirrored job is marked
   OK/failed. Do not convert them to built-in jobs or re-time them without Carter.
+- 2026-10-13 **A mirror's schedule is verified, not trusted.** `audit:install` compares
+  node-cron's next run of each timer-backed mirror with systemd's `NextElapse` and fails
+  on disagreement; `discover` does the same before proposing. Cron-backed mirrors are
+  matched to the actual crontab line (command or script+schedule) and fail the audit
+  until that line runs through hl-run.
+- 2026-10-13 hl-run reads `/etc/homelab-hl-run.env` (HOMELAB_URL + HOMELAB_KEY only,
+  written by `wrap-service --install-hl-run`) when cron/systemd give it no environment.
+  The full dashboard env is never handed to maintenance scripts (it holds the Jellyfin
+  key and the Postgres password).
+- 2026-10-13 The audit/discover tools probe unknown paths only through `find` child
+  processes with hard timeouts; a direct fs call on a dead mount (autofs/NFS) parks a
+  Node I/O thread forever and the process can never exit — seen on the dev Mac's `/home`.
+- 2026-10-14 **The storage explorer never deletes.** Reclaimable-space items carry the
+  shell command a human (or an agent with its own shell) would run; the dashboard only
+  measures. Folders the service user cannot read show as lower bounds with a notice —
+  no sudo rule for `du`/`find` (find -exec would be root code execution).
+- 2026-10-14 **Scanning is delegated to ncdu/gdu, not reimplemented.** Carter asked for the
+  most robust open-source TreeSize equivalent rather than a from-scratch scanner. ncdu's
+  JSON export (https://dev.yorhel.nl/ncdu/jsonfmt) is the interchange format; gdu writes
+  the same format (verify `ncdu -f` reads a `gdu -o` file on the server); `du -a` is only a
+  fallback. Our code owns the streaming parse, the aggregates and the UI. Demo mode feeds
+  a generated ncdu export through the same parser so the code path is identical.
+- 2026-10-14 **Sidecar safety model.** Humans (Tailscale identity) are never gated. Agents
+  (dashboard key) hit a 409 on restart/stop/destructive RCON while `requireApproval` is
+  on; the dashboard files an approval request, the agent is told to end its turn, and the
+  owner's decision resumes the same session with a continuation prompt. An approval is
+  spent once (`consumed`). Incidents never re-trigger within the cooldown; one agent run at
+  a time; `maxRunMinutes` kills a runaway run. The sidecar never deletes or edits anything
+  itself — only the agent does, inside its workspace, through the same API the UI uses.
+- 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
+  at `/home/gold/server-platform/homelab-dashboard-src`, its env at
+  `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or
+  set `HOMELAB_ENV_FILE`); `.mcp.json` on main hard-codes those paths; there is a
+  `SYSTEMD_USER` flag in config (unused so far — if Paper runs as a *user* unit,
+  `systemctl --user` is needed and the sudo rules don't apply); a qBittorrent link
+  (`QBITTORRENT_PUBLIC_URL`) exists; a dashboard-launched agent runner
+  (`services/agentRunner.ts`, `codex exec` / `claude -p` with cwd `/home/gold/Minecraft
+  Server`) was added as an interim step toward issue #5.
 
 ## How to run & verify
 

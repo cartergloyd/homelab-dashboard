@@ -2,6 +2,7 @@
 // owner to read and mark as reviewed.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { fmtDateTime, fmtRelative } from "../format";
 import type { AgentReport } from "../types";
@@ -54,6 +55,14 @@ export function ReportsCard() {
                   </div>
                   <div className="muted small">
                     <span className="badge">{r.agent}</span> <span title={fmtDateTime(r.ts)}>{fmtRelative(r.ts)}</span>
+                    {r.incidentId && (
+                      <>
+                        {" · "}
+                        <Link to={`/minecraft#assistant`} title="Open the Assistant panel" className="mono">
+                          incident #{r.incidentId}
+                        </Link>
+                      </>
+                    )}
                     {r.reviewed && r.reviewedBy && ` · reviewed by ${r.reviewedBy} ${fmtRelative(r.reviewedAt)}`}
                   </div>
                 </div>

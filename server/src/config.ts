@@ -32,6 +32,7 @@ const csv = z
 const Env = z.object({
   PORT: z.coerce.number().default(3000),
   HOST: z.string().default("127.0.0.1"),
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   DEMO: flag,
   AUTH_DISABLED: flag,
   ALLOWED_LOGINS: csv,
@@ -56,8 +57,13 @@ const Env = z.object({
   RCON_HOST: z.string().default("127.0.0.1"),
   RCON_PORT: z.coerce.number().default(25575),
   RCON_PASSWORD: z.string().optional(),
+  // One or more backup roots (comma-separated). The first is where built-in backups are written.
   BACKUP_DIR: z.string().default("/var/backups/minecraft"),
   BACKUP_KEEP: z.coerce.number().default(7),
+  // builtin | script:<name>  — what "Back up now" and backup jobs run
+  BACKUP_METHOD: z.string().default("builtin"),
+  // archive = mc-YYYYMMDD-HHMMSS.tar.gz · dated-folder = mcworld_YYYY_MM_DD/<world>.tar.gz
+  BACKUP_FORMAT: z.enum(["archive", "dated-folder"]).default("archive"),
 
   DIRECTUS_URL: z.string().default("http://127.0.0.1:8055"),
   DIRECTUS_PUBLIC_URL: z.string().optional(),
@@ -71,15 +77,57 @@ const Env = z.object({
 
   // Locally generated password for scripts and the MCP connector (NOT an AI API key)
   DASHBOARD_KEY: z.string().optional(),
-  // Folder of maintenance scripts (*.py, *.sh) shown as ▶ buttons and runnable as jobs
+  // Folder(s) of maintenance scripts (*.py, *.sh), comma-separated, shown as ▶ buttons and runnable as jobs
   SCRIPTS_DIR: z.string().default("/opt/homelab-scripts"),
   // The instructions file agents read; edited from the Assistant widget
   CONTEXT_FILE: z.string().optional(),
   // Which log sources the alerts hub tails continuously (default: all)
   ALERT_SOURCES: csv,
+
+  // --- VPN tab -----------------------------------------------------------
+  // [INSTALLER] The VPN software on the server is UNKNOWN. These are hooks for
+  // whatever is actually installed; leave VPN_PROVIDER=auto to let the dashboard
+  // probe for mullvad / nordvpn / protonvpn CLIs and WireGuard/tun interfaces.
+  VPN_PROVIDER: z.enum(["auto", "mullvad", "nordvpn", "protonvpn", "wireguard", "openvpn", "none"]).default("auto"),
+  VPN_INTERFACE: z.string().optional(), // e.g. wg0-mullvad, nordlynx, tun0
+  VPN_LAN_INTERFACE: z.string().optional(), // e.g. eth0 — lets the dashboard show the home ISP IP for comparison
+  VPN_GEO_URL: z.string().default("https://ipinfo.io"), // geolocation API; {url}/json and {url}/<ip>/json
+  VPN_GEO_TOKEN: z.string().optional(),
+  // Declared split-tunnel exceptions when detection can't see them: "Minecraft=25565/tcp,Jellyfin=8096/tcp"
+  VPN_EXCEPTIONS: csv,
+
+  // Storage explorer (issue #4): the TreeSize view is fed by ncdu (preferred) or gdu —
+  // proven scanners with an ncdu-format JSON export — falling back to `du -a`.
+  DISK_SCANNER: z.enum(["auto", "ncdu", "gdu", "du"]).default("auto"),
+  // folders to scan (default: every mounted filesystem from df); each scan stays on one filesystem
+  DISK_SCAN_ROOTS: csv,
+  // re-scan automatically every N hours (0 = only when asked from the UI / MCP)
+  DISK_SCAN_INTERVAL_HOURS: z.coerce.number().min(0).max(720).default(24),
+  // extra exclude patterns handed to the scanner (ncdu --exclude / gdu --ignore-dirs-pattern / du --exclude)
+  DISK_SCAN_EXCLUDE: csv,
+
+  // Staged updates widget (Minecraft tab). [INSTALLER] PLACEHOLDER: where the update-fetch
+  // job puts new Paper/plugin jars before the restart applies them. Unset = look in the
+  // usual places (plugins/update, updates, staged, staging under MC_DIR).
+  UPDATE_STAGING_DIR: z.string().optional(),
+  // Where to look upstream for each plugin: "EssentialsX=modrinth:essentialsx,Chunky=hangar:pop4959/Chunky,Vault=github:MilkBowl/Vault,Foo=none"
+  PLUGIN_SOURCES: csv,
+  // query PaperMC / Modrinth / Hangar / GitHub for latest versions (default on; 0 to disable)
+  UPDATE_CHECK: z
+    .string()
+    .optional()
+    .transform((v) => v === undefined || v === "1" || v === "true"),
 });
 
 const env = Env.parse(process.env);
+
+/** Comma-separated paths; each may contain spaces (quote the whole value in the env file). */
+const splitPaths = (v: string): string[] =>
+  v
+    .split(",")
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter(Boolean)
+    .map((p) => path.resolve(p));
 
 function parseRoots(items: string[]): MediaRoot[] {
   return items.map((item) => {
@@ -117,7 +165,15 @@ export const cfg = {
     publicAddress: env.MC_PUBLIC_ADDRESS ?? null,
     rcon: { host: env.RCON_HOST, port: env.RCON_PORT, password: env.RCON_PASSWORD },
   },
-  backups: { dir: env.BACKUP_DIR, keep: env.BACKUP_KEEP },
+  backups: {
+    dirs: splitPaths(env.BACKUP_DIR),
+    get dir(): string {
+      return this.dirs[0];
+    },
+    keep: env.BACKUP_KEEP,
+    method: env.BACKUP_METHOD,
+    format: env.BACKUP_FORMAT,
+  },
   directus: {
     url: env.DIRECTUS_URL.replace(/\/$/, ""),
     publicUrl: (env.DIRECTUS_PUBLIC_URL ?? env.DIRECTUS_URL).replace(/\/$/, ""),
@@ -126,14 +182,44 @@ export const cfg = {
   postgres: { url: env.PG_URL, container: env.POSTGRES_CONTAINER },
   dashboardService: env.DASHBOARD_SERVICE,
   dashboardKey: (env.DASHBOARD_KEY ?? null) as string | null,
-  scriptsDir: env.SCRIPTS_DIR,
+  scriptsDirs: splitPaths(env.SCRIPTS_DIR),
+  get scriptsDir(): string {
+    return this.scriptsDirs[0];
+  },
   // dist/config.js → server/dist → server → repo root (wherever the repo is installed)
   repoRoot: path.resolve(here, "../.."),
   contextFile: env.CONTEXT_FILE ?? path.resolve(here, "../../CLAUDE.md"),
+  vpn: {
+    provider: env.VPN_PROVIDER,
+    iface: env.VPN_INTERFACE ?? null,
+    lanIface: env.VPN_LAN_INTERFACE ?? null,
+    geoUrl: env.VPN_GEO_URL.replace(/\/$/, ""),
+    geoToken: env.VPN_GEO_TOKEN ?? null,
+    declaredExceptions: env.VPN_EXCEPTIONS.map((item) => {
+      const [name, port] = item.split("=");
+      return { name: (name ?? "").trim(), port: (port ?? "").trim() };
+    }).filter((e) => e.name && e.port),
+  },
   alertSources: (env.ALERT_SOURCES.length
     ? env.ALERT_SOURCES.filter((s): s is LogSource => (ALL_LOG_SOURCES as string[]).includes(s))
     : ALL_LOG_SOURCES) as LogSource[],
   // which env vars were set explicitly, so demo mode only fills the gaps
+  diskScan: {
+    scanner: env.DISK_SCANNER,
+    roots: splitPaths(env.DISK_SCAN_ROOTS.join(",")),
+    intervalHours: env.DISK_SCAN_INTERVAL_HOURS,
+    exclude: env.DISK_SCAN_EXCLUDE,
+  },
+  updates: {
+    stagingDir: env.UPDATE_STAGING_DIR ? path.resolve(env.UPDATE_STAGING_DIR.replace(/^["']|["']$/g, "")) : null,
+    sources: Object.fromEntries(
+      env.PLUGIN_SOURCES.map((item) => {
+        const i = item.indexOf("=");
+        return i > 0 ? [item.slice(0, i).trim().toLowerCase(), item.slice(i + 1).trim()] : [item.trim().toLowerCase(), "none"];
+      }),
+    ) as Record<string, string>,
+    check: env.UPDATE_CHECK,
+  },
   explicit: {
     mediaRoots: env.MEDIA_ROOTS.length > 0,
     mcDir: process.env.MC_DIR !== undefined,

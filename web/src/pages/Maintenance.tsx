@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, Modal, PageHead, StatusPill, useDialog, useToast } from "../components/ui";
 import { describeCron, fmtBytes, fmtDateTime, fmtRelative } from "../format";
-import type { BackupFile, JobRun, JobType, JobView, ScriptInfo } from "../types";
+import type { BackupsPayload, JobRun, JobType, JobView, ScriptsPayload } from "../types";
 
 interface JobForm {
   name: string;
@@ -17,6 +17,8 @@ interface JobForm {
   command: string;
   script: string;
   managedBy: string;
+  timer: string;
+  cronSource: string;
 }
 
 const PRESETS: { label: string; cron: string }[] = [
@@ -41,6 +43,8 @@ function toForm(j?: JobView): JobForm {
     command: j?.options.command ?? "",
     script: j?.options.script ?? "",
     managedBy: j?.options.managedBy ?? "cron",
+    timer: j?.options.timer ?? "",
+    cronSource: j?.options.cronSource ?? "",
   };
 }
 
@@ -51,6 +55,8 @@ function fromForm(f: JobForm) {
     options.managedBy = f.managedBy.trim() || "cron";
     if (f.command.trim()) options.command = f.command.trim();
     if (f.script.trim()) options.script = f.script.trim();
+    if (f.timer.trim()) options.timer = f.timer.trim();
+    if (f.cronSource.trim()) options.cronSource = f.cronSource.trim();
   }
   if (f.type === "restart") {
     options.warnMinutes = f.warnMinutes
@@ -69,7 +75,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   const toast = useToast();
   const [f, setF] = useState<JobForm>(toForm(job));
   const set = <K extends keyof JobForm>(k: K, v: JobForm[K]) => setF((s) => ({ ...s, [k]: v }));
-  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptInfo[]>("/scripts") });
+  const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptsPayload>("/scripts") });
   const save = useMutation({
     mutationFn: () => (job ? api.put(`/jobs/${job.id}`, fromForm(f)) : api.post("/jobs", fromForm(f))),
     onSuccess: () => {
@@ -144,10 +150,10 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
         {f.type === "script" && (
           <label className="field">
             Script (from the scripts folder; output goes to the alerts feed)
-            {scripts.data?.length ? (
+            {scripts.data?.scripts.length ? (
               <select className="input mono" value={f.script} onChange={(e) => set("script", e.target.value)} required>
                 <option value="">Choose a script…</option>
-                {scripts.data.map((s) => (
+                {scripts.data.scripts.map((s) => (
                   <option key={s.name} value={s.name}>
                     {s.name}
                   </option>
@@ -166,7 +172,15 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
             <div className="form-grid">
               <label className="field">
                 Managed by
-                <input className="input" value={f.managedBy} onChange={(e) => set("managedBy", e.target.value)} placeholder="cron" />
+                <input className="input" value={f.managedBy} onChange={(e) => set("managedBy", e.target.value)} placeholder="cron or systemd timer" />
+              </label>
+              <label className="field">
+                systemd timer unit (optional)
+                <input className="input mono" value={f.timer} onChange={(e) => set("timer", e.target.value)} placeholder="mc-backup.timer" />
+              </label>
+              <label className="field">
+                Crontab it lives in (optional)
+                <input className="input mono" value={f.cronSource} onChange={(e) => set("cronSource", e.target.value)} placeholder="crontab (gold) or /etc/cron.d/minecraft" />
               </label>
               <label className="field">
                 Script name to watch for (optional)
@@ -202,7 +216,7 @@ export function Maintenance() {
   const { confirm } = useDialog();
   const jobs = useQuery({ queryKey: ["jobs"], queryFn: () => api.get<JobView[]>("/jobs"), refetchInterval: 5000 });
   const runs = useQuery({ queryKey: ["jobs", "runs"], queryFn: () => api.get<JobRun[]>("/jobs/runs?limit=20"), refetchInterval: 5000 });
-  const backups = useQuery({ queryKey: ["backups"], queryFn: () => api.get<BackupFile[]>("/backups"), refetchInterval: 15_000 });
+  const backups = useQuery({ queryKey: ["backups"], queryFn: () => api.get<BackupsPayload>("/backups"), refetchInterval: 15_000 });
   const [editing, setEditing] = useState<JobView | null | "new">(null);
 
   const refetchAll = () => {
@@ -229,9 +243,12 @@ export function Maintenance() {
     },
     onError,
   });
-  const delBackup = useMutation({ mutationFn: (name: string) => api.del(`/backups/${encodeURIComponent(name)}`), onSuccess: refetchAll, onError });
+  const delBackup = useMutation({ mutationFn: (p: string) => api.del(`/backups?path=${encodeURIComponent(p)}`), onSuccess: refetchAll, onError });
 
-  const totalBackupBytes = (backups.data ?? []).reduce((s, b) => s + b.bytes, 0);
+  const backupList = backups.data?.backups ?? [];
+  const totalBackupBytes = backupList.reduce((s, b) => s + b.bytes, 0);
+  const missingRoots = backups.data?.roots.filter((r) => !r.exists) ?? [];
+  const FORMAT_LABEL: Record<string, string> = { dashboard: "dashboard", "dated-folder": "dated folder", archive: "archive" };
 
   return (
     <>
@@ -240,8 +257,13 @@ export function Maintenance() {
         sub="Scheduled restarts with in-game countdowns, world backups with retention, and recurring console commands."
         actions={
           <>
-            <button className="btn" disabled={backupNow.isPending} onClick={() => backupNow.mutate()}>
-              <Icons.drive width={14} height={14} /> {backupNow.isPending ? "Backing up…" : "Back up now"}
+            <button
+              className="btn"
+              disabled={backupNow.isPending}
+              title={backups.data ? (backups.data.method.startsWith("script:") ? `Runs ${backups.data.method.slice(7)}` : `Built-in ${backups.data.format} backup into ${backups.data.writeDir}`) : undefined}
+              onClick={() => backupNow.mutate()}
+            >
+              <Icons.drive width={14} height={14} /> {backupNow.isPending ? "Backing up…" : backups.data?.method.startsWith("script:") ? `Back up now (${backups.data.method.slice(7)})` : "Back up now"}
             </button>
             <button className="btn primary" onClick={() => setEditing("new")}>
               <Icons.plus width={14} height={14} /> New job
@@ -266,7 +288,8 @@ export function Maintenance() {
             {jobs.data?.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted">
-                  No jobs yet.
+                  No jobs yet. If this server already restarts or backs up on a schedule (systemd timers, cron), run <span className="mono">npm run discover -- --apply</span> on the server to mirror
+                  it here without changing it — or add a job with <strong>New job</strong>.
                 </td>
               </tr>
             )}
@@ -285,11 +308,33 @@ export function Maintenance() {
                     {j.type === "script" && <span className="mono">▶ {j.options.script}</span>}
                     {j.type === "external" && (
                       <>
-                        Runs via {j.options.managedBy ?? "cron"} outside the dashboard
+                        Runs via {j.options.managedBy ?? "cron"}
+                        {j.options.timer && (
+                          <>
+                            {" "}
+                            <span className="mono">{j.options.timer}</span>
+                          </>
+                        )}
+                        {!j.options.timer && j.options.cronSource && (
+                          <>
+                            {" in "}
+                            <span className="mono">{j.options.cronSource}</span>
+                          </>
+                        )}{" "}
+                        outside the dashboard
                         {j.options.command && (
                           <>
                             {" · "}
                             <span className="mono">{j.options.command}</span>
+                          </>
+                        )}
+                        {j.outputTracking && (
+                          <>
+                            {" · "}
+                            <StatusPill
+                              state={j.outputTracking === "connected" ? "ok" : j.outputTracking === "not-connected" ? "down" : "unavailable"}
+                              label={j.outputTracking === "connected" ? "Output tracking connected" : j.outputTracking === "not-connected" ? "Output not tracked — wrap with hl-run" : "Output tracking unknown"}
+                            />
                           </>
                         )}
                       </>
@@ -343,26 +388,55 @@ export function Maintenance() {
       </Card>
 
       <div className="grid wide" style={{ marginTop: 14 }}>
-        <Card title="World backups" actions={<span className="muted small">{backups.data ? `${backups.data.length} · ${fmtBytes(totalBackupBytes)}` : ""}</span>}>
+        <Card title="World backups" actions={<span className="muted small">{backups.data ? `${backupList.length} · ${fmtBytes(totalBackupBytes)}` : ""}</span>}>
           <ErrorNotice error={backups.error} />
-          {backups.data?.length === 0 && <span className="muted">No backups yet. Run "Back up now" or enable the nightly job.</span>}
-          {!!backups.data?.length && (
+          {missingRoots.length > 0 && (
+            <div className="notice error" style={{ marginBottom: 10 }}>
+              Backup folder not found: {missingRoots.map((r) => r.path).join(", ")}. Set <span className="mono">BACKUP_DIR</span> to where the existing backups live.
+            </div>
+          )}
+          {backups.data && (
+            <div className="muted small" style={{ marginBottom: 8 }}>
+              Source{backups.data.roots.length === 1 ? "" : "s"}:{" "}
+              {backups.data.roots.map((r, i) => (
+                <span key={r.path}>
+                  {i > 0 && ", "}
+                  <span className="mono">{r.path}</span> ({r.count})
+                </span>
+              ))}
+              {" · "}new backups via <span className="mono">{backups.data.method === "builtin" ? `built-in → ${backups.data.format}` : backups.data.method}</span>
+            </div>
+          )}
+          {backups.data && backupList.length === 0 && missingRoots.length === 0 && <span className="muted">No backups recognised here yet (mc-*.tar.gz, mcworld_YYYY_MM_DD/, *.tar.gz).</span>}
+          {backupList.length > 0 && (
             <table className="table">
               <tbody>
-                {backups.data.map((b) => (
-                  <tr key={b.name}>
-                    <td className="mono">{b.name}</td>
+                {backupList.map((b) => (
+                  <tr key={b.path}>
+                    <td>
+                      <span className="mono">{b.name}</span>
+                      <span className="badge" style={{ marginLeft: 8 }}>
+                        {FORMAT_LABEL[b.format] ?? b.format}
+                      </span>
+                      {backups.data!.roots.length > 1 && <div className="muted small mono">{b.root}</div>}
+                    </td>
                     <td className="num dim">{fmtBytes(b.bytes)}</td>
                     <td className="dim nowrap">{fmtDateTime(b.mtime)}</td>
                     <td style={{ textAlign: "right" }}>
-                      <button
-                        className="btn sm ghost danger"
-                        onClick={async () => {
-                          if (await confirm({ title: `Delete ${b.name}?`, confirmLabel: "Delete", danger: true })) delBackup.mutate(b.name);
-                        }}
-                      >
-                        <Icons.trash width={14} height={14} />
-                      </button>
+                      {b.deletable ? (
+                        <button
+                          className="btn sm ghost danger"
+                          onClick={async () => {
+                            if (await confirm({ title: `Delete ${b.name}?`, body: "This backup was created by the dashboard.", confirmLabel: "Delete", danger: true })) delBackup.mutate(b.path);
+                          }}
+                        >
+                          <Icons.trash width={14} height={14} />
+                        </button>
+                      ) : (
+                        <span className="muted small" title="Not created by the dashboard — delete by hand if you really mean to">
+                          existing
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))}

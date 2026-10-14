@@ -6,6 +6,7 @@ import type { DatabasePayload } from "../types.js";
 let pool: pg.Pool | null = null;
 
 export async function pgStats(): Promise<DatabasePayload["postgres"]> {
+  // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return demo.pgStats();
   const empty: DatabasePayload["postgres"] = { connected: false, version: null, sizeBytes: null, tables: null, topTables: [] };
   if (!cfg.postgres.url) return { ...empty, error: "PG_URL not set" };

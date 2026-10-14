@@ -1042,3 +1042,403 @@ table.table {
   height: 100%;
   background: var(--accent);
 }
+
+/* ---- storage explorer (issue #4) ---------------------------------------- */
+.crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.crumb {
+  background: none;
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+.crumb:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.crumb.current {
+  color: var(--ink);
+  font-weight: 600;
+  cursor: default;
+}
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tree-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 3.5em auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.tree-row.clickable {
+  cursor: pointer;
+}
+.tree-row.clickable:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.tree-row.dim {
+  opacity: 0.7;
+}
+.tree-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.tree-row.reclaim .tree-name {
+  display: block;
+}
+.tree-bar {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  overflow: hidden;
+}
+.tree-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.tree-fill.neutral {
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+.tree-pct {
+  text-align: right;
+}
+.tree-size {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  min-width: 5.5em;
+}
+.hero-num {
+  font-size: 1.6rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.code-inline {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  padding: 2px 6px;
+  border-radius: 6px;
+  max-width: 100%;
+  display: inline-block;
+}
+.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.linkish:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+@media (max-width: 700px) {
+  .tree-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .tree-bar,
+  .tree-pct {
+    display: none;
+  }
+}
+
+/* ---- assistant sidecar (issue #5) ---------------------------------------- */
+.ev {
+  cursor: pointer;
+}
+.ev-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 4px;
+}
+.ev-inc {
+  flex: none;
+  white-space: nowrap;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warning) 25%, transparent);
+  color: var(--ink);
+  align-self: center;
+}
+.sidecar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.sidecar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.approval {
+  border: 1px solid color-mix(in srgb, var(--warning) 60%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.convo {
+  flex: 1 1 auto;
+  min-height: 180px;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.turn {
+  max-width: 92%;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.turn.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+.turn.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.turn.system {
+  align-self: center;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  padding: 2px 6px;
+}
+.turn-meta {
+  display: block;
+  font-size: 10px;
+  opacity: 0.7;
+  margin-top: 2px;
+}
+.chatbox {
+  display: flex;
+  gap: 6px;
+}
+.chatbox textarea {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+  max-height: 120px;
+}
+.incident {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+}
+.incident > .truncate {
+  min-width: 0;
+}
+.incident.active {
+  border-color: color-mix(in srgb, var(--critical) 45%, transparent);
+}
+.incident .actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.phase-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+  background: var(--muted);
+}
+.phase-dot.busy {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.phase-dot.ok {
+  background: var(--good);
+}
+.phase-dot.warn {
+  background: var(--warning);
+}
+.phase-dot.bad {
+  background: var(--critical);
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- storage explorer: tree + treemap (issue #4) ---------------------------- */
+.explorer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.explorer-tree {
+  min-width: 0;
+}
+.explorer-map {
+  min-width: 0;
+  position: sticky;
+  top: 8px;
+}
+.treemap {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tm {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--surface);
+  border-radius: 3px;
+  background: var(--accent);
+  overflow: hidden;
+  transition: opacity 0.15s;
+}
+.tm.files {
+  background: var(--ink);
+}
+.tm.clickable {
+  cursor: pointer;
+}
+.tm.clickable:hover {
+  opacity: 1 !important;
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+.tm-text {
+  padding: 4px 6px;
+  color: var(--accent-ink);
+  min-width: 0;
+}
+.tm.files .tm-text {
+  color: var(--page);
+}
+.tm-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tm-sub {
+  font-size: 11px;
+  opacity: 0.9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-meta {
+  display: block;
+  font-weight: 400;
+}
+.badge.warn {
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--ink);
+}
+.input.sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+  .explorer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .explorer-map {
+    position: static;
+  }
+  .treemap {
+    height: 220px;
+  }
+}
+
+/* ---- repairs tile + list -------------------------------------------------- */
+.mini-stat-btn {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.mini-stat-btn:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.mini-stat-btn:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.repair {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.repair-pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-radius: 6px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* ---- staged update table ---------------------------------------------------- */
+.table.updates td {
+  vertical-align: top;
+}
+.table.updates .paper-row td {
+  border-bottom: 2px solid var(--hairline);
+}
