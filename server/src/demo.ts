@@ -14,6 +14,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "./config.js";
+import type { LargestPayload, ReclaimPayload, StorageTreePayload, TreeEntry } from "./types.js";
 import type {
   ContainerInfo,
   DatabasePayload,
@@ -293,6 +294,118 @@ export function folders(): FolderUsage[] {
     { label: "Minecraft server", path: "/opt/minecraft", bytes: 14.2 * 1024 ** 3 },
     { label: "Minecraft backups", path: "/var/backups/minecraft", bytes: 61 * 1024 ** 3 },
   ];
+}
+
+// ---- storage explorer (issue #4) -------------------------------------------
+// An imaginary disk layout: a number is a size (a file if the name has an
+// extension, otherwise a folder whose contents are not broken down); an object is
+// a folder; "__files" = [bytes, count] of loose files in that folder.
+
+type Node = number | [number, number] | { [name: string]: Node };
+const GB = 1024 ** 3;
+const MB = 1024 ** 2;
+const DEMO_TREE: { [name: string]: Node } = {
+  srv: {
+    media: {
+      movies: { "Arrival (2016)": { "Arrival (2016).mkv": 9.8 * GB }, "Dune Part Two (2024)": { "Dune Part Two (2024).mkv": 24.1 * GB }, "Heat (1995)": { "Heat (1995).mp4": 6.2 * GB }, __files: [1770 * GB, 412] },
+      shows: { Severance: { "Season 01": 38 * GB, "Season 02": 41 * GB }, "The Expanse": 212 * GB, __files: [829 * GB, 3120] },
+      music: 82 * GB,
+    },
+  },
+  home: {
+    gold: {
+      "Minecraft Server": { world: 9.1 * GB, world_nether: 2.2 * GB, world_the_end: 0.9 * GB, logs: 1.4 * GB, plugins: 310 * MB, "crash-reports": 48 * MB, "paper-1.21.4.jar": 48 * MB, "server.properties": 2048, "whitelist.json": 512 },
+      ".cache": 1.9 * GB,
+      Downloads: { "ubuntu-24.04-live-server-amd64.iso": 2.6 * GB, "paper-1.21.4-232.jar": 48 * MB },
+      ".local": { share: { Trash: { files: 1.3 * GB } } },
+    },
+  },
+  var: {
+    lib: { docker: { overlay2: 38.2 * GB, image: 1.2 * GB, volumes: 4.1 * GB, containers: 640 * MB }, snapd: { snaps: 2.9 * GB }, apt: 210 * MB },
+    log: { journal: 1.9 * GB, syslog: 120 * MB, "syslog.1": 98 * MB },
+    cache: { apt: { archives: 612 * MB } },
+    backups: { minecraft: { mcworld_2026_10_05: 11.8 * GB, mcworld_2026_10_08: 12.1 * GB, mcworld_2026_10_11: 12.3 * GB, "mc-20261013-040001.tar.gz": 12.4 * GB } },
+    tmp: 180 * MB,
+  },
+  usr: 9.8 * GB,
+  opt: 1.1 * GB,
+  etc: 24 * MB,
+  boot: 260 * MB,
+  tmp: 210 * MB,
+  root: 48 * MB,
+};
+
+const isFileName = (name: string) => /^[^.].*\.[a-z0-9]{2,5}$/i.test(name);
+// mount points of the demo filesystems: like `du -x`, a folder's size excludes what
+// lives on another filesystem
+const DEMO_MOUNTS = ["/", "/srv/media", "/var/backups"];
+
+function nodeSize(node: Node, at = ""): number {
+  if (typeof node === "number") return node;
+  if (Array.isArray(node)) return node[0];
+  let s = 0;
+  for (const [k, v] of Object.entries(node)) {
+    const childPath = at ? path.join(at, k) : "";
+    if (childPath && DEMO_MOUNTS.includes(childPath)) continue; // other filesystem
+    s += nodeSize(v, childPath);
+  }
+  return s;
+}
+
+function findNode(p: string): Node | null {
+  const parts = p.split("/").filter(Boolean);
+  let node: Node = DEMO_TREE;
+  for (const part of parts) {
+    if (typeof node === "number" || Array.isArray(node) || !(part in node)) return null;
+    node = node[part];
+  }
+  return node;
+}
+
+export function storageTree(p: string): StorageTreePayload {
+  const node = findNode(p);
+  const base = { path: p, parent: p === "/" ? null : path.dirname(p), measuring: false, measuredAt: new Date().toISOString(), partial: false, mount: null };
+  if (node === null) return { ...base, totalBytes: null, entries: [], error: `${p} does not exist in the demo disk` };
+  if (typeof node === "number" || Array.isArray(node)) return { ...base, totalBytes: nodeSize(node), entries: [{ name: "contents (not broken down in the demo)", path: p, bytes: nodeSize(node), kind: "files" }] };
+  const entries: TreeEntry[] = [];
+  for (const [name, child] of Object.entries(node)) {
+    const childPath = path.join(p, name);
+    if (Array.isArray(child)) entries.push({ name: `${child[1]} more files`, path: p, bytes: child[0], kind: "files" });
+    else entries.push({ name, path: childPath, bytes: DEMO_MOUNTS.includes(childPath) ? 0 : nodeSize(child, childPath), kind: typeof child === "number" && isFileName(name) ? "file" : "dir" });
+  }
+  entries.sort((a, b) => b.bytes - a.bytes);
+  return { ...base, totalBytes: nodeSize(node, p), entries };
+}
+
+export function largestFiles(p: string, limit: number): LargestPayload {
+  const files: LargestPayload["files"] = [];
+  const walk = (node: Node, at: string) => {
+    if (Array.isArray(node)) return;
+    if (typeof node === "number") {
+      if (isFileName(path.basename(at)) && node > 20 * MB) files.push({ path: at, bytes: node, modified: new Date(Date.now() - (node % 97) * 86_400_000).toISOString() });
+      else if (!isFileName(path.basename(at)) && node > 5 * GB) for (let i = 1; i <= 3; i++) files.push({ path: path.join(at, `large-item-${i}.bin`), bytes: Math.round(node / (9 + i * 7)), modified: new Date(Date.now() - i * 11 * 86_400_000).toISOString() });
+      return;
+    }
+    for (const [k, v] of Object.entries(node)) if (k !== "__files") walk(v, path.join(at, k));
+  };
+  const node = findNode(p);
+  if (node !== null) walk(node, p);
+  return { path: p, measuring: false, measuredAt: new Date().toISOString(), minBytes: 20 * MB, files: files.sort((a, b) => b.bytes - a.bytes).slice(0, limit), partial: false };
+}
+
+export function reclaim(): ReclaimPayload {
+  const items: ReclaimPayload["items"] = [
+    { id: "docker", label: "Docker: unused images, build cache, dangling volumes", bytes: 3.8 * GB, detail: "4 image(s) not used by any container, 1126 MB build cache, 2 unreferenced volume(s). Jellyfin / Directus / Postgres images in use are untouched.", command: "docker system prune --volumes", actionable: true },
+    { id: "journal", label: "systemd journal", bytes: 1.9 * GB, detail: "Archived and active journal files. Keeping ~200 MB is plenty for a home server; the dashboard's alerts history is stored separately.", command: "sudo journalctl --vacuum-size=200M", actionable: true },
+    { id: "apt", label: "apt package cache", bytes: 612 * MB, detail: "Downloaded .deb files already installed.", command: "sudo apt-get clean", actionable: true },
+    { id: "snap", label: "Old snap revisions", bytes: 1.1 * GB, detail: "3 disabled revision(s) kept for rollback.", command: "snap list --all | awk '/disabled/{print $1, $3}' | while read n r; do sudo snap remove \"$n\" --revision=\"$r\"; done", actionable: true },
+    { id: "backups", label: "Dashboard-made world backups beyond retention", bytes: 0, detail: "1 dashboard-made backup(s), BACKUP_KEEP=7; 0 beyond that. The owner's own mcworld_… history is never touched.", command: null, actionable: false },
+    { id: "mc-logs", label: "Minecraft log archives", bytes: 1.4 * GB, detail: "/home/gold/Minecraft Server/logs — Paper gzips a log per day and never deletes them.", command: `find "/home/gold/Minecraft Server/logs" -name '*.log.gz' -mtime +30 -delete`, actionable: true },
+    { id: "trash", label: "Trash folders", bytes: 1.3 * GB, detail: "Desktop-style trash under each user's ~/.local/share/Trash.", command: "rm -rf ~/.local/share/Trash/*", actionable: true },
+    { id: "tmp", label: "Temporary files", bytes: 390 * MB, detail: "/tmp and /var/tmp. systemd cleans these on its own schedule.", command: "sudo systemd-tmpfiles --clean", actionable: true },
+    { id: "varlog", label: "/var/log (all logs incl. journal)", bytes: 2.1 * GB, detail: "Rotated by logrotate. Use the explorer above to find any single log that grew.", command: null, actionable: false },
+  ];
+  return { items, totalBytes: items.filter((i) => i.actionable).reduce((s, i) => s + (i.bytes ?? 0), 0), measuring: false, measuredAt: new Date().toISOString() };
 }
 
 // ---- tailscale -----------------------------------------------------------

@@ -216,6 +216,66 @@ export interface StoragePayload {
   refreshing: boolean;
 }
 
+// ---- storage explorer (issue #4: TreeSize-style "where does the space go") ----
+
+export interface TreeEntry {
+  name: string;
+  path: string;
+  bytes: number;
+  /** `files` = the remaining files in this folder, aggregated */
+  kind: "dir" | "file" | "files";
+}
+
+export interface StorageTreePayload {
+  path: string;
+  parent: string | null;
+  /** a `du` is running in the background; entries (if any) are from the previous measurement */
+  measuring: boolean;
+  measuredAt: string | null;
+  totalBytes: number | null;
+  entries: TreeEntry[];
+  /** some sub-folders could not be read; sizes are lower bounds */
+  partial: boolean;
+  /** the filesystem this folder lives on, for "% of disk" */
+  mount: { mount: string; totalBytes: number; usedBytes: number } | null;
+  error?: string;
+}
+
+export interface LargestFile {
+  path: string;
+  bytes: number;
+  modified: string | null;
+}
+
+export interface LargestPayload {
+  path: string;
+  measuring: boolean;
+  measuredAt: string | null;
+  minBytes: number;
+  files: LargestFile[];
+  partial: boolean;
+  error?: string;
+}
+
+export interface ReclaimItem {
+  id: string;
+  label: string;
+  /** null = could not be measured (not readable, tool missing) */
+  bytes: number | null;
+  detail: string;
+  /** display-only: what a human (or agent) would run to reclaim it; null when the dashboard handles it */
+  command: string | null;
+  /** counted in the reclaimable total */
+  actionable: boolean;
+}
+
+export interface ReclaimPayload {
+  items: ReclaimItem[];
+  totalBytes: number;
+  measuring: boolean;
+  measuredAt: string | null;
+}
+
 export interface TailscalePeer {
   hostName: string;
   dnsName: string;

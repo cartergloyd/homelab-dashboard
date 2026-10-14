@@ -12,6 +12,41 @@ function docker(): Dockerode {
   return (client ??= new Dockerode({ socketPath: cfg.dockerSocket }));
 }
 
+export interface DockerDiskUsage {
+  imagesTotal: number;
+  imagesUnused: number;
+  imagesUnusedCount: number;
+  buildCache: number;
+  volumesUnused: number;
+  volumesUnusedCount: number;
+}
+
+/** `docker system df` through the socket: what `docker system prune` would reclaim. */
+export async function dockerDiskUsage(): Promise<DockerDiskUsage | null> {
+  if (cfg.demo) return { imagesTotal: 6.1 * 1024 ** 3, imagesUnused: 2.3 * 1024 ** 3, imagesUnusedCount: 4, buildCache: 1.1 * 1024 ** 3, volumesUnused: 420 * 1024 ** 2, volumesUnusedCount: 2 };
+  if (!dockerAvailable()) return null;
+  try {
+    const df = (await docker().df()) as {
+      Images?: { Size: number; SharedSize: number; Containers: number }[];
+      BuildCache?: { Size: number; InUse: boolean }[];
+      Volumes?: { UsageData?: { Size: number; RefCount: number } }[];
+    };
+    const images = df.Images ?? [];
+    const unused = images.filter((i) => i.Containers === 0);
+    const volumes = (df.Volumes ?? []).filter((v) => v.UsageData && v.UsageData.RefCount === 0);
+    return {
+      imagesTotal: images.reduce((s, i) => s + i.Size, 0),
+      imagesUnused: unused.reduce((s, i) => s + Math.max(0, i.Size - i.SharedSize), 0),
+      imagesUnusedCount: unused.length,
+      buildCache: (df.BuildCache ?? []).filter((b) => !b.InUse).reduce((s, b) => s + b.Size, 0),
+      volumesUnused: volumes.reduce((s, v) => s + (v.UsageData?.Size ?? 0), 0),
+      volumesUnusedCount: volumes.length,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function dockerAvailable(): boolean {
   if (cfg.demo) return true;
   try {

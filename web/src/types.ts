@@ -194,6 +194,57 @@ export interface StoragePayload {
   refreshing: boolean;
 }
 
+export interface TreeEntry {
+  name: string;
+  path: string;
+  bytes: number;
+  kind: "dir" | "file" | "files";
+}
+
+export interface StorageTreePayload {
+  path: string;
+  parent: string | null;
+  measuring: boolean;
+  measuredAt: string | null;
+  totalBytes: number | null;
+  entries: TreeEntry[];
+  partial: boolean;
+  mount: { mount: string; totalBytes: number; usedBytes: number } | null;
+  error?: string;
+}
+
+export interface LargestFile {
+  path: string;
+  bytes: number;
+  modified: string | null;
+}
+
+export interface LargestPayload {
+  path: string;
+  measuring: boolean;
+  measuredAt: string | null;
+  minBytes: number;
+  files: LargestFile[];
+  partial: boolean;
+  error?: string;
+}
+
+export interface ReclaimItem {
+  id: string;
+  label: string;
+  bytes: number | null;
+  detail: string;
+  command: string | null;
+  actionable: boolean;
+}
+
+export interface ReclaimPayload {
+  items: ReclaimItem[];
+  totalBytes: number;
+  measuring: boolean;
+  measuredAt: string | null;
+}
+
 export interface TailscalePeer {
   hostName: string;
   dnsName: string;

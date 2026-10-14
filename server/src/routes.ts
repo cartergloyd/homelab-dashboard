@@ -14,7 +14,7 @@ import { pgStats } from "./services/postgres.js";
 import { getPlayers, minecraftAction, minecraftCommand, minecraftStatus } from "./services/minecraft.js";
 import * as sched from "./services/scheduler.js";
 import { deleteBackup, listBackups, runBackup } from "./services/backups.js";
-import { filesystems, refreshFolders, storage } from "./services/storage.js";
+import { filesystems, largestFiles, reclaimable, refreshFolders, storage, storageTree } from "./services/storage.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -401,6 +401,20 @@ api.get("/storage", async (_req, res) => {
 api.post("/storage/refresh", async (_req, res) => {
   void refreshFolders();
   res.status(202).json({ ok: true });
+});
+
+// Storage explorer (issue #4). `du` runs in the background; GET returns
+// `measuring: true` until the result is cached, so clients poll.
+api.get("/storage/tree", async (req, res) => {
+  res.json(await storageTree(str(req.query.path) || "/", req.query.refresh === "1"));
+});
+
+api.get("/storage/largest", async (req, res) => {
+  res.json(await largestFiles(str(req.query.path) || "/", Math.min(200, Number(req.query.limit) || 50), req.query.refresh === "1"));
+});
+
+api.get("/storage/reclaim", async (req, res) => {
+  res.json(await reclaimable(req.query.refresh === "1"));
 });
 
 api.get("/tailscale", async (_req, res) => {

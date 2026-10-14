@@ -127,6 +127,12 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       line-by-line (PYTHONUNBUFFERED) and survives an unreachable dashboard
 - [x] Codex registration syntax verified against developers.openai.com/codex/mcp
       (`codex mcp add <name> --env K=V -- <cmd>`; `[mcp_servers.<name>]` in config.toml)
+- [x] Issue #4 storage explorer (System → Storage): TreeSize-style drill-down of any
+      folder (`du -x -d 1` in the background, cached, polled), largest files under a path
+      (`find -printf`), and a "Reclaimable space" report (Docker df via the socket,
+      journald, apt, snap revisions, dashboard backups past retention, Minecraft log
+      archives, trash, tmp, core dumps) with display-only commands; MCP tools
+      `storage_tree`, `storage_largest`, `storage_reclaim`; Dashboard shows the total.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [ ] **Step 7** (optional, off by default) auto-triage via headless `claude -p`
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -215,6 +221,19 @@ override the placeholders wherever they conflict:
 - 2026-10-13 The audit/discover tools probe unknown paths only through `find` child
   processes with hard timeouts; a direct fs call on a dead mount (autofs/NFS) parks a
   Node I/O thread forever and the process can never exit — seen on the dev Mac's `/home`.
+- 2026-10-14 **The storage explorer never deletes.** Reclaimable-space items carry the
+  shell command a human (or an agent with its own shell) would run; the dashboard only
+  measures. Folders the service user cannot read show as lower bounds with a notice —
+  no sudo rule for `du`/`find` (find -exec would be root code execution).
+- 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
+  at `/home/gold/server-platform/homelab-dashboard-src`, its env at
+  `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or
+  set `HOMELAB_ENV_FILE`); `.mcp.json` on main hard-codes those paths; there is a
+  `SYSTEMD_USER` flag in config (unused so far — if Paper runs as a *user* unit,
+  `systemctl --user` is needed and the sudo rules don't apply); a qBittorrent link
+  (`QBITTORRENT_PUBLIC_URL`) exists; a dashboard-launched agent runner
+  (`services/agentRunner.ts`, `codex exec` / `claude -p` with cwd `/home/gold/Minecraft
+  Server`) was added as an interim step toward issue #5.
 
 ## How to run & verify
 

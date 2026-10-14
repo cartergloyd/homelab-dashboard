@@ -362,6 +362,19 @@ if you quote in the right place:
 All read `/etc/homelab-dashboard.env` (override with `--env FILE`). None of them ever
 edits a timer, a crontab or a script — they print; you apply.
 
+## 6f. Storage explorer (System → Storage)
+
+Works with no configuration: `du -x -d 1` on whatever folder is opened (background,
+cached 10 min), `find -xdev -size +20M` for the largest files, and a reclaimable-space
+report (Docker via the socket, `journalctl --disk-usage`, apt cache, disabled snap
+revisions, dashboard-made backups past `BACKUP_KEEP`, `MC_DIR/logs`, trash, tmp, core
+dumps). Folders the service user cannot read show as **lower bounds** with a notice; the
+usual gap is `/var/lib/docker` and other users' home folders. Do **not** add a sudo rule
+for `du`/`find` to close that gap — `find -exec` as root is code execution. If the owner
+wants the full picture, make the service user a member of the groups that own those
+folders, or accept the lower bound. The report never deletes anything: each line carries
+the command to run by hand (or to hand to an agent that has its own shell).
+
 ## 6d. VPN tab
 
 The owner runs a VPN on this server with split-tunnel exceptions (at least Minecraft and

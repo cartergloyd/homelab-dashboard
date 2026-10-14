@@ -118,6 +118,28 @@ server.registerTool(
 server.registerTool("storage", { title: "Storage", description: "Filesystem usage (df) and measured folder sizes (du).", inputSchema: {} }, async () => text(await call("GET", "/api/storage")));
 
 server.registerTool(
+  "storage_tree",
+  {
+    title: "Storage explorer",
+    description: "TreeSize-style view of one folder: size of each sub-folder and the largest files directly in it, sorted by size, plus the disk it lives on. Returns measuring:true while du runs — call again in a few seconds. Drill down by calling it with a sub-folder path.",
+    inputSchema: { path: z.string().default("/") },
+  },
+  async ({ path: p }) => text(await call("GET", `/api/storage/tree?path=${encodeURIComponent(p)}`)),
+);
+
+server.registerTool(
+  "storage_largest",
+  { title: "Largest files", description: "The biggest files (>20 MB) under a path on the same filesystem, largest first. Returns measuring:true while find runs — call again shortly.", inputSchema: { path: z.string().default("/"), limit: z.number().int().min(1).max(200).default(50) } },
+  async ({ path: p, limit }) => text(await call("GET", `/api/storage/largest?path=${encodeURIComponent(p)}&limit=${limit}`)),
+);
+
+server.registerTool(
+  "storage_reclaim",
+  { title: "Reclaimable space", description: "Where space can be freed safely (unused Docker images/build cache/volumes, journald, apt cache, old snap revisions, old dashboard backups, Minecraft log archives, trash, tmp, core dumps) with the command a human would run. Nothing is deleted by this tool.", inputSchema: {} },
+  async () => text(await call("GET", "/api/storage/reclaim")),
+);
+
+server.registerTool(
   "vpn_status",
   { title: "VPN status", description: "Is the VPN up, provider/protocol, exit IP and location, handshake, DNS, and which services bypass it (Minecraft, Jellyfin, Tailscale…) with evidence and advice. Includes raw routing/firewall diagnostics.", inputSchema: {} },
   async () => text(await call("GET", "/api/vpn?refresh=1")),

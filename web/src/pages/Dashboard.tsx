@@ -5,6 +5,7 @@ import { useAppConfig } from "../App";
 import { Icons } from "../components/icons";
 import { ReportsCard } from "../components/ReportsCard";
 import { Card, ErrorNotice, Meter, PageHead, StatTile, StatusPill, useDialog, useToast } from "../components/ui";
+import { ReclaimHint } from "./Storage";
 import { fmtRelative } from "../format";
 import type { OverviewPayload } from "../types";
 
@@ -110,6 +111,7 @@ export function Dashboard() {
             {(d?.storage ?? []).map((f) => (
               <Meter key={f.mount} label={f.mount} used={f.usedBytes} total={f.totalBytes} />
             ))}
+            <ReclaimHint />
           </div>
         </Card>
       </div>
