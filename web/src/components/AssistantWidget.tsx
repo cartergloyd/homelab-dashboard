@@ -2,11 +2,11 @@
 // what it last did, problem counts, and the two doors — instructions/context
 // and the connect-an-agent snippet. It does not run a model itself.
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAppConfig } from "../App";
 import { fmtRelative } from "../format";
-import type { AgentPresence, AlertEvent, AlertSummary } from "../types";
+import type { AgentPresence, AgentRun, AgentRunner, AlertEvent, AlertSummary } from "../types";
 import { ContextModal } from "./ContextModal";
 import { Icons } from "./icons";
 import { Modal, StatusPill, useToast } from "./ui";
@@ -14,70 +14,74 @@ import { Modal, StatusPill, useToast } from "./ui";
 const ONLINE_MS = 5 * 60_000;
 
 function ConnectModal({ onClose }: { onClose: () => void }) {
-  const config = useAppConfig();
+  const qc = useQueryClient();
   const toast = useToast();
-  const [reveal, setReveal] = useState(false);
-  const key = config.data?.dashboardKey;
-  const mask = (k: string) => (reveal ? k : `${k.slice(0, 4)}…${k.slice(-4)}`);
-  const shownKey = key ? mask(key) : "<DASHBOARD_KEY>";
-  // real path reported by the server, so the snippet is right wherever the repo was installed
-  const node = config.data?.mcpScript ?? "/opt/homelab-dashboard/server/dist/mcp.js";
-  const snippets = [
-    {
-      title: "Claude Code — from this device over Tailscale",
-      cmd: `claude mcp add homelab -e HOMELAB_URL=${location.origin} -e HOMELAB_KEY=${shownKey} -- node ${node}`,
-      raw: `claude mcp add homelab -e HOMELAB_URL=${location.origin} -e HOMELAB_KEY=${key ?? "<DASHBOARD_KEY>"} -- node ${node}`,
+  const [runner, setRunner] = useState<AgentRunner>("codex");
+  const [task, setTask] = useState(
+    "Review recent Live server alerts, read the Minecraft instructions and context, investigate anything broken, make safe repairs, and submit a maintenance report.",
+  );
+  const runs = useQuery({ queryKey: ["agents", "runs"], queryFn: () => api.get<AgentRun[]>("/agents/runs?limit=5"), refetchInterval: 5000 });
+  const running = runs.data?.find((r) => r.status === "running");
+  const launch = useMutation({
+    mutationFn: () => api.post<AgentRun>("/agents/launch", { runner, task }),
+    onSuccess: () => {
+      toast("Agent launched");
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+      qc.invalidateQueries({ queryKey: ["agents", "runs"] });
     },
-    {
-      title: "Claude Code — in a shell on the server itself",
-      cmd: `claude mcp add homelab -e HOMELAB_URL=http://127.0.0.1:3000 -e HOMELAB_KEY=${shownKey} -- node ${node}`,
-      raw: `claude mcp add homelab -e HOMELAB_URL=http://127.0.0.1:3000 -e HOMELAB_KEY=${key ?? "<DASHBOARD_KEY>"} -- node ${node}`,
-    },
-    {
-      title: "Codex CLI (check against current Codex docs)",
-      cmd: `codex mcp add homelab --env HOMELAB_URL=${location.origin} --env HOMELAB_KEY=${shownKey} -- node ${node}`,
-      raw: `codex mcp add homelab --env HOMELAB_URL=${location.origin} --env HOMELAB_KEY=${key ?? "<DASHBOARD_KEY>"} -- node ${node}`,
-    },
-  ];
-  const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast("Copied"), () => toast("Could not copy", "error"));
+    onError: (e: Error) => toast(e.message, "error"),
+  });
 
   return (
-    <Modal title="Connect an agent" onClose={onClose} wide>
+    <Modal title="Launch an agent" onClose={onClose} wide>
       <div className="stack">
-        <p className="dim small" style={{ margin: 0 }}>
-          Agents run in <strong>your own terminal</strong> on the Claude or Codex subscription you already have — no API keys. Paste one line once; after that the agent has tools to read this feed, tail logs, send RCON commands, restart Minecraft, run your scripts and update its instructions. Everything it does appears in the feed.
-        </p>
-        {!key && <div className="notice">DASHBOARD_KEY is not set on the server, so the connector can't authenticate yet. Add it to /etc/homelab-dashboard.env (see SERVER_SETUP.md).</div>}
-        <div className="row">
-          <span className="small dim">Dashboard key:</span>
-          <code className="mono small">{key ? mask(key) : "—"}</code>
-          {key && (
-            <>
-              <button className="btn sm ghost" onClick={() => setReveal((r) => !r)}>
-                {reveal ? "Hide" : "Reveal"}
-              </button>
-              <button className="btn sm ghost" onClick={() => copy(key)}>
-                Copy key
-              </button>
-            </>
-          )}
+        <div className="notice">
+          This starts a signed-in terminal agent on the server with `/home/gold/Minecraft Server` as its workspace. Output and actions appear in Live server alerts.
         </div>
-        {snippets.map((s) => (
-          <div key={s.title}>
-            <div className="row spread" style={{ marginBottom: 4 }}>
-              <span className="small" style={{ fontWeight: 500 }}>
-                {s.title}
-              </span>
-              <button className="btn sm ghost" onClick={() => copy(s.raw)}>
-                Copy
-              </button>
-            </div>
-            <pre className="code">{s.cmd}</pre>
+        <div className="form-grid">
+          <label className="field">
+            Agent
+            <select className="input" value={runner} onChange={(e) => setRunner(e.target.value as AgentRunner)} disabled={!!running || launch.isPending}>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+            </select>
+          </label>
+          <label className="field">
+            Workspace
+            <input className="input mono" value="/home/gold/Minecraft Server" readOnly />
+          </label>
+        </div>
+        <label className="field">
+          Task
+          <textarea className="input" rows={5} value={task} onChange={(e) => setTask(e.target.value)} disabled={!!running || launch.isPending} />
+        </label>
+        {running && (
+          <div className="notice">
+            {running.runner} is already running: {running.task}
           </div>
-        ))}
-        <p className="muted small" style={{ margin: 0 }}>
-          The node path is where this dashboard is installed on the server. Running the connector from another device needs the repo cloned there too, or wrap it as <code className="mono">ssh homeserver node {node}</code>.
-        </p>
+        )}
+        <div className="row spread">
+          <span className="muted small">The agent must already be logged in on this server. If not, the run will fail in the feed with the login message.</span>
+          <button className="btn primary" disabled={!!running || launch.isPending || !task.trim()} onClick={() => launch.mutate()}>
+            <Icons.play width={14} height={14} /> Launch agent
+          </button>
+        </div>
+        {!!runs.data?.length && (
+          <div className="stack" style={{ gap: 4 }}>
+            <h3 style={{ margin: "4px 0" }}>Recent launches</h3>
+            {runs.data.map((r) => (
+              <div key={r.id} className="small row spread agent-run-row">
+                <span>
+                  <span className="badge">{r.runner}</span> {r.status} · {r.lines} lines · {fmtRelative(r.startedAt)}
+                </span>
+                <span className="muted truncate" title={r.task}>
+                  {r.task}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Modal>
   );
@@ -103,7 +107,7 @@ export function AssistantWidget() {
         <StatusPill state={connected ? "ok" : agent ? "degraded" : "unavailable"} label={connected ? `Connected · ${agent.name}` : agent ? `Idle · ${agent.name}` : "No agent connected"} />
       </div>
       <div className="muted small" style={{ marginTop: -6, marginBottom: 12 }}>
-        {agent ? `Last seen ${fmtRelative(agent.lastSeen)} · ${agent.actions} action${agent.actions === 1 ? "" : "s"}` : "Connect Claude Code or Codex from your terminal to let it watch and act."}
+        {agent ? `Last seen ${fmtRelative(agent.lastSeen)} · ${agent.actions} action${agent.actions === 1 ? "" : "s"}` : "Launch Codex or Claude Code to review alerts, repair issues, and file reports."}
       </div>
 
       <div className="mini-stats">
@@ -157,7 +161,7 @@ export function AssistantWidget() {
           <Icons.file width={14} height={14} /> Instructions &amp; context
         </button>
         <button className="btn primary" onClick={() => setModal("connect")}>
-          <Icons.plug width={14} height={14} /> Connect an agent
+          <Icons.plug width={14} height={14} /> Launch an agent
         </button>
       </div>
 
