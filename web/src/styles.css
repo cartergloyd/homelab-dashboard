@@ -1170,6 +1170,7 @@ table.table {
 }
 .ev-inc {
   flex: none;
+  white-space: nowrap;
   font-size: 10px;
   padding: 0 5px;
   border-radius: 999px;
