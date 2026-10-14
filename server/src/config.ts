@@ -105,6 +105,18 @@ const Env = z.object({
   DISK_SCAN_INTERVAL_HOURS: z.coerce.number().min(0).max(720).default(24),
   // extra exclude patterns handed to the scanner (ncdu --exclude / gdu --ignore-dirs-pattern / du --exclude)
   DISK_SCAN_EXCLUDE: csv,
+
+  // Staged updates widget (Minecraft tab). [INSTALLER] PLACEHOLDER: where the update-fetch
+  // job puts new Paper/plugin jars before the restart applies them. Unset = look in the
+  // usual places (plugins/update, updates, staged, staging under MC_DIR).
+  UPDATE_STAGING_DIR: z.string().optional(),
+  // Where to look upstream for each plugin: "EssentialsX=modrinth:essentialsx,Chunky=hangar:pop4959/Chunky,Vault=github:MilkBowl/Vault,Foo=none"
+  PLUGIN_SOURCES: csv,
+  // query PaperMC / Modrinth / Hangar / GitHub for latest versions (default on; 0 to disable)
+  UPDATE_CHECK: z
+    .string()
+    .optional()
+    .transform((v) => v === undefined || v === "1" || v === "true"),
 });
 
 const env = Env.parse(process.env);
@@ -197,6 +209,16 @@ export const cfg = {
     roots: splitPaths(env.DISK_SCAN_ROOTS.join(",")),
     intervalHours: env.DISK_SCAN_INTERVAL_HOURS,
     exclude: env.DISK_SCAN_EXCLUDE,
+  },
+  updates: {
+    stagingDir: env.UPDATE_STAGING_DIR ? path.resolve(env.UPDATE_STAGING_DIR.replace(/^["']|["']$/g, "")) : null,
+    sources: Object.fromEntries(
+      env.PLUGIN_SOURCES.map((item) => {
+        const i = item.indexOf("=");
+        return i > 0 ? [item.slice(0, i).trim().toLowerCase(), item.slice(i + 1).trim()] : [item.trim().toLowerCase(), "none"];
+      }),
+    ) as Record<string, string>,
+    check: env.UPDATE_CHECK,
   },
   explicit: {
     mediaRoots: env.MEDIA_ROOTS.length > 0,

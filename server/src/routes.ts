@@ -16,6 +16,7 @@ import * as sched from "./services/scheduler.js";
 import { deleteBackup, listBackups, runBackup } from "./services/backups.js";
 import { filesystems, reclaimable, refreshFolders, storage } from "./services/storage.js";
 import { cancelScan, dirView, overview as scanOverview, startScan, topFiles } from "./services/diskscan.js";
+import { stagedUpdates } from "./services/updates.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -390,9 +391,9 @@ api.get("/reports", (req, res) => {
 });
 
 api.post("/reports", async (req, res) => {
-  const body = z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(8000), incidentId: z.string().trim().max(40).optional(), runId: z.string().trim().max(60).optional() }).parse(req.body);
+  const body = z.object({ title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(8000), incidentId: z.string().trim().max(40).optional(), runId: z.string().trim().max(60).optional(), outcome: z.enum(["fixed", "no-action", "needs-human"]).optional() }).parse(req.body);
   const u = user(res);
-  res.status(201).json(await addReport(u.viaKey ? u.name : u.name || u.login, body.title, body.body, { incidentId: body.incidentId ?? null, runId: body.runId ?? null }));
+  res.status(201).json(await addReport(u.viaKey ? u.name : u.name || u.login, body.title, body.body, { incidentId: body.incidentId ?? null, runId: body.runId ?? null, outcome: body.outcome ?? null }));
 });
 
 // ---- assistant sidecar (issue #5) ---------------------------------------------
@@ -450,6 +451,11 @@ api.post("/sidecar/incidents/:id/dismiss", (req, res) => {
 api.post("/sidecar/incidents/:id/resolve", (req, res) => {
   const { note } = z.object({ note: z.string().max(300).optional() }).parse(req.body ?? {});
   res.json(sidecar.resolveIncident(String(req.params.id), user(res).name, note));
+});
+
+/** Incidents the agent reported on, with what it did — the Repairs list behind the Assistant tile. */
+api.get("/sidecar/repairs", (req, res) => {
+  res.json(sidecar.repairs(Math.min(300, Number(req.query.limit) || 100)));
 });
 
 api.get("/sidecar/approvals", (req, res) => {
@@ -514,6 +520,11 @@ api.get("/storage/scan/dir", (req, res) => {
 
 api.get("/storage/scan/top", (req, res) => {
   res.json(topFiles(str(req.query.path) || "/", Math.min(200, Number(req.query.limit) || 40), str(req.query.root) || undefined));
+});
+
+// Staged update widget: installed vs staged vs upstream Paper/plugin versions (read-only).
+api.get("/updates", async (req, res) => {
+  res.json(await stagedUpdates(req.query.refresh === "1"));
 });
 
 api.get("/storage/reclaim", async (req, res) => {

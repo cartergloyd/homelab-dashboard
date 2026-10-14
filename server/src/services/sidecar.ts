@@ -10,10 +10,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
-import type { AgentRun, AgentRunner, AlertEvent, Approval, ConversationTurn, Incident, SidecarPayload, SidecarPhase, SidecarSettings, SidecarState } from "../types.js";
+import type { AgentRun, AgentRunner, AlertEvent, Approval, ConversationTurn, Incident, RepairsPayload, ReportOutcome, SidecarPayload, SidecarPhase, SidecarSettings, SidecarState } from "../types.js";
 import { RUNNER_NAME, currentRun, launchRun, listAgentRuns, runnerAvailable, type LaunchOptions } from "./agentRunner.js";
-import { publish, subscribe } from "./alerts.js";
-import { addReport, onReport } from "./reports.js";
+import { publish, query, subscribe } from "./alerts.js";
+import { addReport, getReport, onReport } from "./reports.js";
 
 interface Identity {
   viaKey?: boolean;
@@ -173,6 +173,7 @@ function onEvent(e: AlertEvent): void {
     reportIds: [],
     approvalIds: [],
     note: null,
+    outcome: null,
   };
   incidents.unshift(inc);
   if (incidents.length > 500) incidents.splice(500);
@@ -221,7 +222,7 @@ const RULES = `Rules:
 - Start with read_instructions, then get_alerts (problemsOnly, sinceMinutes=120) and server_status.
 - Keep file edits inside the workspace. Prefer the dashboard's tools (minecraft_rcon, run_script, run_backup, list_jobs) over hand-rolled commands.
 - Before restarting/stopping the server or any destructive RCON command (stop, ban, op, deop, kill, whitelist off) call request_approval(action, reason) and then STOP and end your turn. The dashboard asks the owner and resumes you with the decision; do not wait or poll.
-- Finish every investigation with submit_report(incidentId=…): what happened, what you did, when and why, what a human should decide, and any suggested changes to the instructions. If nothing needs doing, still file a short report saying so.
+- Finish every investigation with submit_report(incidentId=…, outcome=…): what happened, what you did, when and why, what a human should decide, and any suggested changes to the instructions. outcome is "fixed" when you changed or repaired something, "no-action" when you checked and left it alone, "needs-human" when the owner must decide. If nothing needs doing, still file a short report saying so.
 - append_instructions only for durable lessons about this server.`;
 
 function incidentPrompt(inc: Incident, continuation?: string): string {
@@ -280,12 +281,12 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
       await sleep(1400);
       emit("→ server_status()");
       say("Restarted the server with your approval. It came back in 31 s; TPS is 20.0 and all three players reconnected.");
-      await addReport(name, `Restarted after: ${inc.title}`, `Summary: ${inc.title} (${inc.count}× since ${inc.firstSeen.slice(11, 16)}). A restart was the smallest safe fix.\n\nActions taken:\n- Warned players over RCON, restarted via systemd (approved by the owner at ${new Date().toLocaleTimeString()}).\n- Verified TPS 20.0 and memory 2.4 GB after restart.\n\nFollow-up for a human:\n- If this recurs, check the plugin stack trace in logs/latest.log and consider updating the plugin.`, { incidentId: inc.id, runId });
+      await addReport(name, `Restarted after: ${inc.title}`, `Summary: ${inc.title} (${inc.count}× since ${inc.firstSeen.slice(11, 16)}). A restart was the smallest safe fix.\n\nActions taken:\n- Warned players over RCON, restarted via systemd (approved by the owner at ${new Date().toLocaleTimeString()}).\n- Verified TPS 20.0 and memory 2.4 GB after restart.\n\nFollow-up for a human:\n- If this recurs, check the plugin stack trace in logs/latest.log and consider updating the plugin.`, { incidentId: inc.id, runId, outcome: "fixed" });
       return 0;
     }
     if (continuation?.includes("DENIED")) {
       say("Understood — not restarting. The error has not repeated in the last 10 minutes and TPS is normal, so I left it and noted it for you.");
-      await addReport(name, `Observed, no restart: ${inc.title}`, `Summary: ${inc.title}. A restart was proposed and declined by the owner.\n\nActions taken:\n- None beyond investigation.\n\nFollow-up for a human:\n- Watch for recurrence; the stack trace is in logs/latest.log.`, { incidentId: inc.id, runId });
+      await addReport(name, `Observed, no restart: ${inc.title}`, `Summary: ${inc.title}. A restart was proposed and declined by the owner.\n\nActions taken:\n- None beyond investigation.\n\nFollow-up for a human:\n- Watch for recurrence; the stack trace is in logs/latest.log.`, { incidentId: inc.id, runId, outcome: "needs-human" });
       return 0;
     }
     emit("→ server_status()");
@@ -300,7 +301,7 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
       return 0;
     }
     say(`Looked into "${inc.title.slice(0, 80)}": it happened ${inc.count} time(s) and the server recovered on its own (TPS 20.0, no further errors). No action needed.`);
-    await addReport(name, `No action needed: ${inc.title.slice(0, 80)}`, `Summary: ${inc.title} — transient, recovered without intervention.\n\nActions taken:\n- Checked tps, server_status and the last 2 hours of alerts.\n\nFollow-up for a human:\n- None.`, { incidentId: inc.id, runId });
+    await addReport(name, `No action needed: ${inc.title.slice(0, 80)}`, `Summary: ${inc.title} — transient, recovered without intervention.\n\nActions taken:\n- Checked tps, server_status and the last 2 hours of alerts.\n\nFollow-up for a human:\n- None.`, { incidentId: inc.id, runId, outcome: "no-action" });
     return 0;
   };
 }
@@ -601,6 +602,28 @@ function stateView(): SidecarState {
   return { phase, since: phaseSince, detail: phaseDetail, currentIncidentId: current.incidentId, currentRunId: current.runId, queue: [...queue], lastRun: listAgentRuns(1)[0] ?? null, runnerAvailable: runnerOk.ok, runnerNote: runnerOk.note };
 }
 
+/** Everything the agent did about each incident it reported on — the "Repairs" list. */
+export function repairs(limit = 100): RepairsPayload {
+  const reported = incidents.filter((i) => i.reportIds.length > 0).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+  const feed = query({ sources: ["agent", "dashboard"], limit: 5000 });
+  const runs = listAgentRuns(50);
+  const items = reported.slice(0, limit).map((inc) => ({
+    incident: inc,
+    reports: inc.reportIds.map((id) => getReport(id)).filter((r): r is NonNullable<typeof r> => !!r),
+    approvals: approvals.filter((a) => a.incidentId === inc.id),
+    actions: feed
+      .filter((e) => e.meta?.incidentId === inc.id && !e.text.startsWith("New incident") && (e.source === "dashboard" || /: (→ |launched|resuming|investigating|exited|asks for approval|filed a report)/.test(e.text)))
+      .map((e) => ({ ts: e.ts, text: e.text.replace(/^[^:]+: /, "") })),
+    runs: runs.filter((r) => r.incidentId === inc.id),
+  }));
+  return {
+    repaired: reported.filter((i) => i.outcome === "fixed").length,
+    checked: reported.filter((i) => i.outcome === "no-action" || i.outcome === null).length,
+    needsHuman: reported.filter((i) => i.outcome === "needs-human").length,
+    items,
+  };
+}
+
 export function getPayload(): SidecarPayload {
   return { settings, state: stateView(), incidents: listIncidents(), approvals: listApprovals() };
 }
@@ -622,6 +645,7 @@ export async function initSidecar(): Promise<void> {
   }
   // a run interrupted by a dashboard restart never finished
   for (const inc of incidents) {
+    inc.outcome ??= inc.reportIds.length ? (getReport(inc.reportIds[inc.reportIds.length - 1])?.outcome ?? null) : null;
     if (inc.status === "investigating") {
       inc.status = "open";
       inc.note = "The dashboard restarted during the investigation.";
@@ -635,6 +659,9 @@ export async function initSidecar(): Promise<void> {
     if (!inc) return;
     inc.reportIds.push(r.id);
     if (!r.incidentId) r.incidentId = inc.id;
+    // the strongest outcome wins: a fix stays a fix even if a later report only observes
+    const rank: Record<ReportOutcome, number> = { "no-action": 1, "needs-human": 2, fixed: 3 };
+    if (r.outcome && (!inc.outcome || rank[r.outcome] > rank[inc.outcome])) inc.outcome = r.outcome;
     void persistIncidents();
   });
   subscribe(onEvent);

@@ -154,6 +154,16 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       phases off/idle/queued/investigating/waiting-approval/acting/failed. Demo mode runs a
       simulated agent so the whole loop can be watched ("Simulate incident").
       MCP: `request_approval`, `list_incidents`, `get_incident`; `submit_report(incidentId)`.
+- [x] Assistant tile "repairs by the agent": reports carry an `outcome` (fixed / no-action /
+      needs-human; inferred from wording when the agent omits it), incidents inherit the
+      strongest outcome, `GET /api/sidecar/repairs` lists each reported incident with the
+      agent's tool calls, approvals and reports; the tile counts `fixed` and opens the list.
+- [x] "Staged update" card on the Minecraft tab (`services/updates.ts`): installed Paper build
+      and plugin versions read from the jars (own zip reader → plugin.yml / paper-plugin.yml),
+      staged jars in `UPDATE_STAGING_DIR` (or plugins/update, updates, staged, staging),
+      latest upstream with release dates (PaperMC, Modrinth, Hangar, GitHub; `PLUGIN_SOURCES`
+      maps names; `UPDATE_CHECK=0` disables), next apply job, last fetch. MCP `staged_updates`.
+      Tests: `server/test-updates.mjs`.
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)

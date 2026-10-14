@@ -9,7 +9,7 @@ import { api } from "../api";
 import { useAppConfig } from "../App";
 import { selectAlert, useSelectedAlert } from "../alertSelection";
 import { fmtDateTime, fmtRelative } from "../format";
-import type { AgentRun, AgentRunner, AlertSummary, ConversationTurn, Incident, SidecarPayload, SidecarPhase, SidecarSettings } from "../types";
+import type { AgentRun, AgentRunner, AlertSummary, ConversationTurn, Incident, RepairItem, RepairsPayload, SidecarPayload, SidecarPhase, SidecarSettings } from "../types";
 import { ContextModal } from "./ContextModal";
 import { Icons } from "./icons";
 import { Modal, StatusPill, useDialog, useToast } from "./ui";
@@ -161,12 +161,133 @@ function SettingsModal({ payload, onClose }: { payload: SidecarPayload; onClose:
   );
 }
 
+const OUTCOME: Record<string, { label: string; state: string }> = {
+  fixed: { label: "repaired", state: "ok" },
+  "no-action": { label: "checked, no change", state: "unavailable" },
+  "needs-human": { label: "needs a human", state: "degraded" },
+};
+
+function RepairsModal({ onClose }: { onClose: () => void }) {
+  const [filter, setFilter] = useState<"fixed" | "all">("fixed");
+  const [open, setOpen] = useState<string | null>(null);
+  const q = useQuery({ queryKey: ["sidecar", "repairs"], queryFn: () => api.get<RepairsPayload>("/sidecar/repairs?limit=200"), refetchInterval: 10_000 });
+  const d = q.data;
+  const items = (d?.items ?? []).filter((it) => filter === "all" || it.incident.outcome === "fixed");
+  const span = (it: RepairItem) => (it.incident.firstSeen === it.incident.lastSeen ? fmtDateTime(it.incident.firstSeen) : `${fmtDateTime(it.incident.firstSeen)} → ${fmtDateTime(it.incident.lastSeen)}`);
+  return (
+    <Modal title="Repairs by the assistant" onClose={onClose} wide>
+      <div className="stack">
+        <p className="muted small" style={{ margin: 0 }}>
+          Every incident the agent reported on, newest first. <strong>Repaired</strong> means its report says it changed or fixed something; <strong>checked</strong> means it looked and left things alone; <strong>needs a human</strong> means it stopped for your decision. Each entry shows what happened, what the agent did, the approvals involved, and its report.
+        </p>
+        <div className="row" style={{ gap: 6 }}>
+          <button className={`btn sm ${filter === "fixed" ? "primary" : "ghost"}`} onClick={() => setFilter("fixed")}>
+            Repaired ({d?.repaired ?? "–"})
+          </button>
+          <button className={`btn sm ${filter === "all" ? "primary" : "ghost"}`} onClick={() => setFilter("all")}>
+            All reported ({d ? d.repaired + d.checked + d.needsHuman : "–"})
+          </button>
+          <span className="muted small" style={{ marginLeft: "auto" }}>
+            {d ? `${d.checked} checked · ${d.needsHuman} waiting on you` : ""}
+          </span>
+        </div>
+        {q.error && <div className="notice error">{(q.error as Error).message}</div>}
+        {d && items.length === 0 && <div className="muted small">{filter === "fixed" ? "No repairs yet. When the agent fixes something and files a report with outcome “fixed”, it appears here." : "Nothing reported yet."}</div>}
+        <div className="stack" style={{ gap: 8 }}>
+          {items.map((it) => {
+            const inc = it.incident;
+            const o = OUTCOME[inc.outcome ?? "no-action"];
+            const expanded = open === inc.id;
+            return (
+              <div key={inc.id} className="repair">
+                <div className="row spread" style={{ flexWrap: "nowrap", alignItems: "flex-start", gap: 10 }}>
+                  <div className="truncate">
+                    <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                      <StatusPill state={o.state} label={o.label} />
+                      <span className="mono muted small">#{inc.id}</span>
+                      <span className="truncate" style={{ fontWeight: 600 }} title={inc.title}>
+                        {inc.title}
+                      </span>
+                    </div>
+                    <div className="muted small">
+                      {inc.count}× · {span(it)} · {inc.source} · {it.runs.length || inc.runIds.length} run{(it.runs.length || inc.runIds.length) === 1 ? "" : "s"}
+                      {it.approvals.length > 0 && ` · ${it.approvals.filter((a) => a.status === "approved" || a.status === "consumed").length} approved / ${it.approvals.filter((a) => a.status === "denied").length} denied`}
+                    </div>
+                  </div>
+                  <button className="btn sm ghost" onClick={() => setOpen(expanded ? null : inc.id)}>
+                    {expanded ? "Hide details" : "Details"}
+                  </button>
+                </div>
+                {expanded && (
+                  <div className="stack" style={{ gap: 10, marginTop: 10 }}>
+                    <div>
+                      <div className="small" style={{ fontWeight: 600 }}>
+                        What happened
+                      </div>
+                      <pre className="repair-pre">{inc.samples.slice(-6).join("\n")}</pre>
+                    </div>
+                    <div>
+                      <div className="small" style={{ fontWeight: 600 }}>
+                        What the agent did
+                      </div>
+                      {it.actions.length ? (
+                        <div className="stack" style={{ gap: 2 }}>
+                          {it.actions.map((a, i) => (
+                            <div key={i} className="small row" style={{ gap: 8, flexWrap: "nowrap" }}>
+                              <span className="muted nowrap mono">{a.ts.slice(11, 19)}</span>
+                              <span className="truncate" title={a.text}>
+                                {a.text}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="muted small">No tool calls were recorded for this incident (older than the feed history).</div>
+                      )}
+                    </div>
+                    {it.approvals.length > 0 && (
+                      <div>
+                        <div className="small" style={{ fontWeight: 600 }}>
+                          Approvals
+                        </div>
+                        {it.approvals.map((a) => (
+                          <div key={a.id} className="small">
+                            <span className="mono">{a.action}</span> — {a.reason} <span className="muted">· {a.status}{a.decidedBy ? ` by ${a.decidedBy} ${fmtRelative(a.decidedAt)}` : ""}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {it.reports.map((r) => (
+                      <div key={r.id} className="report">
+                        <div className="row spread" style={{ flexWrap: "nowrap" }}>
+                          <div className="truncate" style={{ fontWeight: 600 }} title={r.title}>
+                            {r.title}
+                          </div>
+                          <span className="muted small nowrap">
+                            {r.agent} · {fmtRelative(r.ts)}
+                            {r.reviewed ? " · reviewed" : ""}
+                          </span>
+                        </div>
+                        <div className="report-body">{r.body}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export function AssistantWidget() {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm } = useDialog();
   const config = useAppConfig();
-  const [modal, setModal] = useState<"context" | "settings" | null>(null);
+  const [modal, setModal] = useState<"context" | "settings" | "repairs" | null>(null);
   const [draft, setDraft] = useState("");
   const [showAll, setShowAll] = useState(false);
   const convoRef = useRef<HTMLDivElement>(null);
@@ -175,6 +296,7 @@ export function AssistantWidget() {
   const sidecar = useQuery({ queryKey: ["sidecar"], queryFn: () => api.get<SidecarPayload>("/sidecar"), refetchInterval: 3000 });
   const convo = useQuery({ queryKey: ["sidecar", "conversation"], queryFn: () => api.get<ConversationTurn[]>("/sidecar/conversation?limit=80"), refetchInterval: 3000 });
   const summary = useQuery({ queryKey: ["alerts", "summary"], queryFn: () => api.get<AlertSummary>("/alerts/summary"), refetchInterval: 10_000 });
+  const repairs = useQuery({ queryKey: ["sidecar", "repairs", "count"], queryFn: () => api.get<RepairsPayload>("/sidecar/repairs?limit=1"), refetchInterval: 10_000 });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["sidecar"] });
@@ -387,10 +509,19 @@ export function AssistantWidget() {
           </div>
           <div className="mini-label">problems, last hour</div>
         </div>
-        <div>
-          <div className="mini-value">{s ? s.maintenanceLastHour : "–"}</div>
-          <div className="mini-label">maintenance events</div>
-        </div>
+        <button type="button" className="mini-stat-btn" onClick={() => setModal("repairs")} title="Errors the agent fixed — click for the list and details">
+          <div className="mini-value" style={{ color: repairs.data?.repaired ? "var(--good-text)" : undefined }}>
+            {repairs.data ? repairs.data.repaired : "–"}
+          </div>
+          <div className="mini-label">
+            repairs by the agent <Icons.chevron width={10} height={10} />
+          </div>
+          {repairs.data && repairs.data.checked + repairs.data.needsHuman > 0 && (
+            <div className="mini-label">
+              {repairs.data.checked} checked{repairs.data.needsHuman ? ` · ${repairs.data.needsHuman} need you` : ""}
+            </div>
+          )}
+        </button>
         <div>
           <div className="mini-value">{d ? active.length : "–"}</div>
           <div className="mini-label">incidents open</div>
@@ -414,6 +545,7 @@ export function AssistantWidget() {
 
       {modal === "context" && <ContextModal onClose={() => setModal(null)} />}
       {modal === "settings" && d && <SettingsModal payload={d} onClose={() => setModal(null)} />}
+      {modal === "repairs" && <RepairsModal onClose={() => setModal(null)} />}
     </section>
   );
 }

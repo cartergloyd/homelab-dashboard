@@ -17,7 +17,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "./config.js";
-import type { ReclaimPayload } from "./types.js";
+import type { ReclaimPayload, StagedUpdatePayload } from "./types.js";
 import type {
   ContainerInfo,
   DatabasePayload,
@@ -474,6 +474,34 @@ export function reclaim(): ReclaimPayload {
     { id: "varlog", label: "/var/log (all logs incl. journal)", bytes: 2.1 * GB, detail: "Rotated by logrotate. Use the explorer above to find any single log that grew.", command: null, actionable: false },
   ];
   return { items, totalBytes: items.filter((i) => i.actionable).reduce((s, i) => s + (i.bytes ?? 0), 0), measuring: false, measuredAt: new Date().toISOString() };
+}
+
+// ---- staged updates (Minecraft tab) --------------------------------------------
+// [DEMO] Fixed Paper/plugin versions and dates. On the server this comes from the jars
+// in MC_DIR, the staging folder and the PaperMC / Modrinth / Hangar APIs (see DEMO_INDEX.md).
+export function stagedUpdates(): StagedUpdatePayload {
+  const d = (daysAgo: number, h = 4) => new Date(Date.now() - daysAgo * 86_400_000 - h * 3_600_000).toISOString();
+  const mc = "/home/gold/Minecraft Server";
+  return {
+    items: [
+      { kind: "paper", name: "Paper", installed: { version: "1.21.4", build: 232, date: d(11), file: `${mc}/paper-1.21.4-232.jar`, mcVersion: "1.21.4" }, staged: { version: "1.21.4-240", build: 240, date: d(0, 3), file: `${mc}/plugins/update/paper-1.21.4-240.jar`, mcVersion: "1.21.4" }, latest: { version: "1.21.4-241", build: 241, date: d(0, 9), channel: "default", url: "https://papermc.io/downloads/paper", source: "papermc", mcVersion: "1.21.4" }, status: "staged", note: "Minecraft 1.21.5 is out; builds here track 1.21.4" },
+      { kind: "plugin", name: "EssentialsX", installed: { version: "2.21.0", date: d(40), file: `${mc}/plugins/EssentialsX-2.21.0.jar` }, staged: { version: "2.21.1", date: d(0, 3), file: `${mc}/plugins/update/EssentialsX-2.21.1.jar` }, latest: { version: "2.21.1", date: d(2), url: "https://modrinth.com/plugin/essentialsx", source: "modrinth" }, status: "staged", note: "by EssentialsX Team · api 1.21" },
+      { kind: "plugin", name: "LuckPerms", installed: { version: "5.4.141", date: d(60), file: `${mc}/plugins/LuckPerms-Bukkit-5.4.141.jar` }, staged: null, latest: { version: "5.4.150", date: d(5), url: "https://modrinth.com/plugin/luckperms", source: "modrinth" }, status: "update-available", note: "by Luck · api 1.13" },
+      { kind: "plugin", name: "Chunky", installed: { version: "1.4.28", date: d(90), file: `${mc}/plugins/Chunky-1.4.28.jar` }, staged: null, latest: { version: "1.4.28", date: d(120), url: "https://hangar.papermc.io/pop4959/Chunky", source: "hangar" }, status: "up-to-date", note: "by pop4959 · api 1.13" },
+      { kind: "plugin", name: "Vault", installed: { version: "1.7.3-b131", date: d(400), file: `${mc}/plugins/Vault.jar` }, staged: null, latest: { version: "1.7.3", date: d(900), url: "https://github.com/MilkBowl/Vault/releases", source: "github" }, status: "up-to-date", note: "by cereal, Sleaker · api 1.13" },
+      { kind: "plugin", name: "WorldEdit", installed: { version: "7.3.9", date: d(30), file: `${mc}/plugins/worldedit-bukkit-7.3.9.jar` }, staged: null, latest: { version: "7.3.10", date: d(1), url: "https://modrinth.com/plugin/worldedit", source: "modrinth" }, status: "update-available", note: "by EngineHub · api 1.13" },
+      { kind: "plugin", name: "spark", installed: { version: "1.10.119", date: d(30), file: `${mc}/plugins/spark-1.10.119-bukkit.jar` }, staged: null, latest: { version: "1.10.119", date: d(33), url: "https://modrinth.com/plugin/spark", source: "modrinth" }, status: "up-to-date", note: "by Luck · api 1.13" },
+      { kind: "plugin", name: "GoldsCustomEvents", installed: { version: "0.4.2", date: d(200), file: `${mc}/plugins/GoldsCustomEvents.jar` }, staged: null, latest: null, status: "unknown", note: "by gold · not found upstream — set PLUGIN_SOURCES" },
+    ],
+    mcVersion: "1.21.4",
+    newestMcVersion: "1.21.5",
+    stagingDirs: [{ path: `${mc}/plugins/update`, exists: true, files: 2 }],
+    nextApply: { job: "Semi-weekly world backup", at: new Date(Date.now() + 10 * 3_600_000).toISOString() },
+    lastFetch: d(0, 3),
+    checkedAt: new Date().toISOString(),
+    upstreamChecked: true,
+    notes: [],
+  };
 }
 
 // ---- tailscale -----------------------------------------------------------

@@ -188,6 +188,12 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "staged_updates",
+  { title: "Staged Paper / plugin updates", description: "Installed Paper build and every plugin's version (from the jars), what is staged in the update folder for the next restart, and the latest upstream release (PaperMC, Modrinth, Hangar, GitHub) with release dates; plus when the update/restart job runs next. Read-only.", inputSchema: { refresh: z.boolean().default(false).describe("re-read jars and re-query upstream now") } },
+  async ({ refresh }) => text(await call("GET", `/api/updates${refresh ? "?refresh=1" : ""}`)),
+);
+
 // ---- sidecar: incidents & approvals (issue #5) ---------------------------------------
 
 server.registerTool(
@@ -305,11 +311,12 @@ server.registerTool(
       followUp: z.string().max(2000).optional().describe("anything a human should decide or check"),
       contextSuggestions: z.string().max(2000).optional().describe("changes you suggest to the instructions & context file (not applied automatically)"),
       incidentId: z.string().max(40).optional().describe("the sidecar incident this report answers (from your prompt or list_incidents)"),
+      outcome: z.enum(["fixed", "no-action", "needs-human"]).optional().describe("fixed = you changed/repaired something; no-action = checked, left alone; needs-human = the owner must decide. Counted as a repair on the dashboard only when fixed."),
     },
   },
-  async ({ title, summary, actionsTaken, followUp, contextSuggestions, incidentId }) => {
+  async ({ title, summary, actionsTaken, followUp, contextSuggestions, incidentId, outcome }) => {
     const body = [`Summary: ${summary.trim()}`, actionsTaken ? `Actions taken:\n${actionsTaken.trim()}` : "", followUp ? `Follow-up for a human:\n${followUp.trim()}` : "", contextSuggestions ? `Suggested context updates:\n${contextSuggestions.trim()}` : ""].filter(Boolean).join("\n\n");
-    const r = await call<{ id: string }>("POST", "/api/reports", { title, body, incidentId });
+    const r = await call<{ id: string }>("POST", "/api/reports", { title, body, incidentId, outcome });
     return text(`Report filed (${r.id})${incidentId ? ` for incident #${incidentId}` : ""}.`);
   },
 );

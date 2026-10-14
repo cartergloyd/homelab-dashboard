@@ -1397,3 +1397,48 @@ table.table {
     height: 220px;
   }
 }
+
+/* ---- repairs tile + list -------------------------------------------------- */
+.mini-stat-btn {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.mini-stat-btn:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+}
+.mini-stat-btn:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.repair {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.repair-pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-radius: 6px;
+  font: 12px/1.45 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+
+/* ---- staged update table ---------------------------------------------------- */
+.table.updates td {
+  vertical-align: top;
+}
+.table.updates .paper-row td {
+  border-bottom: 2px solid var(--hairline);
+}

@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useAppConfig } from "../App";
 import { AlertsFeed } from "../components/AlertsFeed";
 import { AssistantWidget } from "../components/AssistantWidget";
+import { StagedUpdate } from "../components/StagedUpdate";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, PageHead, StatusPill, unitToState, useDialog, useToast } from "../components/ui";
 import { fmtBytes, fmtRelative, fmtUptime } from "../format";
@@ -191,6 +192,10 @@ export function Minecraft() {
             </div>
           )}
         </Card>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <StagedUpdate />
       </div>
     </>
   );

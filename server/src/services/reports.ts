@@ -5,7 +5,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
-import type { AgentReport } from "../types.js";
+import type { AgentReport, ReportOutcome } from "../types.js";
 import { publish } from "./alerts.js";
 
 const MAX = 200;
@@ -23,6 +23,8 @@ async function save(): Promise<void> {
 export async function initReports(): Promise<void> {
   try {
     reports = JSON.parse(await fsp.readFile(file(), "utf8")) as AgentReport[];
+    // reports filed before outcomes existed: guess from the wording
+    for (const r of reports) r.outcome ??= inferOutcome(r.title, r.body);
   } catch {
     reports = [];
     // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
@@ -38,6 +40,7 @@ export async function initReports(): Promise<void> {
         reviewedAt: null,
         incidentId: null,
         runId: null,
+        outcome: "no-action",
       });
       await save().catch(() => {});
     }
@@ -50,12 +53,25 @@ export function onReport(fn: (r: AgentReport) => void): () => void {
   return () => listeners.delete(fn);
 }
 
+export function getReport(id: string): AgentReport | undefined {
+  return reports.find((r) => r.id === id);
+}
+
 export function listReports(limit = 50, includeReviewed = true): AgentReport[] {
   return (includeReviewed ? reports : reports.filter((r) => !r.reviewed)).slice(0, limit);
 }
 
-export async function addReport(agent: string, title: string, body: string, link: { incidentId?: string | null; runId?: string | null } = {}): Promise<AgentReport> {
-  const report: AgentReport = { id: crypto.randomUUID(), ts: new Date().toISOString(), agent, title: title.trim(), body: body.trim(), reviewed: false, reviewedBy: null, reviewedAt: null, incidentId: link.incidentId ?? null, runId: link.runId ?? null };
+/** When an agent did not say, guess the outcome from the wording of its report. */
+export function inferOutcome(title: string, body: string): ReportOutcome {
+  const t = `${title}\n${body}`;
+  if (/\b(no action|nothing (to do|needed|was needed)|no change|left (it|as is)|transient|recovered on its own|observed, no)\b/i.test(t)) return "no-action";
+  if (/\b(needs? (a )?human|owner should|please decide|waiting for (the )?owner|declined|denied)\b/i.test(t)) return "needs-human";
+  if (/\b(restarted|fixed|repaired|removed|deleted|pruned|cleaned|updated|rotated|freed|replaced|patched|corrected|resolved|killed|whitelisted|unbanned|re-?enabled|re-?created)\b/i.test(t)) return "fixed";
+  return "no-action";
+}
+
+export async function addReport(agent: string, title: string, body: string, link: { incidentId?: string | null; runId?: string | null; outcome?: ReportOutcome | null } = {}): Promise<AgentReport> {
+  const report: AgentReport = { id: crypto.randomUUID(), ts: new Date().toISOString(), agent, title: title.trim(), body: body.trim(), reviewed: false, reviewedBy: null, reviewedAt: null, incidentId: link.incidentId ?? null, runId: link.runId ?? null, outcome: link.outcome ?? inferOutcome(title, body) };
   reports.unshift(report);
   for (const fn of listeners) {
     try {

@@ -423,6 +423,25 @@ a scan of `/` finishes, and drilling into `/home/gold/Minecraft Server` shows th
 The "Reclaimable space" card never deletes anything: each line carries the command to run
 by hand (or to hand to an agent).
 
+## 6g. Staged update widget (Minecraft tab)
+
+Read-only view of Paper and every plugin: **installed** (version from each jar's
+`plugin.yml`, date = jar file date), **staged** (jars waiting in the staging folder that
+the owner's update-fetch job fills), and **latest upstream** with release dates (PaperMC
+API for Paper builds; Modrinth, Hangar or GitHub for plugins). It never downloads or
+applies anything — the existing update + restart timer does. Configure:
+
+| Variable | Meaning |
+|---|---|
+| `UPDATE_STAGING_DIR` | `[INSTALLER]` where the fetch job puts new jars. Unset = look for `plugins/update` (Bukkit applies it on restart), `updates`, `staged`, `staging` under `MC_DIR`. Read the fetch script to find the real folder. |
+| `PLUGIN_SOURCES` | per-plugin upstream, e.g. `EssentialsX=modrinth:essentialsx,Chunky=hangar:pop4959/Chunky,Vault=github:MilkBowl/Vault,GoldsPlugin=none`. Unlisted plugins are searched on Modrinth by exact name. |
+| `UPDATE_CHECK` | `0` disables all upstream lookups (air-gapped / privacy). |
+
+The panel's "Applied by" line is the dashboard job (the mirrored update/restart timer)
+that runs next; if it says none, the mirror from § 6c is missing. Verify: installed Paper
+shows the build from the jar name, each plugin shows a version, and anything in the
+staging folder appears in the Staged column.
+
 ## 6d. VPN tab
 
 The owner runs a VPN on this server with split-tunnel exceptions (at least Minecraft and

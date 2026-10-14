@@ -453,6 +453,8 @@ export interface Incident {
   reportIds: string[];
   approvalIds: string[];
   note: string | null;
+  /** what the agent's report said it did: fixed something, checked and found nothing to do, or needs a human */
+  outcome: ReportOutcome | null;
 }
 
 export interface Approval {
@@ -489,6 +491,69 @@ export interface SidecarState {
   /** is the chosen runner's CLI installed for the dashboard's user? null = unknown */
   runnerAvailable: boolean | null;
   runnerNote: string | null;
+}
+
+export type ReportOutcome = "fixed" | "no-action" | "needs-human";
+
+/** One resolved incident with everything the agent did about it (for the Repairs list). */
+export interface RepairItem {
+  incident: Incident;
+  reports: AgentReport[];
+  approvals: Approval[];
+  /** the agent's tool calls and messages for this incident, from the feed */
+  actions: { ts: string; text: string }[];
+  runs: AgentRun[];
+}
+
+export interface RepairsPayload {
+  /** incidents the agent fixed (outcome = fixed) */
+  repaired: number;
+  /** incidents the agent checked but left alone */
+  checked: number;
+  /** incidents waiting on a human decision after the agent reported */
+  needsHuman: number;
+  items: RepairItem[];
+}
+
+// ---- staged updates: Paper + plugins, installed / staged / upstream -------------------
+
+export interface UpdateVersion {
+  version: string | null;
+  /** Paper build number */
+  build?: number | null;
+  /** ISO: release date upstream, or file date for installed/staged jars */
+  date: string | null;
+  file?: string | null;
+  channel?: string | null;
+  url?: string | null;
+  /** where the upstream answer came from: papermc, modrinth, hangar, github */
+  source?: string | null;
+  mcVersion?: string | null;
+}
+
+export type UpdateStatus = "up-to-date" | "staged" | "update-available" | "unknown";
+
+export interface UpdateItem {
+  kind: "paper" | "plugin";
+  name: string;
+  installed: UpdateVersion | null;
+  staged: UpdateVersion | null;
+  latest: UpdateVersion | null;
+  status: UpdateStatus;
+  note: string | null;
+}
+
+export interface StagedUpdatePayload {
+  items: UpdateItem[];
+  mcVersion: string | null;
+  newestMcVersion: string | null;
+  stagingDirs: { path: string; exists: boolean; files: number }[];
+  /** the dashboard job (usually the mirrored update/restart timer) that applies staged files */
+  nextApply: { job: string; at: string | null } | null;
+  lastFetch: string | null;
+  checkedAt: string | null;
+  upstreamChecked: boolean;
+  notes: string[];
 }
 
 export interface SidecarPayload {
@@ -528,6 +593,7 @@ export interface AgentReport {
   /** sidecar: the incident / run this report answers */
   incidentId?: string | null;
   runId?: string | null;
+  outcome?: ReportOutcome | null;
 }
 
 export interface ContextPayload {

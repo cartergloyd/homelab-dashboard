@@ -47,6 +47,7 @@ Conventions:
 | `server/src/services/status.ts` | service state rollup for the Dashboard | the real probes above |
 | `server/src/services/storage.ts` | `df` rows, managed-folder sizes, the reclaimable-space list | `df -kP`, `du`, `docker df`, `journalctl --disk-usage`, apt/snap/trash probes |
 | `server/src/services/diskscan.ts` | the "demo" engine feeds the generated ncdu export (from `demo.ts`) to the **real** streaming parser | `ncdu -x -e -0 --exclude-kernfs -o -` (or `gdu -n -p -x -o -`, or `du -x -a`) on each mount — verify with `npm run audit:install` → `[storage] disk scanner` |
+| `server/src/services/updates.ts` | fixed Paper/plugin versions and dates (`demo.stagedUpdates()`) | jars in `MC_DIR` + `MC_DIR/plugins`, the staging folder (`UPDATE_STAGING_DIR`), PaperMC / Modrinth / Hangar / GitHub APIs |
 | `server/src/services/scheduler.ts` → `defaultJobs()` | four seeded jobs, flagged `seeded: true` (two disabled built-ins, two external mirrors with made-up timer/cron) | **zero** jobs; `npm run discover -- --apply` mirrors the real timers/crontab |
 | `server/src/services/reports.ts` | one seeded "(demo)" maintenance report | none; agents file real ones |
 | `server/src/services/agentRunner.ts` → `runnerAvailable()` | reports the CLI as available | real `codex` / `claude` on the unit's PATH, logged in as the service user |

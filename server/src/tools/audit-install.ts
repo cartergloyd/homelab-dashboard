@@ -182,6 +182,18 @@ const ncduVer = (await sh("ncdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?
 const gduVer = (await sh("gdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
 add("storage", "disk scanner", ncduVer || gduVer ? "pass" : "warn", ncduVer ? `ncdu ${ncduVer} (TreeSize view with file ages and owners)` : gduVer ? `gdu ${gduVer} (ncdu-format export; no file ages/owners)` : "neither ncdu nor gdu installed — the explorer falls back to du -a (slow, no ages/owners). Fix: sudo apt install ncdu");
 
+// ---- staged updates ------------------------------------------------------------------
+
+const pluginsDir = path.join(cfg.minecraft.dir, "plugins");
+const pluginJars = (await fs.readdir(pluginsDir).catch(() => [] as string[])).filter((n) => /\.jar$/i.test(n));
+add("updates", "plugins folder", pluginJars.length ? "pass" : "warn", pluginJars.length ? `${pluginsDir}: ${pluginJars.length} jar(s)` : `${pluginsDir}: no plugin jars found`);
+const paperJar = (await fs.readdir(cfg.minecraft.dir).catch(() => [] as string[])).find((n) => /^(paper|purpur|folia).*\.jar$/i.test(n));
+add("updates", "paper jar", paperJar ? "pass" : "warn", paperJar ?? `no paper-*.jar in ${cfg.minecraft.dir} — the widget falls back to version_history.json`);
+const stagingCandidates = cfg.updates.stagingDir ? [cfg.updates.stagingDir] : ["plugins/update", "updates", "staged", "staging"].map((d) => path.join(cfg.minecraft.dir, d));
+const stagingFound: string[] = [];
+for (const c of stagingCandidates) if (await exists(c)) stagingFound.push(c);
+add("updates", "staging folder", stagingFound.length ? "pass" : "warn", stagingFound.length ? stagingFound.join(", ") : "none of the usual staging folders exist — set UPDATE_STAGING_DIR to where the update-fetch job writes (read its script)");
+
 // ---- data dir: demo leakage ------------------------------------------------------
 
 const demoDir = path.join(cfg.dataDir, "demo");
