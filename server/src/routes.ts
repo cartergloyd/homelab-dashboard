@@ -22,7 +22,8 @@ import { getRules, listAgents, publish, query, summary, touchAgent } from "./ser
 import { listRuns as listScriptRuns, listScripts, startScript } from "./services/scripts.js";
 import { getVersion, listHistory, readContext, restoreVersion, writeContext } from "./services/context.js";
 import { addReport, listReports, setReviewed } from "./services/reports.js";
-import type { AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
+import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
+import type { AgentRunner, AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
 export const api = express.Router();
 
@@ -47,7 +48,7 @@ api.get("/config", (_req, res) => {
   const payload: AppConfigPayload = {
     demo: cfg.demo,
     user: { login: u.login, name: u.name },
-    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl },
+    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
     timezone: cfg.timezone,
     logSources: LOG_SOURCES,
@@ -55,6 +56,7 @@ api.get("/config", (_req, res) => {
     scriptsDir: cfg.scriptsDir,
     contextFile: cfg.contextFile,
     mcpScript: path.join(cfg.repoRoot, "server", "dist", "mcp.js"),
+    mcpLocalUrl: `http://127.0.0.1:${cfg.port}`,
     ...(u.viaKey || !cfg.dashboardKey ? {} : { dashboardKey: cfg.dashboardKey }),
   };
   res.json(payload);
@@ -291,6 +293,17 @@ api.get("/alerts/rules", (_req, res) => {
 
 api.get("/agents", (_req, res) => {
   res.json(listAgents());
+});
+
+api.get("/agents/runs", (req, res) => {
+  res.json(listAgentRuns(Number(req.query.limit) || 20));
+});
+
+api.post("/agents/launch", async (req, res) => {
+  const body = z.object({ runner: z.enum(["codex", "claude"]), task: z.string().trim().max(4000).default("") }).parse(req.body ?? {});
+  const run = await launchAgent(body.runner as AgentRunner, body.task);
+  logAction(res, `launched ${body.runner} agent`);
+  res.status(201).json(run);
 });
 
 /**
