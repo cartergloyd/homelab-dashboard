@@ -287,7 +287,7 @@ export function AssistantWidget() {
   const toast = useToast();
   const { confirm } = useDialog();
   const config = useAppConfig();
-  const [modal, setModal] = useState<"context" | "settings" | "repairs" | null>(null);
+  const [modal, setModal] = useState<"context" | "settings" | "repairs" | "simulate" | null>(null);
   const [draft, setDraft] = useState("");
   const [showAll, setShowAll] = useState(false);
   const convoRef = useRef<HTMLDivElement>(null);
@@ -314,7 +314,16 @@ export function AssistantWidget() {
   });
   const decide = useMutation({ mutationFn: (v: { id: string; decision: "approve" | "deny" }) => api.post(`/sidecar/approvals/${v.id}`, { decision: v.decision }), onSuccess: invalidate, onError });
   const incidentAction = useMutation({ mutationFn: (v: { id: string; action: "investigate" | "dismiss" | "resolve" }) => api.post(`/sidecar/incidents/${v.id}/${v.action}`), onSuccess: invalidate, onError });
-  const simulate = useMutation({ mutationFn: (kind: "exception" | "warn" | "job") => api.post("/sidecar/simulate", { kind }), onSuccess: () => toast("Fake error published — watch the feed and the panel"), onError });
+  const simulate = useMutation({
+    mutationFn: (v: { kind: "exception" | "warn" | "job" | "custom"; text?: string }) => api.post("/sidecar/simulate", v),
+    onSuccess: () => {
+      toast("Published to the feed — watch the panel react");
+      setModal(null);
+      invalidate();
+    },
+    onError,
+  });
+  const [pasted, setPasted] = useState("");
   const toggle = useMutation({ mutationFn: (enabled: boolean) => api.put("/sidecar/settings", { enabled }), onSuccess: invalidate, onError });
 
   const turns = convo.data ?? [];
@@ -537,7 +546,7 @@ export function AssistantWidget() {
         </button>
         {/* [DEMO] demo-only button: fakes a server error so the sidecar loop can be watched (see DEMO_INDEX.md) */}
         {config.data?.demo && (
-          <button className="btn ghost" disabled={simulate.isPending} onClick={() => simulate.mutate("exception")} title="Demo: publish a fake server exception to watch the sidecar react">
+          <button className="btn ghost" disabled={simulate.isPending} onClick={() => setModal("simulate")} title="Demo: publish a fake error, or paste real console output, to watch the sidecar react">
             Simulate incident
           </button>
         )}
@@ -546,6 +555,35 @@ export function AssistantWidget() {
       {modal === "context" && <ContextModal onClose={() => setModal(null)} />}
       {modal === "settings" && d && <SettingsModal payload={d} onClose={() => setModal(null)} />}
       {modal === "repairs" && <RepairsModal onClose={() => setModal(null)} />}
+      {modal === "simulate" && (
+        <Modal title="Simulate an incident (demo)" onClose={() => setModal(null)} wide>
+          <div className="stack">
+            <p className="muted small" style={{ margin: 0 }}>
+              Demo only. Pick a canned error, or paste real console output — every line is published to the Minecraft feed and classified exactly like live log lines, so you can see how the detector groups it and what the assistant does.
+            </p>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "exception" })}>
+                Server exception
+              </button>
+              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "warn" })}>
+                “Can't keep up” warning
+              </button>
+              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "job" })}>
+                Failed backup job
+              </button>
+            </div>
+            <label className="field">
+              Paste console output
+              <textarea className="input mono" rows={10} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"[Fri 04:44:35 WARN  Geyser-Spigot] [mcxboxbroadcast] [Auth] Failed to refresh tokens\ncom.example.SomeException: status: 400 Bad Request …\n    at com.example.Foo.bar(Foo.java:32)"} spellCheck={false} />
+            </label>
+            <div className="row" style={{ justifyContent: "flex-end" }}>
+              <button className="btn primary" disabled={simulate.isPending || !pasted.trim()} onClick={() => simulate.mutate({ kind: "custom", text: pasted })}>
+                Publish to the feed
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </section>
   );
 }

@@ -98,6 +98,7 @@ function normalize(text: string): string {
     .toLowerCase()
     .replace(/\[\d{4}-\d{2}-\d{2}[^\]]*\]/g, "")
     .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, "")
+    .replace(/\b(mon|tue|wed|thu|fri|sat|sun)\b/g, "")
     .replace(/\b[0-9a-f-]{8,}\b/g, "#")
     .replace(/\d+(\.\d+)?/g, "#")
     .replace(/\s+/g, " ")
@@ -108,11 +109,25 @@ function normalize(text: string): string {
 function titleOf(text: string): string {
   return (
     text
-      .replace(/^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/, "")
-      .replace(/^\[[^\]]*\/(ERROR|WARN|SEVERE|FATAL|INFO)\]:?\s*/i, "")
+      .replace(/^[!>*\s]+/, "")
+      // "[2026-10-14 04:44:35]", "[Server thread/ERROR]:", "[Fri 04:44:35 WARN  Geyser-Spigot]" …
+      .replace(/^(\[[^\]]*(\d{1,2}:\d{2}(:\d{2})?|\b(ERROR|WARN|SEVERE|FATAL|INFO)\b)[^\]]*\]:?\s*)+/i, "")
       .trim()
       .slice(0, 110) || text.slice(0, 110)
   );
+}
+
+// A Java stack trace arrives as many lines in a burst: the first actionable line opens
+// the incident, the rest (frames, "Caused by", a second "Exception" line) attach to it.
+const CONTINUATION_RE = /^\s*(at [\w.$<>/]+\(|Caused by:|\.\.\. \d+ more|Suppressed:|\s+\.\.\.)/;
+const BURST_MS = 3000;
+let lastTouch: { id: string; source: string; at: number } | null = null;
+
+function attach(inc: Incident, e: AlertEvent): void {
+  inc.lastSeen = e.ts;
+  if (inc.alertIds.length < 50) inc.alertIds.push(e.id);
+  inc.samples = [...inc.samples, e.text].slice(-40);
+  lastTouch = { id: inc.id, source: e.source, at: Date.now() };
 }
 
 function repeatedWarning(fp: string, ts: number): boolean {
@@ -141,14 +156,26 @@ function lastRunAt(inc: Incident): number {
 
 function onEvent(e: AlertEvent): void {
   const fp = `${e.source}|${normalize(e.text)}`;
-  if (!isActionable(e, fp)) return;
+  const recent = lastTouch && lastTouch.source === e.source && Date.now() - lastTouch.at < BURST_MS ? incidents.find((i) => i.id === lastTouch!.id) : null;
+  if (!isActionable(e, fp)) {
+    // stack-trace frames and similar belong to the incident that just opened
+    if (recent && e.source !== "agent" && !e.meta?.agent && !e.meta?.incidentId && CONTINUATION_RE.test(e.text)) {
+      attach(recent, e);
+      void persistIncidents();
+    }
+    return;
+  }
   const cooldownMs = settings.cooldownMinutes * 60_000;
   let inc = incidents.find((i) => i.fingerprint === fp && (ACTIVE.has(i.status) || Date.now() - Date.parse(i.lastSeen) < cooldownMs));
+  if (!inc && recent && ACTIVE.has(recent.status)) {
+    // a second error line within the same burst (e.g. the "Exception …" line after "Failed to …") is the same problem
+    attach(recent, e);
+    void persistIncidents();
+    return;
+  }
   if (inc) {
     inc.count++;
-    inc.lastSeen = e.ts;
-    if (inc.alertIds.length < 50) inc.alertIds.push(e.id);
-    inc.samples = [...inc.samples, e.text].slice(-20);
+    attach(inc, e);
     if (inc.status === "resolved" || inc.status === "failed") {
       inc.note = `Recurred ${inc.status === "resolved" ? "after being resolved" : "after a failed run"} — ${new Date(e.ts).toLocaleString()}`;
       inc.status = "open";
@@ -177,6 +204,7 @@ function onEvent(e: AlertEvent): void {
   };
   incidents.unshift(inc);
   if (incidents.length > 500) incidents.splice(500);
+  lastTouch = { id: inc.id, source: e.source, at: Date.now() };
   void persistIncidents();
   publish({ source: "dashboard", kind: "agent", level: "warn", tags: ["maintenance", "incident"], text: `New incident #${inc.id}: ${inc.title}`, meta: { incidentId: inc.id } });
   scheduleLaunch(inc);
@@ -293,6 +321,13 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
     await sleep(600);
     emit("→ minecraft_rcon(tps)");
     await sleep(700);
+    if (/token|auth|sign in|invalid_grant|credential|login/i.test(`${inc.title} ${inc.samples.slice(0, 3).join(" ")}`)) {
+      emit("→ tail_log(minecraft, 200)");
+      await sleep(600);
+      say(`This is an authentication problem, not a server fault: "${inc.title.slice(0, 70)}". The plugin's saved login token was rejected upstream (invalid_grant), so it cannot refresh on its own — someone has to sign in again. Nothing to restart; players are unaffected. I've written down what you need to do.`);
+      await addReport(name, `Needs you: ${inc.title.slice(0, 80)}`, `Summary: ${inc.title} — the refresh token was rejected (400 invalid_grant: "the user must sign in again"). This repeats every refresh cycle until re-authenticated; it does not affect gameplay.\n\nActions taken:\n- Read the full stack trace; confirmed it is the MCXboxBroadcast module inside Geyser, not Paper.\n- No restart or config change — a restart would not fix an expired login.\n\nFollow-up for a human:\n- Re-authenticate the Xbox account the plugin uses (the plugin prints a sign-in link/code in the console on next start, or run its auth command).\n- If the broadcast feature is no longer wanted, disable the module to stop the noise.`, { incidentId: inc.id, runId, outcome: "needs-human" });
+      return 0;
+    }
     if (/exception|crash|stopped|died|out of memory|killed|refused/i.test(`${inc.title} ${inc.samples.join(" ")}`)) {
       say(`The server logged "${inc.title.slice(0, 80)}" ${inc.count} time(s). TPS dipped to 14 while it happened. A restart would clear it; players would be warned first. Requesting your approval.`);
       await sleep(400);
@@ -568,8 +603,19 @@ export function resolveIncident(id: string, by: string, note?: string): Incident
 
 /** Demo only: inject an error into the feed so the whole loop can be watched. */
 // [DEMO] demo-only: inject a fake error into the feed (see DEMO_INDEX.md)
-export function simulateIncident(kind: "exception" | "warn" | "job" = "exception"): AlertEvent {
+export function simulateIncident(kind: "exception" | "warn" | "job" | "custom" = "exception", text?: string): AlertEvent {
   if (!cfg.demo) throw new HttpError(403, "Only in demo mode");
+  if (kind === "custom") {
+    // paste real console output: every line becomes a Minecraft log line, classified like the real feed
+    const lines = (text ?? "").split(/\r?\n/).map((l) => l.replace(/^[!>]\s?/, "").trimEnd()).filter((l) => l.trim());
+    if (!lines.length) throw new HttpError(400, "Paste at least one line");
+    let first: AlertEvent | null = null;
+    for (const l of lines.slice(0, 200)) {
+      const ev = publish({ source: "minecraft", kind: "log", text: l });
+      first ??= ev;
+    }
+    return first!;
+  }
   if (kind === "job") return publish({ source: "jobs", kind: "job", level: "error", tags: ["maintenance"], text: 'Job "Semi-weekly world backup" failed: backup_world.py exited 1: tar: world/region/r.0.0.mca: file changed as we read it', meta: { job: "Semi-weekly world backup" } });
   if (kind === "warn") return publish({ source: "minecraft", kind: "log", text: "[Server thread/WARN]: Can't keep up! Is the server overloaded? Running 4120ms or 82 ticks behind" });
   return publish({ source: "minecraft", kind: "log", text: "[Server thread/ERROR]: Exception ticking world — java.lang.NullPointerException: Cannot invoke \"net.minecraft.world.entity.Entity.tick()\" because \"entity\" is null" });
