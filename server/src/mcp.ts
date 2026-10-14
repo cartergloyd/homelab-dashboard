@@ -183,7 +183,7 @@ interface Ctx {
 
 server.registerTool(
   "read_instructions",
-  { title: "Read the instructions & context file", description: "The CLAUDE.md the owner maintains for agents: purpose, architecture, conventions, decisions, roadmap. Read it before taking action.", inputSchema: {} },
+  { title: "Read Minecraft instructions & context", description: "The Minecraft server operational context the owner maintains for agents. Read it before taking action on alerts or repairs.", inputSchema: {} },
   async () => {
     const c = await call<Ctx>("GET", "/api/context");
     return text(`# ${c.path}\n\n${c.content}`);
@@ -193,8 +193,8 @@ server.registerTool(
 server.registerTool(
   "update_instructions",
   {
-    title: "Replace the instructions & context file",
-    description: "Overwrite the whole instructions file. Every change is versioned in the dashboard's change log with your name and the note. Prefer append_instructions for small additions.",
+    title: "Replace Minecraft instructions & context",
+    description: "Overwrite the whole Minecraft instructions file. Every change is versioned in the dashboard's change log with your name and the note. Prefer append_instructions for small additions.",
     inputSchema: { content: z.string().max(512 * 1024), note: z.string().max(200).default("Updated by agent") },
   },
   async ({ content, note }) => {
@@ -206,7 +206,7 @@ server.registerTool(
 
 server.registerTool(
   "append_instructions",
-  { title: "Append to the instructions & context file", description: "Add a note, decision or lesson to the end of the instructions file (versioned in the change log).", inputSchema: { text: z.string().min(1).max(20_000), note: z.string().max(200).default("Appended by agent") } },
+  { title: "Append to Minecraft instructions & context", description: "Add a note, decision or lesson to the end of the Minecraft instructions file (versioned in the change log).", inputSchema: { text: z.string().min(1).max(20_000), note: z.string().max(200).default("Appended by agent") } },
   async ({ text: addition, note }) => {
     const cur = await call<Ctx>("GET", "/api/context");
     const content = `${cur.content.replace(/\s*$/, "")}\n\n${addition.trim()}\n`;
@@ -243,7 +243,7 @@ server.registerTool("list_reports", { title: "List maintenance reports", descrip
 
 // ---- resources ---------------------------------------------------------------
 
-server.registerResource("instructions", "homelab://instructions", { title: "Instructions & context (CLAUDE.md)", mimeType: "text/markdown" }, async (uri) => {
+server.registerResource("instructions", "homelab://instructions", { title: "Minecraft instructions & context", mimeType: "text/markdown" }, async (uri) => {
   const c = await call<Ctx>("GET", "/api/context");
   return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: c.content }] };
 });
