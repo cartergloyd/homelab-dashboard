@@ -241,6 +241,21 @@ export interface AgentPresence {
   actions: number;
 }
 
+export type AgentRunner = "codex" | "claude";
+export type AgentRunStatus = "running" | "exited" | "failed";
+
+export interface AgentRun {
+  id: string;
+  runner: AgentRunner;
+  task: string;
+  cwd: string;
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  status: AgentRunStatus;
+  lines: number;
+}
+
 export interface ScriptRun {
   id: string;
   script: string;
@@ -299,7 +314,7 @@ export interface ContextVersion extends ContextHistoryEntry {
 export interface AppConfigPayload {
   demo: boolean;
   user: { login: string; name: string };
-  links: { jellyfin: string; directus: string };
+  links: { jellyfin: string; directus: string; qbittorrent: string | null };
   mediaRoots: string[];
   timezone: string;
   logSources: LogSource[];
@@ -307,5 +322,6 @@ export interface AppConfigPayload {
   scriptsDir: string;
   contextFile: string;
   mcpScript: string;
+  mcpLocalUrl: string;
   dashboardKey?: string;
 }
