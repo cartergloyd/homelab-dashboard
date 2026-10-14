@@ -263,6 +263,21 @@ export interface AgentPresence {
   actions: number;
 }
 
+export type AgentRunner = "codex" | "claude";
+export type AgentRunStatus = "running" | "exited" | "failed";
+
+export interface AgentRun {
+  id: string;
+  runner: AgentRunner;
+  task: string;
+  cwd: string;
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  status: AgentRunStatus;
+  lines: number;
+}
+
 export interface ScriptRun {
   id: string;
   script: string;
@@ -322,7 +337,7 @@ export interface ContextVersion extends ContextHistoryEntry {
 export interface AppConfigPayload {
   demo: boolean;
   user: { login: string; name: string };
-  links: { jellyfin: string; directus: string };
+  links: { jellyfin: string; directus: string; qbittorrent: string | null };
   mediaRoots: string[];
   timezone: string;
   logSources: LogSource[];
@@ -331,6 +346,8 @@ export interface AppConfigPayload {
   contextFile: string;
   /** absolute path of server/dist/mcp.js on this machine, for the connect snippet */
   mcpScript: string;
+  /** dashboard URL from the server's own shell, for locally launched MCP connectors */
+  mcpLocalUrl: string;
   /** only sent to Tailscale-identified users, never to key-authenticated clients */
   dashboardKey?: string;
 }
