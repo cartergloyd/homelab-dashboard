@@ -61,7 +61,9 @@ web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
   src/types.ts        MIRROR of server/src/types.ts — keep both in sync by hand
 deploy/   systemd units, sudoers rule, env template      SERVER_SETUP.md = install handoff
 scripts/  hl-run.sh — tee a terminal script's output into the alerts feed
-docker-compose.yml   PostgreSQL (127.0.0.1 only) + Directus
+docker-compose.yml   PostgreSQL (127.0.0.1 only) + personal Directus (Tailscale) + one Directus per
+                     public app (fam, ai → 127.0.0.1:805x) + cloudflared (Cloudflare Tunnel)
+                     services/apps.ts reads it all; apps-config.ts parses APPS / APP_<NAME>_*
 ```
 
 Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (types
@@ -164,6 +166,16 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       latest upstream with release dates (PaperMC, Modrinth, Hangar, GitHub; `PLUGIN_SOURCES`
       maps names; `UPDATE_CHECK=0` disables), next apply job, last fetch. MCP `staged_updates`.
       Tests: `server/test-updates.mjs`.
+- [x] **Database platform** (Carter, 2026-10-19): Directus-per-app on one Postgres, published
+      by a Cloudflare Tunnel — `docker-compose.yml` (postgres + personal directus + directus-fam
+      + directus-ai + cloudflared), `deploy/postgres-init/01-apps.sh` (role + database per app
+      on first start), `scripts/add-app.sh` (idempotent add + snippets), `scripts/pg-backup.sh`
+      (dumps per database), `services/apps.ts` + `GET /api/apps` + MCP `apps_status`, Database
+      tab rebuilt (Postgres core with loopback proof, tunnel, one card per app, databases
+      table), Service status rows per app, audit `[apps]` section (5432 loopback-only is a
+      gate), SERVER_SETUP § 5 rewritten + § 8b router settings.
+- [ ] Database platform: the compose stack has still never been started on real Docker
+      (none on the dev Mac) — first `docker compose up` happens on the server
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
@@ -194,6 +206,9 @@ override the placeholders wherever they conflict:
 - The seeded default jobs showed up in production → treat any job named "Nightly world
   backup" / "Daily restart" in `data/jobs.json` on the server as demo leakage to remove.
 - Open work for all of this is tracked in GitHub issue #2 (deferred by the owner).
+- The owner's domain is `xgold.tech` (Cloudflare DNS); the first apps are `fam` and `ai`.
+  A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
+  failures are a known "needs a human" incident, not a server fault.
 
 ## Decisions log
 
@@ -271,6 +286,20 @@ override the placeholders wherever they conflict:
   spent once (`consumed`). Incidents never re-trigger within the cooldown; one agent run at
   a time; `maxRunMinutes` kills a runaway run. The sidecar never deletes or edits anything
   itself — only the agent does, inside its workspace, through the same API the UI uses.
+- 2026-10-19 **Directus-per-app, not self-hosted Supabase.** Carter wants a Supabase-style
+  backend for `fam.xgold.tech`, `ai.xgold.tech`, … with segregated databases. Chosen: one
+  Postgres, one database + one login role + one Directus per app (auth, roles/policies,
+  REST, GraphQL, files, realtime, flows), because it reuses what the dashboard already
+  understands and costs ~1 container per app instead of ~10. Trade-off accepted: no
+  `supabase-js` compatibility, permissions enforced by Directus rather than Postgres RLS.
+- 2026-10-19 **Cloudflare Tunnel for the public side.** The server sits behind a VPN, so
+  inbound port-forwards don't work and would widen the attack surface anyway; `cloudflared`
+  makes outbound-only connections, gives TLS per hostname on the owner's domain, and
+  Cloudflare Access can gate `/admin`. Tailscale Funnel was rejected (no custom domains).
+  **Postgres stays 127.0.0.1-only** — apps talk to Directus, never to the database port.
+  The personal Directus stays Tailscale-only and is NOT in the tunnel.
+- 2026-10-19 Data for the stack lives outside the source checkout (`PGDATA_DIR`,
+  `APPS_DATA_DIR`, default `/srv/homelab/…`) so a re-clone can never lose it.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

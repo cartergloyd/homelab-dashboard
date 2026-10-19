@@ -556,6 +556,72 @@ export interface StagedUpdatePayload {
   notes: string[];
 }
 
+// ---- Directus-per-app platform (fam, ai, …) behind a Cloudflare Tunnel ---------------------
+
+export interface AppContainer {
+  state: string | null;
+  startedAt: string | null;
+  image: string | null;
+}
+
+export interface AppDbStats {
+  exists: boolean;
+  sizeBytes: number | null;
+  /** all tables in the public schema */
+  tables: number | null;
+  /** tables that are not Directus system tables = the app's collections */
+  collections: number | null;
+  users: number | null;
+  lastLogin: string | null;
+  error?: string;
+}
+
+export interface AppStatus {
+  name: string;
+  url: string;
+  publicUrl: string | null;
+  containerName: string;
+  db: string;
+  state: ServiceState;
+  container: AppContainer | null;
+  local: { ok: boolean; status: string | null; latencyMs: number | null; error?: string };
+  /** reached through the tunnel from the server itself; null = not checked (no public URL) */
+  public: { ok: boolean | null; httpStatus: number | null; latencyMs: number | null; note?: string };
+  database: AppDbStats;
+  backup: { latest: string | null; file: string | null; bytes: number | null; count: number };
+}
+
+export interface TunnelStatus {
+  container: AppContainer | null;
+  ready: boolean | null;
+  connections: number | null;
+  hostnames: string[];
+  error?: string;
+}
+
+export interface PgDatabaseRow {
+  name: string;
+  owner: string;
+  sizeBytes: number;
+  app: string | null;
+}
+
+export interface AppsPayload {
+  apps: AppStatus[];
+  tunnel: TunnelStatus;
+  domain: string | null;
+  postgres: {
+    connected: boolean;
+    version: string | null;
+    databases: PgDatabaseRow[];
+    /** local addresses 5432 is bound to (from ss); loopbackOnly null = could not check */
+    exposure: { binds: string[]; loopbackOnly: boolean | null };
+    error?: string;
+  };
+  backupDir: string;
+  checkedAt: string;
+}
+
 export interface SidecarPayload {
   settings: SidecarSettings;
   state: SidecarState;

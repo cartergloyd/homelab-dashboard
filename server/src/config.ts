@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { appsFromEnv } from "./apps-config.js";
 import type { AlertSource, LogSource, MediaRoot } from "./types.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,15 @@ const Env = z.object({
   POSTGRES_CONTAINER: z.string().default("homelab-postgres"),
   // postgres://user:pass@127.0.0.1:5432/personal
   PG_URL: z.string().optional(),
+  // Directus-per-app platform (SERVER_SETUP § 5): app names; each has its own Postgres database,
+  // role and Directus, published as https://<name>.<PUBLIC_DOMAIN> by the Cloudflare Tunnel.
+  // Per app: APP_<NAME>_URL (loopback Directus, default 8056, 8057 …), APP_<NAME>_PUBLIC_URL,
+  // APP_<NAME>_CONTAINER (homelab-directus-<name>), APP_<NAME>_DB (<name>). See server/src/apps-config.ts.
+  APPS: csv,
+  PUBLIC_DOMAIN: z.string().optional(),
+  PG_BACKUP_DIR: z.string().default("/var/backups/postgres"),
+  CLOUDFLARED_CONTAINER: z.string().default("homelab-cloudflared"),
+  CLOUDFLARED_METRICS_URL: z.string().default("http://127.0.0.1:2000"),
 
   DASHBOARD_SERVICE: z.string().default("homelab-dashboard"),
   TZ: z.string().optional(),
@@ -180,6 +190,10 @@ export const cfg = {
     container: env.DIRECTUS_CONTAINER,
   },
   postgres: { url: env.PG_URL, container: env.POSTGRES_CONTAINER },
+  apps: appsFromEnv(env.APPS, process.env, env.PUBLIC_DOMAIN?.trim() || null),
+  publicDomain: env.PUBLIC_DOMAIN?.trim() || null,
+  pgBackupDir: path.resolve(env.PG_BACKUP_DIR),
+  cloudflared: { container: env.CLOUDFLARED_CONTAINER, metricsUrl: env.CLOUDFLARED_METRICS_URL.replace(/\/$/, "") },
   dashboardService: env.DASHBOARD_SERVICE,
   dashboardKey: (env.DASHBOARD_KEY ?? null) as string | null,
   scriptsDirs: splitPaths(env.SCRIPTS_DIR),

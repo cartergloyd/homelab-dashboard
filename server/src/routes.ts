@@ -17,6 +17,7 @@ import { deleteBackup, listBackups, runBackup } from "./services/backups.js";
 import { filesystems, reclaimable, refreshFolders, storage } from "./services/storage.js";
 import { cancelScan, dirView, overview as scanOverview, startScan, topFiles } from "./services/diskscan.js";
 import { stagedUpdates } from "./services/updates.js";
+import { appsStatus } from "./services/apps.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -178,6 +179,11 @@ api.post(
 );
 
 // ---- database ------------------------------------------------------------
+
+// Directus-per-app platform + Cloudflare Tunnel + Postgres core (read-only)
+api.get("/apps", async (req, res) => {
+  res.json(await appsStatus(req.query.refresh === "1"));
+});
 
 api.get("/database", async (_req, res) => {
   const [directus, postgres] = await Promise.all([directusHealth(), pgStats()]);

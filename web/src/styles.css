@@ -1442,3 +1442,24 @@ table.table {
 .table.updates .paper-row td {
   border-bottom: 2px solid var(--hairline);
 }
+
+/* ---- key/value rows (app cards) ------------------------------------------- */
+.kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kv > div {
+  display: grid;
+  grid-template-columns: 7em minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+}
+.kv-k {
+  color: var(--muted);
+}
+.kv-v {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

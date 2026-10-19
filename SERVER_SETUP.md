@@ -146,23 +146,117 @@ In Jellyfin's web UI: **Dashboard → Advanced → API Keys → +**, name it `ho
 copy the key for `JELLYFIN_API_KEY`. (Jellyfin 12+ requires the modern
 `Authorization: MediaBrowser Token=` header, which the app uses.)
 
-## 5. PostgreSQL + Directus
+## 5. PostgreSQL + Directus-per-app + Cloudflare Tunnel
+
+What this gives the owner: **one PostgreSQL** (bound to 127.0.0.1, never reachable from
+anywhere else), the **personal Directus** over Tailscale (port 8055, unchanged), and **one
+Directus per public app** — `fam` and `ai` to start — each with its **own database, own
+login role, own users, own files and own admin**, published at `https://fam.xgold.tech`
+and `https://ai.xgold.tech` through a **Cloudflare Tunnel**. Nothing is port-forwarded on the
+router: `cloudflared` makes outbound connections to Cloudflare, Cloudflare terminates TLS
+and routes each hostname to the right container. Apps use Directus's auth, REST/GraphQL,
+realtime and files like they would use Supabase; they never see the database port.
+
+### 5.0 Before you start
+
+- The domain (`xgold.tech`) must use **Cloudflare DNS** (nameservers at Cloudflare; the free
+  plan is enough) and the account needs **Zero Trust** enabled (free for up to 50 users).
+- Pick data folders outside the source checkout and create them:
+  ```bash
+  sudo mkdir -p /srv/homelab/pgdata /srv/homelab/apps /var/backups/postgres
+  sudo chown -R homelab:homelab /srv/homelab/apps /var/backups/postgres
+  ```
+  (`pgdata` is owned by the postgres container itself.)
+- Check nothing already uses the ports: `ss -ltnp | grep -E ':(5432|805[5-7]|2000)\b'`.
+
+### 5.1 Compose environment
 
 ```bash
-cd /opt/homelab-dashboard && sudo cp .env.example .env && sudo nano .env
+cd /opt/homelab-dashboard && sudo cp .env.example .env && sudo chmod 600 .env && sudo nano .env
 ```
 
-Fill every `CHANGE-ME` (`openssl rand -hex 32` for `DIRECTUS_SECRET`). Set
-`DIRECTUS_PUBLIC_URL` to `http://<tailscale-name>:8055`. Then:
+Fill every `CHANGE-ME` (`openssl rand -hex 32` for each secret/password — hex only, so no
+quoting issues), set `PGDATA_DIR`, `APPS_DATA_DIR`, `PUBLIC_DOMAIN=xgold.tech`, `APPS=fam,ai`,
+the admin e-mails, and leave `CLOUDFLARE_TUNNEL_TOKEN` for the next step. One
+`APP_<NAME>_DB_PASSWORD` / `_SECRET` / `_ADMIN_*` group per app.
+
+### 5.2 Create the tunnel and its hostnames (Cloudflare dashboard)
+
+1. Zero Trust (`one.dash.cloudflare.com`) → **Networks → Tunnels → Create a tunnel →
+   Cloudflared**, name it `homelab`.
+2. On "Install and run a connector" choose **Docker** and copy **only the token** — the long
+   string after `--token` — into `CLOUDFLARE_TUNNEL_TOKEN` in `.env`. Do not run their
+   command; compose runs the connector.
+3. **Public Hostname** tab → Add: subdomain `fam`, domain `xgold.tech`, type **HTTP**, URL
+   `directus-fam:8055`. Add another: `ai` → `directus-ai:8055`. Cloudflare creates the DNS
+   records itself. (Service names resolve because cloudflared runs in the same compose
+   network.)
+
+### 5.3 Start and verify
 
 ```bash
 sudo docker compose up -d && sudo docker compose ps
+sudo docker logs homelab-cloudflared 2>&1 | grep -i "registered tunnel connection" | head -4   # expect 4 lines
+curl -s https://fam.xgold.tech/server/health ; echo                                        # {"status":"ok"}
+curl -s https://ai.xgold.tech/server/health ; echo
+sudo ss -ltnp | grep -E ':(5432|805[67]|2000)\b'                                           # every line 127.0.0.1 (acceptance criterion 3)
 ```
 
-Verify:
-- `curl -s http://127.0.0.1:8055/server/health` → `{"status":"ok"}` (Directus takes ~20 s to boot)
-- `sudo ss -ltnp | grep 5432` → shows **only** `127.0.0.1:5432` (acceptance criterion 3)
-- Open `http://<tailscale-name>:8055` from a tailnet device and log in with `DIRECTUS_ADMIN_*`.
+Open `https://fam.xgold.tech/admin`, sign in with `APP_FAM_ADMIN_*`, change the password,
+create the first collection and a role for app users. Same for `ai`. The personal Directus
+is still `http://<tailscale-name>:8055` only.
+
+Postgres init runs **once**, on an empty `PGDATA_DIR` — it creates the `fam` and `ai`
+roles/databases from `APPS`. If you add names to `APPS` later, run
+`scripts/add-app.sh <name>` instead (idempotent; also prints the compose block, hostname and
+dashboard env to paste).
+
+### 5.4 Protect the admin UIs (recommended)
+
+Zero Trust → **Access → Applications → Add → Self-hosted**: domain `fam.xgold.tech`, path
+`admin*` → policy "Allow" for the owner's e-mail(s) with One-time PIN (or Google). Repeat for
+`ai`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
+dashboard shows "behind Cloudflare Access" for the public check when this is on. Each
+Directus also runs with the rate limiter on, secure cookies, and CORS limited to its own
+origin (`APP_<NAME>_CORS_ORIGIN` to add the app's front-end origin).
+
+### 5.5 Backups of every database
+
+`scripts/pg-backup.sh` dumps each database (personal, fam, ai, …) with `pg_dump` inside
+the container to `PG_BACKUP_DIR` and keeps `PG_BACKUP_KEEP` days. Schedule it from the
+dashboard: copy it into `SCRIPTS_DIR`, set `COMPOSE_ENV=/opt/homelab-dashboard/.env`,
+`PG_BACKUP_DIR` and `PG_BACKUP_KEEP` in the dashboard env, then Minecraft → Maintenance →
+New job → **Run a script** → `pg-backup.sh`, daily at 04:30. Output lands in Live server
+alerts; the Database tab shows the newest dump per app and the audit warns when one is older
+than 48 h.
+
+### 5.6 Dashboard env (`/etc/homelab-dashboard.env` or the real env file)
+
+```
+PG_URL=postgres://homelab:<POSTGRES_PASSWORD>@127.0.0.1:5432/personal
+APPS=fam,ai
+PUBLIC_DOMAIN=xgold.tech
+PG_BACKUP_DIR=/var/backups/postgres
+COMPOSE_ENV=/opt/homelab-dashboard/.env
+```
+
+Restart the dashboard. **Database & apps** must show: PostgreSQL connected with the
+"127.0.0.1 only" pill, the tunnel connected with both hostnames, and a green card per app
+(Directus healthy, public HTTPS ok, database present, users, backup). `npm run audit:install`
+→ `[apps]` all ✔ (5432 loopback-only and each app's container/health/database are gates).
+
+### 5.7 Connecting an app
+
+```ts
+import { createDirectus, authentication, rest, realtime } from "@directus/sdk";
+const fam = createDirectus("https://fam.xgold.tech").with(authentication()).with(rest()).with(realtime());
+await fam.login({ email, password });            // users you created in fam's admin
+const items = await fam.request(readItems("chores"));
+```
+
+Give each app's users a role whose policies restrict them to their own rows (Directus
+permissions with `$CURRENT_USER` filters) — that is the Supabase row-level-security
+equivalent here.
 
 ## 6. Configure and start the dashboard
 
@@ -498,6 +592,29 @@ Only if players join Minecraft from the public internet: `sudo ufw allow 25565/t
 Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 and
 5432 are **not** reachable.
 
+## 8b. Router settings (suggestions)
+
+The database platform needs **no port forwarding at all** — the tunnel only makes outbound
+HTTPS connections to Cloudflare. Recommended home-router settings:
+
+| Setting | Recommendation | Why |
+|---|---|---|
+| Port forwards for 5432, 8055–8057, 2000, 3000 | **None.** Remove any that exist. | Postgres, the app Directuses, cloudflared's metrics and the dashboard must stay unreachable from the internet; the tunnel and Tailscale carry everything. |
+| Minecraft 25565/TCP → server | Keep as it is today. | Players join directly; the VPN's Minecraft exception is what makes this work. |
+| Bedrock / Geyser 19132/UDP → server | Keep if Bedrock players join (the Geyser plugin is installed). | Geyser listens on UDP 19132 by default. |
+| UPnP / NAT-PMP | **Off.** | Plugins, consoles and random devices can open ports silently; with UPnP off, only the forwards above exist. |
+| DMZ host | **Off.** | Never put the server in the DMZ. |
+| DHCP reservation for the server | **On** (fixed LAN IP, e.g. 192.168.1.10). | Forwards and Tailscale subnet routes break when the server's address changes. |
+| Router admin from WAN | **Off**; change the default admin password; keep firmware updated. | Standard hygiene — the router is the only thing between the internet and the LAN besides Cloudflare/Tailscale. |
+| IPv6 firewall | **On** (default deny inbound) if the ISP provides IPv6. | Inbound IPv6 bypasses NAT; the firewall must do the job NAT does for IPv4. |
+| Tailscale | No forward needed. Optional: forward one UDP port and run `tailscaled` with `--port=<that port>` for more direct connections. | Tailscale traverses NAT by itself and falls back to relays; a fixed forwarded port avoids relays on strict NATs. |
+| Local DNS filters (Pi-hole etc.) | Don't block `*.cloudflareaccess.com`, `*.argotunnel.com`, `*.cfargotunnel.com`, `region1.v2.argotunnel.com`, `api.cloudflare.com`. | cloudflared and Cloudflare Access use these. |
+| Hairpin NAT / local overrides for `fam.xgold.tech` | Not needed. | From inside the house the apps still go out to Cloudflare and back through the tunnel, which works everywhere. |
+| QoS | Optional: prioritise the server's Minecraft traffic. | Keeps gameplay smooth while backups or uploads run. |
+
+The server-side VPN (split tunnel) is unaffected: cloudflared's outbound connections and
+Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions (VPN tab).
+
 ## 9. Final checklist
 
 - [ ] `https://<server>.ts.net` loads; every service on the **Service status** page is OK
@@ -505,7 +622,10 @@ Then `sudo ufw enable`. Confirm from a non-tailnet device that ports 3000, 8055 
 - [ ] **Maintenance → Back up now** creates a `.tar.gz` in `/var/backups/minecraft` and the job history shows OK
 - [ ] **Media files** lists each root; a test upload appears and triggers a Jellyfin scan
 - [ ] **Database** page shows Directus `ok` and Postgres connected
-- [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only
+- [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only (also 8056, 8057, 2000)
+- [ ] `https://fam.xgold.tech/server/health` and `https://ai.xgold.tech/server/health` return ok from outside the house; `/admin` asks for the Cloudflare Access login
+- [ ] **Database & apps** shows the tunnel connected and a green card per app; a dump exists for each database in `PG_BACKUP_DIR`
+- [ ] No router port forwards exist for 5432, 8055–8057, 2000 or 3000 (§ 8b)
 - [ ] **Minecraft → Live server alerts** shows Paper log lines; "Problems & maintenance" hides the routine ones
 - [ ] Each script in `SCRIPTS_DIR` has a ▶ button and its output appears in the feed
 - [ ] `node test-mcp.mjs` passes; the Assistant widget flips to "Connected · test-client"

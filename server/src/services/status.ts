@@ -8,6 +8,7 @@ import { pingServer } from "./slp.js";
 import { unitState } from "./systemd.js";
 import { tailscaleStatus } from "./tailscale.js";
 import { vpnStatus } from "./vpn.js";
+import { appsStatus } from "./apps.js";
 import type { ServiceState, ServiceStatus, StatusPayload } from "../types.js";
 
 let cache: { at: number; payload: StatusPayload } | null = null;
@@ -70,13 +71,35 @@ async function checkVpn(): Promise<ServiceStatus> {
   return result("vpn", "VPN", "unavailable", v.provider ? `${v.provider} detected but state unknown` : "No VPN client or interface detected");
 }
 
+async function checkApps(): Promise<ServiceStatus[]> {
+  if (!cfg.apps.length && !cfg.demo) return [];
+  try {
+    const a = await appsStatus();
+    const tunnel = result("tunnel", "Cloudflare Tunnel", a.tunnel.ready ? "ok" : a.tunnel.ready === false ? "down" : "unavailable", a.tunnel.ready ? `${a.tunnel.connections ?? "?"} connection(s) · ${a.tunnel.hostnames.join(", ") || "no hostnames"}` : (a.tunnel.error ?? "not ready"));
+    const apps = a.apps.map((x) =>
+      result(
+        `app:${x.name}`,
+        `Directus · ${x.name}`,
+        x.state,
+        [x.local.ok ? "healthy" : (x.local.error ?? "not healthy"), x.public.ok === true ? "public ok" : x.public.ok === false ? "public unreachable" : null, x.database.exists ? `${x.database.collections ?? 0} collections · ${x.database.users ?? 0} users` : "database missing"].filter(Boolean).join(" · "),
+        x.local.latencyMs,
+        x.publicUrl ?? undefined,
+      ),
+    );
+    return [tunnel, ...apps];
+  } catch (e) {
+    return [result("tunnel", "Cloudflare Tunnel", "unavailable", (e as Error).message)];
+  }
+}
+
 function checkDashboard(): ServiceStatus {
   return result("dashboard", "Dashboard", "ok", `Up ${fmtDuration(process.uptime())} · ${fmtBytes(process.memoryUsage().rss)} RSS${cfg.demo ? " · demo mode" : ""}`, 0);
 }
 
 export async function getStatus(): Promise<StatusPayload> {
   if (cache && Date.now() - cache.at < 5000) return cache.payload;
-  const services = await Promise.all([checkDashboard(), checkTailscale(), checkVpn(), checkJellyfin(), checkMinecraft(), checkDirectus(), checkPostgres()]);
+  const [base, apps] = await Promise.all([Promise.all([checkDashboard(), checkTailscale(), checkVpn(), checkJellyfin(), checkMinecraft(), checkDirectus(), checkPostgres()]), checkApps()]);
+  const services = [...base, ...apps];
   const payload: StatusPayload = { services, generatedAt: new Date().toISOString(), demo: cfg.demo };
   cache = { at: Date.now(), payload };
   return payload;
