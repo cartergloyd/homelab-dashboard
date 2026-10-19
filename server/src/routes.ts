@@ -483,8 +483,8 @@ api.post("/sidecar/approvals/:id", async (req, res) => {
 
 // [DEMO] demo-only endpoint: publishes a fake error so the sidecar loop can be watched; refused unless DEMO=1 (see DEMO_INDEX.md)
 api.post("/sidecar/simulate", (req, res) => {
-  const { kind } = z.object({ kind: z.enum(["exception", "warn", "job"]).default("exception") }).parse(req.body ?? {});
-  res.status(201).json(sidecar.simulateIncident(kind));
+  const { kind, text } = z.object({ kind: z.enum(["exception", "warn", "job", "custom"]).default("exception"), text: z.string().max(40_000).optional() }).parse(req.body ?? {});
+  res.status(201).json(sidecar.simulateIncident(kind, text));
 });
 
 api.post("/reports/:id/review", async (req, res) => {
