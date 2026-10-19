@@ -189,6 +189,12 @@ server.registerTool(
 );
 
 server.registerTool(
+  "apps_status",
+  { title: "Database apps & tunnel", description: "The Directus-per-app platform: every app (fam, ai, …) with its Directus health locally and through the Cloudflare Tunnel, its own Postgres database size / collections / users / newest dump, the tunnel's connection state, every database on the Postgres core, and whether 5432 is bound to loopback only. Read-only.", inputSchema: { refresh: z.boolean().default(false) } },
+  async ({ refresh }) => text(await call("GET", `/api/apps${refresh ? "?refresh=1" : ""}`)),
+);
+
+server.registerTool(
   "staged_updates",
   { title: "Staged Paper / plugin updates", description: "Installed Paper build and every plugin's version (from the jars), what is staged in the update folder for the next restart, and the latest upstream release (PaperMC, Modrinth, Hangar, GitHub) with release dates; plus when the update/restart job runs next. Read-only.", inputSchema: { refresh: z.boolean().default(false).describe("re-read jars and re-query upstream now") } },
   async ({ refresh }) => text(await call("GET", `/api/updates${refresh ? "?refresh=1" : ""}`)),

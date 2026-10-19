@@ -38,6 +38,7 @@ const { listBackups, worldFolders } = await import("../services/backups.js");
 const { directusHealth } = await import("../services/directus.js");
 const { pgStats } = await import("../services/postgres.js");
 const { tailscaleStatus } = await import("../services/tailscale.js");
+const { appsStatus, portBinds } = await import("../services/apps.js");
 
 type Status = "pass" | "warn" | "fail" | "skip";
 interface Check {
@@ -181,6 +182,26 @@ add("backups", "method", cfg.backups.method === "builtin" ? "warn" : "pass", cfg
 const ncduVer = (await sh("ncdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
 const gduVer = (await sh("gdu", ["-v"]))?.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
 add("storage", "disk scanner", ncduVer || gduVer ? "pass" : "warn", ncduVer ? `ncdu ${ncduVer} (TreeSize view with file ages and owners)` : gduVer ? `gdu ${gduVer} (ncdu-format export; no file ages/owners)` : "neither ncdu nor gdu installed — the explorer falls back to du -a (slow, no ages/owners). Fix: sudo apt install ncdu");
+
+// ---- database apps + tunnel (issue: Directus-per-app, SERVER_SETUP § 5) -----------------
+
+const pgBinds = await portBinds(5432);
+add("apps", "postgres bound to loopback only", pgBinds === null ? "warn" : pgBinds.length && pgBinds.every((b) => b.startsWith("127.") || b === "::1") ? "pass" : "fail", pgBinds === null ? "could not run ss — check by hand: ss -ltnp | grep 5432" : pgBinds.length ? `5432 listens on ${pgBinds.join(", ")}` : "nothing is listening on 5432 (is the postgres container up?)", pgBinds !== null);
+if (cfg.apps.length) {
+  const a = await appsStatus(true);
+  add("apps", "cloudflared", a.tunnel.ready ? "pass" : "fail", a.tunnel.ready ? `${a.tunnel.connections} connection(s) → ${a.tunnel.hostnames.join(", ")}` : (a.tunnel.error ?? "tunnel not ready — check CLOUDFLARE_TUNNEL_TOKEN and `docker logs ${cfg.cloudflared.container}`"), true);
+  for (const x of a.apps) {
+    add("apps", `${x.name}: container`, x.container?.state === "running" ? "pass" : "fail", x.container ? `${x.containerName}: ${x.container.state}` : `${x.containerName} not found (docker ps)`, true);
+    add("apps", `${x.name}: directus (local)`, x.local.ok ? "pass" : "fail", x.local.ok ? `${x.url} healthy (${x.local.latencyMs} ms)` : `${x.url}: ${x.local.error ?? "not healthy"}`, true);
+    add("apps", `${x.name}: directus (public)`, x.public.ok === true ? "pass" : x.public.ok === null ? "warn" : "fail", x.public.ok === true ? `${x.publicUrl} answers over HTTPS (${x.public.latencyMs} ms)${x.public.note ? ` — ${x.public.note}` : ""}` : (x.public.note ?? `${x.publicUrl} not reachable — DNS/tunnel hostname missing?`));
+    add("apps", `${x.name}: database`, x.database.exists ? "pass" : "fail", x.database.exists ? `"${x.db}": ${x.database.collections ?? 0} collections, ${x.database.users ?? 0} users` : (x.database.error ?? `database "${x.db}" missing — scripts/add-app.sh ${x.name}`), true);
+    const port = Number(new URL(x.url).port || 80);
+    const binds = await portBinds(port);
+    if (binds !== null) add("apps", `${x.name}: port ${port} loopback only`, binds.every((b) => b.startsWith("127.") || b === "::1") && binds.length ? "pass" : "fail", binds.length ? binds.join(", ") : "not listening", true);
+    const ageH = x.backup.latest ? (Date.now() - Date.parse(x.backup.latest)) / 3600_000 : null;
+    add("apps", `${x.name}: backup`, ageH !== null && ageH < 48 ? "pass" : "warn", ageH !== null ? `${x.backup.count} dump(s), newest ${ageH.toFixed(0)} h ago in ${cfg.pgBackupDir}` : `no dumps for "${x.db}" in ${cfg.pgBackupDir} — schedule scripts/pg-backup.sh`);
+  }
+} else add("apps", "apps", "warn", "APPS is empty — no Directus-per-app instances configured (SERVER_SETUP § 5)");
 
 // ---- staged updates ------------------------------------------------------------------
 

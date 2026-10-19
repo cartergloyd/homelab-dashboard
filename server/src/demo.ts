@@ -17,7 +17,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "./config.js";
-import type { ReclaimPayload, StagedUpdatePayload } from "./types.js";
+import type { AppsPayload, ReclaimPayload, StagedUpdatePayload } from "./types.js";
 import type {
   ContainerInfo,
   DatabasePayload,
@@ -501,6 +501,60 @@ export function stagedUpdates(): StagedUpdatePayload {
     checkedAt: new Date().toISOString(),
     upstreamChecked: true,
     notes: [],
+  };
+}
+
+// ---- database apps + tunnel ---------------------------------------------------
+// [DEMO] Fixed fam/ai/personal data. On the server this comes from each Directus's
+// /server/health (locally and through the tunnel), the app databases, the dump folder
+// and cloudflared's /ready endpoint (see DEMO_INDEX.md).
+export function apps(): AppsPayload {
+  const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+  const container = (image: string, h: number) => ({ state: "running", startedAt: ago(h), image });
+  return {
+    domain: "xgold.tech",
+    apps: [
+      {
+        name: "fam",
+        url: "http://127.0.0.1:8056",
+        publicUrl: "https://fam.xgold.tech",
+        containerName: "homelab-directus-fam",
+        db: "fam",
+        state: "ok",
+        container: container("directus/directus:11.9.3", 72),
+        local: { ok: true, status: "ok", latencyMs: 9 },
+        public: { ok: true, httpStatus: 200, latencyMs: 148 },
+        database: { exists: true, sizeBytes: 96 * 1024 ** 2, tables: 41, collections: 9, users: 6, lastLogin: ago(3) },
+        backup: { latest: ago(7), file: "/var/backups/postgres/fam-20261019-040002.sql.gz", bytes: 3.1 * 1024 ** 2, count: 14 },
+      },
+      {
+        name: "ai",
+        url: "http://127.0.0.1:8057",
+        publicUrl: "https://ai.xgold.tech",
+        containerName: "homelab-directus-ai",
+        db: "ai",
+        state: "degraded",
+        container: container("directus/directus:11.9.3", 72),
+        local: { ok: true, status: "ok", latencyMs: 11 },
+        public: { ok: true, httpStatus: 302, latencyMs: 171, note: "behind Cloudflare Access (login required)" },
+        database: { exists: true, sizeBytes: 412 * 1024 ** 2, tables: 38, collections: 6, users: 2, lastLogin: ago(26) },
+        backup: { latest: ago(55), file: "/var/backups/postgres/ai-20261017-040002.sql.gz", bytes: 18.4 * 1024 ** 2, count: 12 },
+      },
+    ],
+    tunnel: { container: container("cloudflare/cloudflared:latest", 72), ready: true, connections: 4, hostnames: ["fam.xgold.tech", "ai.xgold.tech"] },
+    postgres: {
+      connected: true,
+      version: "PostgreSQL 16.4 on x86_64-pc-linux-gnu",
+      databases: [
+        { name: "ai", owner: "ai", sizeBytes: 412 * 1024 ** 2, app: "ai" },
+        { name: "fam", owner: "fam", sizeBytes: 96 * 1024 ** 2, app: "fam" },
+        { name: "personal", owner: "homelab", sizeBytes: 184 * 1024 ** 2, app: null },
+        { name: "postgres", owner: "homelab", sizeBytes: 7 * 1024 ** 2, app: null },
+      ],
+      exposure: { binds: ["127.0.0.1"], loopbackOnly: true },
+    },
+    backupDir: "/var/backups/postgres",
+    checkedAt: new Date().toISOString(),
   };
 }
 

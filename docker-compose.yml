@@ -1,14 +1,23 @@
-# Personal database stack: PostgreSQL + Directus.
-# PostgreSQL is published on 127.0.0.1 only — it is never reachable from the LAN or the tailnet.
-# Directus is published on all interfaces; ufw limits inbound traffic to the tailscale0 interface.
+# Personal database platform: one PostgreSQL, one database + one Directus per app,
+# and a Cloudflare Tunnel that publishes each app's Directus on its own hostname
+# (fam.xgold.tech, ai.xgold.tech, …) without opening a single router port.
+#
+#   PostgreSQL        127.0.0.1:5432 only — never reachable from the LAN, the tailnet or
+#                     the internet. Apps and browsers talk to Directus, never to Postgres.
+#   directus          the owner's personal database UI, Tailscale-only (port 8055)
+#   directus-<app>    one per app, bound to 127.0.0.1:805x so only the tunnel and the
+#                     dashboard can reach it; the tunnel reaches it by service name
+#   cloudflared       outbound-only connection to Cloudflare; hostnames → services are
+#                     configured in Cloudflare Zero Trust (SERVER_SETUP § 5)
+#
 # The dashboard itself runs natively (see SERVER_SETUP.md), not in this stack.
 #
-# [INSTALLER] This stack is NEW infrastructure (the owner has no Postgres/Directus yet),
-# so these are the values to create — but check two things first: (1) nothing else on the
-# server already uses ports 5432 or 8055 (`ss -ltnp`); (2) the pinned image tags are still
-# current and supported (postgres:16, directus/directus:11.9.3 were current in Oct 2026).
-# The container names below must match DIRECTUS_CONTAINER / POSTGRES_CONTAINER in the
-# dashboard env, or its logs/status for them show "unavailable".
+# [INSTALLER] This stack is NEW infrastructure. Check first: (1) nothing else on the
+# server uses ports 5432, 8055-8057, 2000 (`ss -ltnp`); (2) the pinned image tags are still
+# current (postgres:16, directus/directus:11.9.3 were current in Oct 2026; cloudflared
+# tracks `latest` on purpose — Cloudflare retires old clients). Container names must match
+# the dashboard env (DIRECTUS_CONTAINER, POSTGRES_CONTAINER, APP_<NAME>_CONTAINER,
+# CLOUDFLARED_CONTAINER). To add an app: scripts/add-app.sh <name> prints the block to paste.
 
 services:
   postgres:
@@ -19,8 +28,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # read by deploy/postgres-init/01-apps.sh on FIRST start only (empty data dir)
+      APPS: ${APPS}
+      APP_FAM_DB_PASSWORD: ${APP_FAM_DB_PASSWORD}
+      APP_AI_DB_PASSWORD: ${APP_AI_DB_PASSWORD}
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      # [INSTALLER] keep the data OUTSIDE the source checkout, e.g. PGDATA_DIR=/srv/homelab/pgdata
+      - ${PGDATA_DIR:-./pgdata}:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
@@ -29,6 +44,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---- the owner's personal database UI: Tailscale only, not in the tunnel --------------
   directus:
     image: directus/directus:11.9.3
     container_name: homelab-directus
@@ -47,8 +63,100 @@ services:
       ADMIN_EMAIL: ${DIRECTUS_ADMIN_EMAIL}
       ADMIN_PASSWORD: ${DIRECTUS_ADMIN_PASSWORD}
       PUBLIC_URL: ${DIRECTUS_PUBLIC_URL}
+      TELEMETRY: "false"
     volumes:
-      - ./directus/uploads:/directus/uploads
-      - ./directus/extensions:/directus/extensions
+      - ${APPS_DATA_DIR:-./apps}/personal/uploads:/directus/uploads
+      - ${APPS_DATA_DIR:-./apps}/personal/extensions:/directus/extensions
     ports:
+      # reachable over the tailnet (ufw limits 8055 to tailscale0, SERVER_SETUP § 8)
       - "8055:8055"
+
+  # ---- one Directus per public app: own database, own users, own admin, own hostname -----
+  directus-fam:
+    image: directus/directus:11.9.3
+    container_name: homelab-directus-fam
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SECRET: ${APP_FAM_SECRET}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: fam
+      DB_USER: fam
+      DB_PASSWORD: ${APP_FAM_DB_PASSWORD}
+      ADMIN_EMAIL: ${APP_FAM_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${APP_FAM_ADMIN_PASSWORD}
+      PUBLIC_URL: https://fam.${PUBLIC_DOMAIN}
+      # behind Cloudflare: trust the proxy for client IPs, rate-limit, secure cookies, allow the app's origin(s)
+      IP_TRUST_PROXY: "true"
+      RATE_LIMITER_ENABLED: "true"
+      RATE_LIMITER_POINTS: "50"
+      RATE_LIMITER_DURATION: "1"
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: ${APP_FAM_CORS_ORIGIN:-https://fam.${PUBLIC_DOMAIN}}
+      REFRESH_TOKEN_COOKIE_SECURE: "true"
+      REFRESH_TOKEN_COOKIE_SAME_SITE: lax
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_SAME_SITE: lax
+      WEBSOCKETS_ENABLED: "true"
+      TELEMETRY: "false"
+    volumes:
+      - ${APPS_DATA_DIR:-./apps}/fam/uploads:/directus/uploads
+      - ${APPS_DATA_DIR:-./apps}/fam/extensions:/directus/extensions
+    ports:
+      # loopback only: the tunnel reaches it as http://directus-fam:8055, the dashboard as 127.0.0.1:8056
+      - "127.0.0.1:8056:8055"
+
+  directus-ai:
+    image: directus/directus:11.9.3
+    container_name: homelab-directus-ai
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SECRET: ${APP_AI_SECRET}
+      DB_CLIENT: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ai
+      DB_USER: ai
+      DB_PASSWORD: ${APP_AI_DB_PASSWORD}
+      ADMIN_EMAIL: ${APP_AI_ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${APP_AI_ADMIN_PASSWORD}
+      PUBLIC_URL: https://ai.${PUBLIC_DOMAIN}
+      IP_TRUST_PROXY: "true"
+      RATE_LIMITER_ENABLED: "true"
+      RATE_LIMITER_POINTS: "50"
+      RATE_LIMITER_DURATION: "1"
+      CORS_ENABLED: "true"
+      CORS_ORIGIN: ${APP_AI_CORS_ORIGIN:-https://ai.${PUBLIC_DOMAIN}}
+      REFRESH_TOKEN_COOKIE_SECURE: "true"
+      REFRESH_TOKEN_COOKIE_SAME_SITE: lax
+      SESSION_COOKIE_SECURE: "true"
+      SESSION_COOKIE_SAME_SITE: lax
+      WEBSOCKETS_ENABLED: "true"
+      TELEMETRY: "false"
+    volumes:
+      - ${APPS_DATA_DIR:-./apps}/ai/uploads:/directus/uploads
+      - ${APPS_DATA_DIR:-./apps}/ai/extensions:/directus/extensions
+    ports:
+      - "127.0.0.1:8057:8055"
+
+  # ---- Cloudflare Tunnel: outbound only, no router ports, TLS at Cloudflare's edge -------
+  # Hostname routing lives in Cloudflare Zero Trust → Networks → Tunnels → this tunnel →
+  # Public Hostname: fam.<domain> → http://directus-fam:8055, ai.<domain> → http://directus-ai:8055
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: homelab-cloudflared
+    restart: unless-stopped
+    depends_on:
+      - directus-fam
+      - directus-ai
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    ports:
+      # /ready and /metrics for the dashboard's tunnel status, loopback only
+      - "127.0.0.1:2000:2000"

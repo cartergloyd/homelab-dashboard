@@ -46,6 +46,8 @@ sudo npm run wrap-service -- --install-hl-run                    # hl-run + /etc
 sudo npm run wrap-service -- mc-backup.service --apply --test    # route a timer's output into the feed
 npm test                                                         # discovery + disk-scan unit checks, demo-index coverage
 npm run demo:index                                               # list every [DEMO] tag (see DEMO_INDEX.md)
+scripts/add-app.sh <name>                                        # new Directus-per-app database + the snippets to paste (SERVER_SETUP § 5)
+scripts/pg-backup.sh                                             # dump every Postgres database to PG_BACKUP_DIR
 ```
 
 ## Development
