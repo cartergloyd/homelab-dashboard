@@ -151,8 +151,10 @@ copy the key for `JELLYFIN_API_KEY`. (Jellyfin 12+ requires the modern
 What this gives the owner: **one PostgreSQL** (bound to 127.0.0.1, never reachable from
 anywhere else), the **personal Directus** over Tailscale (port 8055, unchanged), and **one
 Directus per public app** — `fam` and `ai` to start — each with its **own database, own
-login role, own users, own files and own admin**, published at `https://fam.xgold.tech`
-and `https://ai.xgold.tech` through a **Cloudflare Tunnel**. Nothing is port-forwarded on the
+login role, own users, own files and own admin**, published at `https://api.fam.xgold.tech`
+and `https://api.ai.xgold.tech` through a **Cloudflare Tunnel**. The bare `fam.xgold.tech` /
+`ai.xgold.tech` names stay the apps' **front-ends** (GitHub Pages today) — the convention is
+`<app>` = site, `api.<app>` = that app's Directus. Nothing is port-forwarded on the
 router: `cloudflared` makes outbound connections to Cloudflare, Cloudflare terminates TLS
 and routes each hostname to the right container. Apps use Directus's auth, REST/GraphQL,
 realtime and files like they would use Supabase; they never see the database port.
@@ -160,7 +162,8 @@ realtime and files like they would use Supabase; they never see the database por
 ### 5.0 Before you start
 
 - The domain (`xgold.tech`) must use **Cloudflare DNS** (nameservers at Cloudflare; the free
-  plan is enough) and the account needs **Zero Trust** enabled (free for up to 50 users).
+  plan is enough) and the account needs **Zero Trust** activated (free for up to 50 users).
+  As of 2026-10-20 neither is done yet — § 5.0a is the one-time cutover.
 - Pick data folders outside the source checkout and create them:
   ```bash
   sudo mkdir -p /srv/homelab/pgdata /srv/homelab/apps /var/backups/postgres
@@ -168,6 +171,56 @@ realtime and files like they would use Supabase; they never see the database por
   ```
   (`pgdata` is owned by the postgres container itself.)
 - Check nothing already uses the ports: `ss -ltnp | grep -E ':(5432|805[5-7]|2000)\b'`.
+
+### 5.0a Move `xgold.tech`'s DNS from Squarespace to Cloudflare (one-time)
+
+State found on 2026-10-20 in the owner's logged-in Cloudflare and Squarespace accounts:
+
+- The domain is **registered at Squarespace** (active until 2029-06-08) and Squarespace still
+  **serves its DNS** (`nsa1-4.squarespacedns.com`) with **DNSSEC on**.
+- The Cloudflare account already holds the zone `xgold.tech` (Free plan), status **Pending
+  nameserver update**, assigned `robin.ns.cloudflare.com` and `rory.ns.cloudflare.com`.
+- Cloudflare's automatic import copied 11 of the 13 live records and got the proxy status
+  wrong: `mc` (Minecraft) came in **Proxied**, which would break the game server the moment
+  the nameservers switch; `api.fam`, `streaming` and `fam` were not copied at all.
+- Zero Trust is **not** activated yet. Activation (Free, $0) asks for a payment method, a
+  billing address and the Terms of Service — an owner-only step.
+
+Do these in order; visitors notice nothing until step 3, and nothing at all if step 1 is exact.
+
+1. **Make the Cloudflare zone identical to Squarespace.** Cloudflare → `xgold.tech` → DNS →
+   Records. Cleanest: delete the 11 imported records, then **Import** `deploy/dns/xgold.tech.zone`
+   with *Proxy imported records* **unchecked**. By hand instead: switch `mc`, the four `@` A
+   records and `www` to **DNS only** (grey cloud); add `A api.fam → 99.116.141.110`,
+   `A streaming → 99.116.141.110` and `CNAME fam → cartergloyd.github.io` (DNS only); delete
+   `_domainconnect` (it only works while Squarespace serves DNS). End state: **13 records, none
+   proxied** — `mc` and `streaming` carry TCP/UDP services the Cloudflare proxy cannot pass.
+2. **Turn DNSSEC off at Squarespace** (Domains → `xgold.tech` → DNS → DNSSEC → toggle off) and
+   wait until the `.tech` registry has dropped the DS record:
+   ```bash
+   dig +short DS xgold.tech @1.1.1.1      # must print NOTHING before step 3 (can take up to 24 h)
+   ```
+   Skipping this makes every validating resolver answer SERVFAIL for the whole domain after
+   the switch — site, Minecraft and apps all vanish until the stale DS expires.
+3. **Switch the nameservers**: Squarespace → Domains → `xgold.tech` → DNS → Domain Nameservers
+   → *Use custom nameservers* → `robin.ns.cloudflare.com` and `rory.ns.cloudflare.com`, remove
+   the four `squarespacedns.com` entries, save. Cloudflare's overview turns **Active** within
+   minutes to a few hours (it also e-mails).
+4. **Verify nothing moved but the nameservers:**
+   ```bash
+   dig +short NS xgold.tech                        # robin/rory.ns.cloudflare.com
+   dig +short mc.xgold.tech                        # 99.116.141.110 — NOT a 104.x / 172.6x Cloudflare address
+   dig +short SRV _minecraft._tcp.mc.xgold.tech    # 0 5 25565 mc.xgold.tech.
+   dig +short fam.xgold.tech www.xgold.tech        # cartergloyd.github.io + GitHub's 185.199.x
+   curl -sI https://fam.xgold.tech | head -1       # the GitHub Pages site still answers
+   ```
+   `npm run audit:install` → `[dns]` repeats this from the server (nameservers, DNSSEC
+   consistency, proxied-vs-DNS-only per hostname) and fails on exactly the `mc`-proxied mistake.
+5. **Activate Zero Trust** (owner): Cloudflare → Zero Trust → *Zero Trust Free* → payment
+   method + billing address + Terms ($0 due). Team name `xgold` → `xgold.cloudflareaccess.com`
+   becomes the Access login page. Then continue with § 5.2.
+6. **Optional, later:** enable DNSSEC in Cloudflare (DNS → Settings) and paste its DS record at
+   Squarespace; proxy `@` / `www` / `fam` (orange cloud) with SSL/TLS mode *Full*.
 
 ### 5.1 Compose environment
 
@@ -186,23 +239,27 @@ the admin e-mails, and leave `CLOUDFLARE_TUNNEL_TOKEN` for the next step. One
    Cloudflared**, name it `homelab`.
 2. On "Install and run a connector" choose **Docker** and copy **only the token** — the long
    string after `--token` — into `CLOUDFLARE_TUNNEL_TOKEN` in `.env`. Do not run their
-   command; compose runs the connector.
-3. **Public Hostname** tab → Add: subdomain `fam`, domain `xgold.tech`, type **HTTP**, URL
-   `directus-fam:8055`. Add another: `ai` → `directus-ai:8055`. Cloudflare creates the DNS
-   records itself. (Service names resolve because cloudflared runs in the same compose
-   network.)
+   command; compose runs the connector (on the host network, so it reaches the loopback ports).
+3. **Public Hostname** tab → Add: subdomain `api.fam`, domain `xgold.tech`, type **HTTP**, URL
+   `127.0.0.1:8056`. Add another: `api.ai` → `127.0.0.1:8057`. Cloudflare creates a proxied
+   CNAME per hostname. If `api.fam` still has the A record from § 5.0a, delete that record
+   first — Cloudflare refuses to add a hostname over an existing record.
+4. Do **not** add `fam` / `ai` themselves — those are the apps' front-ends (GitHub Pages). The
+   dashboard's own hostname (`dash` → `127.0.0.1:3000`) belongs to issue #10: add it only once
+   that PR's Access-token validation is deployed (until then the dashboard answers 401 to
+   anything arriving through the tunnel anyway).
 
 ### 5.3 Start and verify
 
 ```bash
 sudo docker compose up -d && sudo docker compose ps
 sudo docker logs homelab-cloudflared 2>&1 | grep -i "registered tunnel connection" | head -4   # expect 4 lines
-curl -s https://fam.xgold.tech/server/health ; echo                                        # {"status":"ok"}
-curl -s https://ai.xgold.tech/server/health ; echo
+curl -s https://api.fam.xgold.tech/server/health ; echo                                    # {"status":"ok"}
+curl -s https://api.ai.xgold.tech/server/health ; echo
 sudo ss -ltnp | grep -E ':(5432|805[67]|2000)\b'                                           # every line 127.0.0.1 (acceptance criterion 3)
 ```
 
-Open `https://fam.xgold.tech/admin`, sign in with `APP_FAM_ADMIN_*`, change the password,
+Open `https://api.fam.xgold.tech/admin`, sign in with `APP_FAM_ADMIN_*`, change the password,
 create the first collection and a role for app users. Same for `ai`. The personal Directus
 is still `http://<tailscale-name>:8055` only.
 
@@ -213,12 +270,12 @@ dashboard env to paste).
 
 ### 5.4 Protect the admin UIs (recommended)
 
-Zero Trust → **Access → Applications → Add → Self-hosted**: domain `fam.xgold.tech`, path
+Zero Trust → **Access → Applications → Add → Self-hosted**: domain `api.fam.xgold.tech`, path
 `admin*` → policy "Allow" for the owner's e-mail(s) with One-time PIN (or Google). Repeat for
-`ai`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
+`api.ai`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
 dashboard shows "behind Cloudflare Access" for the public check when this is on. Each
-Directus also runs with the rate limiter on, secure cookies, and CORS limited to its own
-origin (`APP_<NAME>_CORS_ORIGIN` to add the app's front-end origin).
+Directus also runs with the rate limiter on, secure cookies, and CORS limited to the app's
+site origin (`https://fam.xgold.tech`; `APP_<NAME>_CORS_ORIGIN` to add more, e.g. a dev origin).
 
 ### 5.5 Backups of every database
 
@@ -243,13 +300,14 @@ COMPOSE_ENV=/opt/homelab-dashboard/.env
 Restart the dashboard. **Database & apps** must show: PostgreSQL connected with the
 "127.0.0.1 only" pill, the tunnel connected with both hostnames, and a green card per app
 (Directus healthy, public HTTPS ok, database present, users, backup). `npm run audit:install`
-→ `[apps]` all ✔ (5432 loopback-only and each app's container/health/database are gates).
+→ `[apps]` and `[dns]` all ✔ (5432 loopback-only, each app's container/health/database, Cloudflare
+nameservers, a consistent DNSSEC state and a non-proxied Minecraft record are gates).
 
 ### 5.7 Connecting an app
 
 ```ts
 import { createDirectus, authentication, rest, realtime } from "@directus/sdk";
-const fam = createDirectus("https://fam.xgold.tech").with(authentication()).with(rest()).with(realtime());
+const fam = createDirectus("https://api.fam.xgold.tech").with(authentication()).with(rest()).with(realtime()); // called from the site at https://fam.xgold.tech (CORS already allows it)
 await fam.login({ email, password });            // users you created in fam's admin
 const items = await fam.request(readItems("chores"));
 ```
@@ -609,7 +667,7 @@ HTTPS connections to Cloudflare. Recommended home-router settings:
 | IPv6 firewall | **On** (default deny inbound) if the ISP provides IPv6. | Inbound IPv6 bypasses NAT; the firewall must do the job NAT does for IPv4. |
 | Tailscale | No forward needed. Optional: forward one UDP port and run `tailscaled` with `--port=<that port>` for more direct connections. | Tailscale traverses NAT by itself and falls back to relays; a fixed forwarded port avoids relays on strict NATs. |
 | Local DNS filters (Pi-hole etc.) | Don't block `*.cloudflareaccess.com`, `*.argotunnel.com`, `*.cfargotunnel.com`, `region1.v2.argotunnel.com`, `api.cloudflare.com`. | cloudflared and Cloudflare Access use these. |
-| Hairpin NAT / local overrides for `fam.xgold.tech` | Not needed. | From inside the house the apps still go out to Cloudflare and back through the tunnel, which works everywhere. |
+| Hairpin NAT / local overrides for `api.fam.xgold.tech` | Not needed. | From inside the house the apps still go out to Cloudflare and back through the tunnel, which works everywhere. |
 | QoS | Optional: prioritise the server's Minecraft traffic. | Keeps gameplay smooth while backups or uploads run. |
 
 The server-side VPN (split tunnel) is unaffected: cloudflared's outbound connections and
@@ -623,7 +681,8 @@ Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions
 - [ ] **Media files** lists each root; a test upload appears and triggers a Jellyfin scan
 - [ ] **Database** page shows Directus `ok` and Postgres connected
 - [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only (also 8056, 8057, 2000)
-- [ ] `https://fam.xgold.tech/server/health` and `https://ai.xgold.tech/server/health` return ok from outside the house; `/admin` asks for the Cloudflare Access login
+- [ ] `dig +short NS xgold.tech` → `robin`/`rory.ns.cloudflare.com`, Cloudflare's overview says **Active**, and `dig +short mc.xgold.tech` is still the home IP, not a Cloudflare address (§ 5.0a)
+- [ ] `https://api.fam.xgold.tech/server/health` and `https://api.ai.xgold.tech/server/health` return ok from outside the house; `/admin` asks for the Cloudflare Access login; `https://fam.xgold.tech` still shows the GitHub Pages site
 - [ ] **Database & apps** shows the tunnel connected and a green card per app; a dump exists for each database in `PG_BACKUP_DIR`
 - [ ] No router port forwards exist for 5432, 8055–8057, 2000 or 3000 (§ 8b)
 - [ ] **Minecraft → Live server alerts** shows Paper log lines; "Problems & maintenance" hides the routine ones

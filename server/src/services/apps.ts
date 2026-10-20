@@ -137,6 +137,7 @@ async function appStatus(a: (typeof cfg.apps)[number]): Promise<AppStatus> {
     name: a.name,
     url: a.url,
     publicUrl: a.publicUrl,
+    siteUrl: a.siteUrl,
     containerName: a.container,
     db: a.db,
     state,

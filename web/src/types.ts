@@ -534,6 +534,8 @@ export interface AppStatus {
   name: string;
   url: string;
   publicUrl: string | null;
+  /** the app's front-end site (<name>.<domain>, GitHub Pages today); informational */
+  siteUrl: string | null;
   containerName: string;
   db: string;
   state: ServiceState;

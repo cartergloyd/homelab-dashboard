@@ -1,0 +1,36 @@
+; xgold.tech — the records Squarespace served on 2026-10-20, in BIND format for
+; Cloudflare → DNS → Records → Import. Import with "Proxy imported records" UNCHECKED so every
+; record arrives DNS-only (grey cloud) and the cutover changes nothing but the nameservers.
+;
+;   @ / www / fam      GitHub Pages (cartergloyd.github.io) — the owner's sites
+;   api.fam / streaming / mc   the home IP (port-forwarded services; the VPN has exceptions for them)
+;   _minecraft._tcp.mc  SRV so clients find the Java server without a port
+;   TXT                 "no mail is sent from this domain" (SPF -all, DMARC reject, empty DKIM)
+;
+; NOT included: _domainconnect CNAME → _domainconnect.domains.squarespace.com — Squarespace's
+; Domain Connect only works while Squarespace serves DNS; delete it from the Cloudflare zone.
+;
+; After the cutover the tunnel adds its own records: api.fam, api.ai (later dash) become
+; proxied CNAMEs to <tunnel-id>.cfargotunnel.com — delete the api.fam A record first, then
+; add the hostname in Zero Trust → Tunnels → Public Hostname (SERVER_SETUP § 5.2).
+; mc / streaming MUST stay DNS-only: Minecraft and Jellyfin are not HTTP on 80/443 and the
+; Cloudflare proxy would break them. The audit's [dns] section checks exactly this.
+
+$ORIGIN xgold.tech.
+$TTL 14400
+
+@                     14400 IN A      185.199.108.153
+@                     14400 IN A      185.199.109.153
+@                     14400 IN A      185.199.110.153
+@                     14400 IN A      185.199.111.153
+www                   14400 IN CNAME  cartergloyd.github.io.
+fam                   14400 IN CNAME  cartergloyd.github.io.
+
+api.fam                3600 IN A      99.116.141.110
+mc                     3600 IN A      99.116.141.110
+streaming             14400 IN A      99.116.141.110
+_minecraft._tcp.mc     3600 IN SRV    0 5 25565 mc.xgold.tech.
+
+@                     14400 IN TXT    "v=spf1 -all"
+_dmarc                14400 IN TXT    "v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s"
+_domainkey            14400 IN TXT    "v=DKIM1; p="
