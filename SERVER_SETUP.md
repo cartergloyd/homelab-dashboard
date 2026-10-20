@@ -174,6 +174,12 @@ realtime and files like they would use Supabase; they never see the database por
 
 ### 5.0a Move `xgold.tech`'s DNS from Squarespace to Cloudflare (one-time)
 
+**Done on 2026-10-20** (zone Active, 13 records all DNS-only, Zero Trust Free active with team
+`floral-glitter-d778`). Kept as the record of how, and as the template for any future domain.
+Lesson learned the hard way: the nameservers were switched before the registry had dropped the DS
+record, which made 1.1.1.1 answer SERVFAIL for the whole domain for a few hours — step 2 really
+must finish before step 3.
+
 State found on 2026-10-20 in the owner's logged-in Cloudflare and Squarespace accounts:
 
 - The domain is **registered at Squarespace** (active until 2029-06-08) and Squarespace still

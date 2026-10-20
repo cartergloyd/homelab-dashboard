@@ -178,11 +178,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       gate), SERVER_SETUP § 5 rewritten + § 8b router settings.
 - [ ] Database platform: the compose stack has still never been started on real Docker
       (none on the dev Mac) — first `docker compose up` happens on the server
-- [ ] **DNS cutover** (state 2026-10-20): the `xgold.tech` zone exists on Cloudflare but is *pending* —
-      Squarespace still serves DNS with **DNSSEC on**, and Zero Trust is not activated (the Free
-      plan asks for a payment method + Terms; owner-only). Runbook SERVER_SETUP § 5.0a, records as
-      data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (nameservers, DNSSEC
-      consistency, proxied-vs-DNS-only per hostname; `server/test-dns.mjs`).
+- [x] **DNS cutover** done 2026-10-20: `xgold.tech` is **Active** on Cloudflare (nameservers switched
+      11:33, DNSSEC removed at Squarespace, 13 records identical to the old zone, all DNS-only);
+      Zero Trust Free is activated (team `floral-glitter-d778`). Runbook SERVER_SETUP § 5.0a, records
+      as data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (`server/test-dns.mjs`).
+- [ ] Tunnel: create `homelab` in Zero Trust, token into the compose `.env`, public hostnames
+      `api.fam` / `api.ai` → `127.0.0.1:8056/8057` (delete the old `api.fam` A record first), first
+      `docker compose up` on the server, Access on `/admin`
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
@@ -213,9 +215,12 @@ override the placeholders wherever they conflict:
 - The seeded default jobs showed up in production → treat any job named "Nightly world
   backup" / "Daily restart" in `data/jobs.json` on the server as demo leakage to remove.
 - Open work for all of this is tracked in GitHub issue #2 (deferred by the owner).
-- The owner's domain is `xgold.tech`, **registered at Squarespace**, added to Cloudflare (Free)
-  but still pending the nameserver switch to `robin`/`rory.ns.cloudflare.com`; Squarespace has
-  **DNSSEC on**, which must be off (DS expired) before the switch. Live records on 2026-10-20:
+- The owner's domain is `xgold.tech`, **registered at Squarespace**, served by Cloudflare DNS since
+  2026-10-20 (`robin`/`rory.ns.cloudflare.com`, zone Active, DNSSEC off everywhere — the stale DS
+  caused a few hours of SERVFAIL at 1.1.1.1 because the nameservers moved before the DS expired).
+  Zero Trust Free is active; the team domain is `floral-glitter-d778.cloudflareaccess.com` (rename
+  under Zero Trust → Settings before creating Access apps if a nicer login URL is wanted; issue #10
+  needs it as `CF_ACCESS_TEAM_DOMAIN`). The records, identical to the old Squarespace set:
   `@`, `www`, `fam` → GitHub Pages (`cartergloyd.github.io`); `api.fam`, `mc`, `streaming` → the
   home IP `99.116.141.110` (port-forwarded through the VPN's exceptions); SRV `_minecraft._tcp.mc`;
   SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`api.<app>` = that app's
