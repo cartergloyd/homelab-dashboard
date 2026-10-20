@@ -99,13 +99,15 @@ function describeTarget(recs: Rec[], homeIp: string | null): string | null {
 async function httpsProbe(url: string, timeoutMs = 8000): Promise<HostnameProbe> {
   const t = Date.now();
   try {
-    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs), headers: { "user-agent": "homelab-dashboard hostnames probe", accept: "*/*" } });
+    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs), // a browser-shaped UA: Cloudflare's Browser Integrity Check answers 403 to bare bot strings
+      headers: { "user-agent": "Mozilla/5.0 (compatible; homelab-dashboard/0.2; +https://github.com/cartergloyd/homelab-dashboard)", accept: "text/html,application/json;q=0.9,*/*;q=0.8" } });
     const latencyMs = Date.now() - t;
     const loc = res.headers.get("location") ?? "";
     const base = { kind: "https" as const, httpStatus: res.status, latencyMs };
     if (res.status >= 200 && res.status < 300) return { ...base, ok: true, detail: `HTTPS ${res.status}` };
     if (res.status >= 300 && res.status < 400) return { ...base, ok: true, detail: /cloudflareaccess\.com/i.test(loc) ? "login wall (Cloudflare Access)" : `redirects to ${loc.replace(/^https?:\/\//, "").slice(0, 50)}` };
-    if (res.status === 401 || res.status === 403) return { ...base, ok: true, detail: `HTTPS ${res.status} (needs a login)` };
+    if (res.status === 401) return { ...base, ok: true, detail: "HTTPS 401 (needs a login)" };
+    if (res.status === 403) return { ...base, ok: true, detail: "HTTPS 403 (login required, or Cloudflare blocked the probe)" };
     if (res.status === 530 || (res.status >= 520 && res.status <= 526)) return { ...base, ok: false, detail: `Cloudflare ${res.status} — origin not reachable (tunnel down?)` };
     return { ...base, ok: false, detail: `HTTPS ${res.status}` };
   } catch (e) {
