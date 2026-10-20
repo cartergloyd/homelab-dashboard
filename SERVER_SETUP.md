@@ -698,16 +698,22 @@ together with a valid Access token.
    Authentication → *Choose available identity providers* → GitHub only; policy `Owner` =
    Allow, Emails = the primary e-mail of the GitHub account; session 24 h. After creating it,
    open the application and copy the **Application Audience (AUD) Tag**.
-4. **Dashboard env** (the real env file) and restart:
+4. **Dashboard env** (the real env file) and restart. Steps 1–3 were done on 2026-10-20: the
+   application is "Homelab dashboard" (id `ff50007a-cd93-49fb-a2c0-23d326fcf5e4`), GitHub is its
+   only login method, the Owner policy allows the owner's e-mail, and its AUD tag is below (an AUD
+   tag is an identifier, not a secret — it only tells the dashboard which application a token was
+   issued for):
    ```
    CF_ACCESS_TEAM_DOMAIN=xgold-tech.cloudflareaccess.com
-   CF_ACCESS_AUD=<the AUD tag>
+   CF_ACCESS_AUD=580aaf836e4a4f954a6bf7aaf2f48f6aab5b9e2d0a2e06d62d484d5a5bb91fe6
    PUBLIC_DASHBOARD_URL=https://dash.xgold.tech
    ```
 5. **Tunnel route**: Zero Trust → Networking → Tunnels → homelab → Routes → Add route →
    Published application: subdomain `dash`, Service URL `http://127.0.0.1:<PORT>` — the port the
    dashboard really listens on (`PORT` in its env; `HOST` must include loopback: `127.0.0.1` or
-   `0.0.0.0`). cloudflared runs on the host network, so loopback is reachable.
+   `0.0.0.0`). cloudflared runs on the host network, so loopback is reachable. Added 2026-10-20 as
+   `http://127.0.0.1:8088` (the port seen in the owner's browser) — edit the route if the server's
+   `PORT` differs.
 6. **Verify** (acceptance for issue #10, part A):
    ```bash
    curl -sI https://dash.xgold.tech/api/config | head -1                                   # 302 → xgold-tech.cloudflareaccess.com, never 200

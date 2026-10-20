@@ -202,8 +202,12 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       shared with the audit), infers the role, and probes it (HTTPS / Access login wall / Cloudflare
       5xx, Minecraft ping, Jellyfin). `GET /api/hostnames`, MCP `hostnames_status`,
       `HostnamesCard`. Read-only by design.
-- [ ] Issue #10 part A, Cloudflare side: GitHub login method, Access app for `dash.xgold.tech`,
-      AUD tag into the env, tunnel route `dash` → the dashboard's real port
+- [x] Issue #10 part A, Cloudflare side (2026-10-20): GitHub OAuth app + login method (tested,
+      identity e-mail = the owner's), Access application "Homelab dashboard" for `dash.xgold.tech`
+      (GitHub only, Owner policy, 24 h, id `ff50007a-…`, AUD in SERVER_SETUP § 7b), tunnel route
+      `dash` → `http://127.0.0.1:8088`
+- [ ] Issue #10 part A, server side: pull main, build, add `CF_ACCESS_*` + `PUBLIC_DASHBOARD_URL`
+      to the dashboard env, restart; confirm `PORT`/`HOST` (route assumes 8088 on loopback)
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
       checklist, service token for MCP, image versions in the Staged update card
 - [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up` (then
