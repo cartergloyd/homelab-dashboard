@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { calendarToCron, fmtDelta, isRelevant, jobMatchesCronEntry, nextRunOf, normalizeCommand, parseCrontab, parseSystemdTimestamp, scriptPathFromCommand, wrappedCronLine, type CronEntry } from "./discover-lib.js";
+import { RR, dnssecVerdict, hostOf, proxiedVerdict, readDoh, type DohResponse, type RRName } from "./dns-lib.js";
 import { envFileFromArgs, flag, loadEnvFile, shq } from "./env.js";
 
 const execFileP = promisify(execFile);
@@ -202,6 +203,56 @@ if (cfg.apps.length) {
     add("apps", `${x.name}: backup`, ageH !== null && ageH < 48 ? "pass" : "warn", ageH !== null ? `${x.backup.count} dump(s), newest ${ageH.toFixed(0)} h ago in ${cfg.pgBackupDir}` : `no dumps for "${x.db}" in ${cfg.pgBackupDir} — schedule scripts/pg-backup.sh`);
   }
 } else add("apps", "apps", "warn", "APPS is empty — no Directus-per-app instances configured (SERVER_SETUP § 5)");
+
+// ---- public DNS: nameservers, DNSSEC, proxied vs DNS-only per hostname (SERVER_SETUP § 5.0a) --
+// Asked over DNS-over-HTTPS so the answer is the public one, not the LAN resolver's (Pi-hole,
+// router) — and so it works even when `dig` is not installed.
+
+async function doh(name: string, type: RRName): Promise<DohResponse | null> {
+  try {
+    const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(6000) });
+    return res.ok ? ((await res.json()) as DohResponse) : null;
+  } catch {
+    return null;
+  }
+}
+async function resolveA(host: string): Promise<string[] | null> {
+  const r = await doh(host, "A");
+  return r ? readDoh(r, RR.A).answers : null;
+}
+
+if (cfg.publicDomain) {
+  const dom = cfg.publicDomain;
+  const ns = await doh(dom, "NS");
+  if (!ns) add("dns", "resolver", "warn", "could not reach cloudflare-dns.com over HTTPS — no internet from here? [dns] checks skipped");
+  else {
+    const servers = readDoh(ns, RR.NS).answers;
+    const onCloudflare = servers.length > 0 && servers.every((s) => /(^|\.)ns\.cloudflare\.com$/i.test(s));
+    add("dns", `${dom}: nameservers`, onCloudflare ? "pass" : "fail", servers.length ? `${servers.join(", ")}${onCloudflare ? "" : " — not Cloudflare's yet. Finish SERVER_SETUP § 5.0a (DNSSEC off at the registrar first, then switch the nameservers)"}` : "no NS answer", cfg.apps.length > 0);
+    const [ds, a] = await Promise.all([doh(dom, "DS"), doh(dom, "A")]);
+    const v = dnssecVerdict({ rcode: readDoh(a, RR.A).rcode, ad: !!a?.AD, dsAtParent: readDoh(ds, RR.DS).answers.length > 0 });
+    add("dns", `${dom}: dnssec`, v.status, v.detail, v.status === "fail");
+    for (const app of cfg.apps) {
+      if (app.publicUrl) {
+        const host = new URL(app.publicUrl).host;
+        const ips = await resolveA(host);
+        const pv = proxiedVerdict(ips ?? [], true);
+        add("dns", `${app.name}: ${host}`, ips === null ? "warn" : ips.length ? pv.status : "fail", ips === null ? "lookup failed" : ips.length ? pv.detail : "no record — add the public hostname under the tunnel (Zero Trust → Networks → Tunnels → Public Hostname)", ips !== null);
+      }
+      if (app.siteUrl) {
+        const host = new URL(app.siteUrl).host;
+        const ips = await resolveA(host);
+        add("dns", `${app.name}: site ${host}`, ips?.length ? "pass" : "warn", ips?.length ? `→ ${ips.join(", ")} (the app's front-end — not a tunnel hostname)` : "no record — fine until the app has a front-end");
+      }
+    }
+    if (cfg.minecraft.publicAddress) {
+      const host = hostOf(cfg.minecraft.publicAddress);
+      const ips = await resolveA(host);
+      const pv = proxiedVerdict(ips ?? [], false);
+      add("dns", `minecraft: ${host}`, ips?.length ? pv.status : "warn", ips?.length ? pv.detail : "no A record for MC_PUBLIC_ADDRESS", !!ips?.length);
+    }
+  }
+} else add("dns", "dns", "skip", "PUBLIC_DOMAIN not set — no public hostnames to check");
 
 // ---- staged updates ------------------------------------------------------------------
 

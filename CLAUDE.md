@@ -62,8 +62,10 @@ web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
 deploy/   systemd units, sudoers rule, env template      SERVER_SETUP.md = install handoff
 scripts/  hl-run.sh — tee a terminal script's output into the alerts feed
 docker-compose.yml   PostgreSQL (127.0.0.1 only) + personal Directus (Tailscale) + one Directus per
-                     public app (fam, ai → 127.0.0.1:805x) + cloudflared (Cloudflare Tunnel)
+                     public app (fam, ai → 127.0.0.1:805x, published as api.<app>.xgold.tech) +
+                     cloudflared (Cloudflare Tunnel, host network → 127.0.0.1:<port>)
                      services/apps.ts reads it all; apps-config.ts parses APPS / APP_<NAME>_*
+deploy/dns/          the owner's real DNS records as a BIND zone (import into Cloudflare, § 5.0a)
 ```
 
 Scheduler (`services/scheduler.ts`): jobs are **data** in `data/jobs.json` (types
@@ -176,6 +178,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       gate), SERVER_SETUP § 5 rewritten + § 8b router settings.
 - [ ] Database platform: the compose stack has still never been started on real Docker
       (none on the dev Mac) — first `docker compose up` happens on the server
+- [ ] **DNS cutover** (state 2026-10-20): the `xgold.tech` zone exists on Cloudflare but is *pending* —
+      Squarespace still serves DNS with **DNSSEC on**, and Zero Trust is not activated (the Free
+      plan asks for a payment method + Terms; owner-only). Runbook SERVER_SETUP § 5.0a, records as
+      data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (nameservers, DNSSEC
+      consistency, proxied-vs-DNS-only per hostname; `server/test-dns.mjs`).
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
@@ -206,8 +213,14 @@ override the placeholders wherever they conflict:
 - The seeded default jobs showed up in production → treat any job named "Nightly world
   backup" / "Daily restart" in `data/jobs.json` on the server as demo leakage to remove.
 - Open work for all of this is tracked in GitHub issue #2 (deferred by the owner).
-- The owner's domain is `xgold.tech` (Cloudflare DNS); the first apps are `fam` and `ai`.
-  A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
+- The owner's domain is `xgold.tech`, **registered at Squarespace**, added to Cloudflare (Free)
+  but still pending the nameserver switch to `robin`/`rory.ns.cloudflare.com`; Squarespace has
+  **DNSSEC on**, which must be off (DS expired) before the switch. Live records on 2026-10-20:
+  `@`, `www`, `fam` → GitHub Pages (`cartergloyd.github.io`); `api.fam`, `mc`, `streaming` → the
+  home IP `99.116.141.110` (port-forwarded through the VPN's exceptions); SRV `_minecraft._tcp.mc`;
+  SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`api.<app>` = that app's
+  Directus, `<app>` = its front-end**. The first apps are `fam` and `ai`.
+- A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
   failures are a known "needs a human" incident, not a server fault.
 
 ## Decisions log
@@ -300,6 +313,21 @@ override the placeholders wherever they conflict:
   The personal Directus stays Tailscale-only and is NOT in the tunnel.
 - 2026-10-19 Data for the stack lives outside the source checkout (`PGDATA_DIR`,
   `APPS_DATA_DIR`, default `/srv/homelab/…`) so a re-clone can never lose it.
+- 2026-10-20 **`api.<app>.xgold.tech` is the app's Directus; `<app>.xgold.tech` is its front-end.**
+  Found in the live DNS: `fam.xgold.tech` is already a GitHub Pages site and `api.fam` its API
+  host. Defaults in `apps-config.ts` (`publicUrl` = api., `siteUrl` = bare), compose `PUBLIC_URL`,
+  CORS default = the site origin, `add-app.sh`, docs; `APP_<NAME>_PUBLIC_URL` / `_SITE_URL` override.
+- 2026-10-20 **cloudflared runs with `network_mode: host`.** A bridge container cannot reach
+  services bound to 127.0.0.1 on the host (`host.docker.internal` is the bridge gateway, not
+  loopback), and everything the tunnel publishes is loopback-only by design — including the
+  native dashboard for issue #10. Public hostnames therefore point at `http://127.0.0.1:<port>`.
+- 2026-10-20 **The DNS cutover changes nothing but the nameservers.** The Cloudflare zone is made
+  record-for-record identical to Squarespace with every record DNS-only (`mc`/`streaming` must
+  never be proxied; GitHub Pages stays unproxied for now), DNSSEC is switched off at Squarespace
+  and the DS allowed to expire *before* the nameservers move; the `dash` tunnel hostname waits
+  for issue #10. A browser session can read both accounts, but Claude Code's auto-mode classifier
+  refuses DNS/registrar edits and Zero Trust activation needs a payment method + Terms, so the
+  owner performs § 5.0a by hand.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

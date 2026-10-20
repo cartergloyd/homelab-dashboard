@@ -18,7 +18,7 @@
     "clear-demo-data": "node server/dist/tools/clear-demo-data.js",
     "wrap-service": "node server/dist/tools/wrap-service.js",
     "demo:index": "node server/dist/tools/demo-index.js",
-    "test": "node server/test-discover.mjs && node server/test-diskscan.mjs && node server/test-updates.mjs && node server/test-apps.mjs && node server/dist/tools/demo-index.js --check"
+    "test": "node server/test-discover.mjs && node server/test-diskscan.mjs && node server/test-updates.mjs && node server/test-apps.mjs && node server/test-dns.mjs && node server/dist/tools/demo-index.js --check"
   },
   "engines": {
     "node": ">=20.19"

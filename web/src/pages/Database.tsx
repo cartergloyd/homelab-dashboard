@@ -28,7 +28,7 @@ function AppCard({ a }: { a: AppStatus }) {
     >
       <div className="kv">
         <div>
-          <span className="kv-k">Public URL</span>
+          <span className="kv-k">API (Directus)</span>
           <span className="kv-v">
             {a.publicUrl ? (
               <a href={a.publicUrl} target="_blank" rel="noreferrer" className="mono">
@@ -42,6 +42,17 @@ function AppCard({ a }: { a: AppStatus }) {
             {a.public.note && a.public.ok !== false && <span className="muted small"> · {a.public.note}</span>}
           </span>
         </div>
+        {a.siteUrl && (
+          <div>
+            <span className="kv-k">Site</span>
+            <span className="kv-v">
+              <a href={a.siteUrl} target="_blank" rel="noreferrer" className="mono">
+                {new URL(a.siteUrl).host}
+              </a>
+              <span className="muted small"> · the app's front-end; it calls the Directus above</span>
+            </span>
+          </div>
+        )}
         <div>
           <span className="kv-k">Directus</span>
           <span className="kv-v">
