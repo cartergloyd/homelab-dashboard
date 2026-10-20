@@ -184,7 +184,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       as data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (`server/test-dns.mjs`).
 - [x] Tunnel `homelab` created in Zero Trust (2026-10-20, id `0ef75471-…`) with routes
       `fam-api.xgold.tech` → `http://127.0.0.1:8056` and `ai-api.xgold.tech` → `http://127.0.0.1:8057`
-- [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up`, Access on `/admin`
+- [x] Cloudflare Access application "Directus admin (fam-api, ai-api)" (2026-10-20): destinations
+      `fam-api.xgold.tech/admin*` + `ai-api.xgold.tech/admin*`, policy Owner = allow the owner's
+      login e-mail, One-time PIN IdP, 24 h sessions. API paths stay public for the apps.
+- [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up` (then
+      `fam-api.xgold.tech/server/health` turns from Cloudflare 530 into `{"status":"ok"}`)
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)

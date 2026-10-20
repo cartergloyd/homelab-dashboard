@@ -278,9 +278,12 @@ dashboard env to paste).
 
 ### 5.4 Protect the admin UIs (recommended)
 
-Zero Trust → **Access → Applications → Add → Self-hosted**: domain `fam-api.xgold.tech`, path
-`admin*` → policy "Allow" for the owner's e-mail(s) with One-time PIN (or Google). Repeat for
-`ai-api`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
+**Done 2026-10-20** as one application, "Directus admin (fam-api, ai-api)", in Zero Trust →
+Access → Applications → Create → Self-hosted: destinations `fam-api.xgold.tech` path `admin*`
+and `ai-api.xgold.tech` path `admin*`, policy "Owner" = Allow, Emails = the owner's login
+e-mail, One-time PIN (the default IdP), 24 h session. Test: `curl -sI https://fam-api.xgold.tech/admin`
+redirects (302) to `floral-glitter-d778.cloudflareaccess.com`. For a new app, edit that
+application and add its `<app>-api` hostname as another destination. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
 dashboard shows "behind Cloudflare Access" for the public check when this is on. Each
 Directus also runs with the rate limiter on, secure cookies, and CORS limited to the app's
 site origin (`https://fam.xgold.tech`; `APP_<NAME>_CORS_ORIGIN` to add more, e.g. a dev origin).
