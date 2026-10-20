@@ -16,13 +16,15 @@ const MAX_LINE = 4000;
 export function attachLogSocket(server: http.Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
-  server.on("upgrade", (req, socket, head) => {
+  server.on("upgrade", async (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname !== "/ws/logs" && url.pathname !== "/ws/alerts") {
       socket.destroy();
       return;
     }
-    const id = resolveIdentity(req.headers, (socket as net.Socket).remoteAddress);
+    // async: a Cloudflare Access token may need the team's signing keys fetched first
+    const id = await resolveIdentity(req.headers, (socket as net.Socket).remoteAddress).catch((e: Error) => ({ ok: false as const, status: 500, message: e.message }));
+    if (socket.destroyed) return;
     if (!id.ok) {
       socket.write(`HTTP/1.1 ${id.status} ${id.message.replace(/[\r\n]/g, " ")}\r\nConnection: close\r\n\r\n`);
       socket.destroy();

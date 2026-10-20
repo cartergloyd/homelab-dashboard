@@ -42,6 +42,7 @@ server/   Express 5 + ws, TypeScript (ESM, NodeNext → use .js import suffixes)
   src/index.ts        boot: demo bootstrap → scheduler → alerts hub → http + ws
   src/config.ts       zod-validated env → `cfg` (mutable; demo fills gaps)
   src/auth.ts         Tailscale identity headers (loopback only) + Bearer DASHBOARD_KEY
+                      + Cloudflare Access tokens on tunnel requests (src/cf-access.ts verifies them)
   src/routes.ts       all /api routes (one Router)
   src/ws.ts           /ws/logs (raw lines) and /ws/alerts (events)
   src/demo.ts         DEMO=1 fixtures + seeded demo dirs under data/demo/
@@ -187,6 +188,17 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
 - [x] Cloudflare Access application "Directus admin (fam-api, ai-api)" (2026-10-20): destinations
       `fam-api.xgold.tech/admin*` + `ai-api.xgold.tech/admin*`, policy Owner = allow the owner's
       login e-mail, One-time PIN IdP, 24 h sessions. API paths stay public for the apps.
+- [x] **Issue #10 part A, code**: the dashboard verifies Cloudflare Access tokens itself
+      (`cf-access.ts`: RS256 against the team's JWKS, aud/iss/exp, cookie or header; `auth.ts`:
+      Cloudflare-stamped requests never read Tailscale headers, bearer key over the tunnel needs a
+      valid token too, logins land in the feed; `AppConfigPayload.user.via`; audit `[remote]` gates
+      incl. a forged-header probe; `server/test-cf-access.mjs`). Env `CF_ACCESS_TEAM_DOMAIN`,
+      `CF_ACCESS_AUD`, `PUBLIC_DASHBOARD_URL`. SERVER_SETUP § 7b = GitHub OAuth app → Access app
+      (GitHub only) → env → tunnel route `dash`.
+- [ ] Issue #10 part A, Cloudflare side: GitHub login method, Access app for `dash.xgold.tech`,
+      AUD tag into the env, tunnel route `dash` → the dashboard's real port
+- [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
+      checklist, service token for MCP, image versions in the Staged update card
 - [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up` (then
       `fam-api.xgold.tech/server/health` turns from Cloudflare 530 into `{"status":"ok"}`)
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
@@ -340,6 +352,12 @@ override the placeholders wherever they conflict:
   for issue #10. A browser session can read both accounts, but Claude Code's auto-mode classifier
   refuses DNS/registrar edits and Zero Trust activation needs a payment method + Terms, so the
   owner performs § 5.0a by hand.
+- 2026-10-20 **Remote access = Cloudflare Access + the dashboard's own token check, GitHub as
+  the identity provider.** A Cloudflare-stamped request (`CF-Ray`) is authenticated ONLY by its
+  Access JWT; Tailscale headers on it are ignored (anyone could type them). Bearer key over the
+  tunnel requires a valid Access token as well. GitHub was chosen because it enforces 2FA on every
+  account and needs one OAuth app, no money; e-mail one-time PIN is a single factor and is not
+  offered for the dashboard. No JWT library: Node's `crypto.verify` with JWK import.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

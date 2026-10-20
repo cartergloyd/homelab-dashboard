@@ -52,7 +52,7 @@ api.get("/config", (_req, res) => {
   const u = user(res);
   const payload: AppConfigPayload = {
     demo: cfg.demo,
-    user: { login: u.login, name: u.name },
+    user: { login: u.login, name: u.name, via: u.via },
     links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
     timezone: cfg.timezone,

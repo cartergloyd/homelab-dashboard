@@ -96,7 +96,7 @@ function Shell() {
           <div>
             <strong>Home server</strong>
             {/* [DEMO] the header badge says "demo mode" while DEMO=1 (see DEMO_INDEX.md) */}
-              <small>{config.data?.demo ? "demo mode" : "over Tailscale"}</small>
+              <small>{config.data?.demo ? "demo mode" : user?.via === "cloudflare" ? "via Cloudflare Access" : "over Tailscale"}</small>
           </div>
         </div>
         <Nav variant="sidebar" />

@@ -651,6 +651,57 @@ the app refuses Funnel requests by design.
 Optional: `sudo tailscale serve --bg --https=8443 http://127.0.0.1:8055` gives
 Directus HTTPS too (then set `DIRECTUS_PUBLIC_URL` accordingly).
 
+## 7b. The dashboard from anywhere: Cloudflare Access with GitHub login + 2FA
+
+Goal: `https://dash.xgold.tech` works from any network, behind **two independent locks** —
+Cloudflare Access (GitHub login, which GitHub protects with mandatory 2FA) in front, and the
+dashboard verifying every Cloudflare-routed request's Access token itself. PostgreSQL, the
+personal Directus and the bearer-key path are untouched: the key works over the tunnel only
+together with a valid Access token.
+
+1. **GitHub OAuth app** (github.com → Settings → Developer settings → OAuth Apps → New OAuth App):
+   name `Cloudflare Access xgold-tech`, homepage `https://xgold-tech.cloudflareaccess.com`,
+   authorization callback `https://xgold-tech.cloudflareaccess.com/cdn-cgi/access/callback`.
+   Register, copy the **Client ID**, then *Generate a new client secret* and copy it. (One-time
+   PIN by e-mail is a single factor — do not use it for the dashboard.)
+2. **Login method** in Zero Trust → Settings → Authentication → Login methods → Add new →
+   GitHub → paste ID + secret → Save → Test.
+3. **Access application**: Zero Trust → Access → Applications → Create → Self-hosted:
+   destination subdomain `dash`, domain `xgold.tech`, **no path** (everything incl. `/ws/*`);
+   Authentication → *Choose available identity providers* → GitHub only; policy `Owner` =
+   Allow, Emails = the primary e-mail of the GitHub account; session 24 h. After creating it,
+   open the application and copy the **Application Audience (AUD) Tag**.
+4. **Dashboard env** (the real env file) and restart:
+   ```
+   CF_ACCESS_TEAM_DOMAIN=xgold-tech.cloudflareaccess.com
+   CF_ACCESS_AUD=<the AUD tag>
+   PUBLIC_DASHBOARD_URL=https://dash.xgold.tech
+   ```
+5. **Tunnel route**: Zero Trust → Networking → Tunnels → homelab → Routes → Add route →
+   Published application: subdomain `dash`, Service URL `http://127.0.0.1:<PORT>` — the port the
+   dashboard really listens on (`PORT` in its env; `HOST` must include loopback: `127.0.0.1` or
+   `0.0.0.0`). cloudflared runs on the host network, so loopback is reachable.
+6. **Verify** (acceptance for issue #10, part A):
+   ```bash
+   curl -sI https://dash.xgold.tech/api/config | head -1                                   # 302 → xgold-tech.cloudflareaccess.com, never 200
+   curl -sI -H 'Tailscale-User-Login: x@y' https://dash.xgold.tech/api/config | head -1    # still not 200
+   npm run audit:install                                                                  # [remote] all ✔
+   ```
+   In a browser: GitHub login → 2FA → the dashboard; the header says "via Cloudflare Access", the
+   footer shows the GitHub e-mail, and Live server alerts has a "Remote login via Cloudflare
+   Access" line. The Tailscale address keeps working exactly as before.
+7. Optional, automation from off the tailnet: Access → Service credentials → create a service
+   token; add a second policy of type *Service Auth* to the application; the MCP connector then
+   sends `CF-Access-Client-Id` / `CF-Access-Client-Secret` **and** the dashboard key.
+
+What the dashboard enforces (code: `server/src/auth.ts`, `server/src/cf-access.ts`): a request
+stamped by Cloudflare (`CF-Ray` / `CF-Connecting-IP`) never has its `Tailscale-*` headers read;
+its `Cf-Access-Jwt-Assertion` header (or `CF_Authorization` cookie) must verify — RS256
+signature against the team's published keys (cached 1 h, refetched once on key rotation),
+issuer = the team domain, audience = `CF_ACCESS_AUD`, not expired — and the e-mail inside becomes
+the identity (`ALLOWED_LOGINS` applies). Without `CF_ACCESS_*` set, Cloudflare-routed requests
+get 401, so an accidental tunnel route can never expose the dashboard.
+
 ## 8. Firewall
 
 ```bash
@@ -703,6 +754,7 @@ Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions
 - [ ] **World backups** panel lists the existing `mcworld_…` folders (marked "existing") before any dashboard-made backup
 - [ ] Every mirrored timer **and cron line** shows "Output tracking connected"; `npm run discover` proposes nothing new
 - [ ] Assistant panel: runner shows as available; a one-off task produces messages in the panel and a report on the Dashboard; a restart attempt by the agent shows up as an approval request instead of restarting
+- [ ] (§ 7b) `https://dash.xgold.tech` asks for the GitHub login; `curl -sI https://dash.xgold.tech/api/config` is never 200; the header says "via Cloudflare Access" after login
 - [ ] `npm run audit:install` ends with **FULLY CONNECTED**
 
 ## Troubleshooting

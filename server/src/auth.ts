@@ -1,12 +1,16 @@
 import crypto from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import type { Request, Response, NextFunction } from "express";
+import { AccessVerifier, accessTokenFrom, identityFromClaims, isCloudflareRequest, sessionKeyOf } from "./cf-access.js";
 import { cfg } from "./config.js";
-import { touchAgent } from "./services/alerts.js";
+import { publish, touchAgent } from "./services/alerts.js";
+import type { IdentityVia } from "./types.js";
 
 export interface Identity {
   login: string;
   name: string;
+  /** how this request was authenticated (shown in the footer, recorded in the feed) */
+  via: IdentityVia;
   /** true when authenticated with DASHBOARD_KEY (scripts, MCP connector, agents) */
   viaKey?: boolean;
 }
@@ -47,23 +51,82 @@ function keyMatches(given: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function bearerOf(headers: IncomingHttpHeaders): string | null {
+  const auth = header(headers, "authorization");
+  return auth?.startsWith("Bearer ") ? auth.slice(7).trim() : null;
+}
+
+function keyIdentity(headers: IncomingHttpHeaders): Identity {
+  const agent = (header(headers, "x-homelab-agent") ?? "").trim().slice(0, 60) || "connector";
+  return { login: "dashboard-key", name: agent, via: "key", viaKey: true };
+}
+
+// ---- Cloudflare Access (the dashboard published through the tunnel, SERVER_SETUP § 7b) ----------
+
+export const accessVerifier: AccessVerifier | null = cfg.cfAccess ? new AccessVerifier(cfg.cfAccess.teamDomain, cfg.cfAccess.aud) : null;
+
+// login sessions already announced in the feed (bounded; a session = person + nonce + issued-at)
+const seenSessions = new Set<string>();
+function noteLogin(key: string, who: string, country: string | undefined): void {
+  if (seenSessions.has(key)) return;
+  if (seenSessions.size > 500) seenSessions.clear();
+  seenSessions.add(key);
+  publish({ source: "dashboard", kind: "log", level: "info", tags: ["maintenance", "security"], text: `Remote login via Cloudflare Access: ${who}${country ? ` (${country})` : ""}` });
+}
+
 /**
- * Two ways in:
+ * Requests that arrived through Cloudflare's proxy (the tunnel). Tailscale headers are NEVER read
+ * here — anyone on the internet could type them — the identity comes only from the Access token
+ * Cloudflare attached, which we verify ourselves. The bearer key is accepted over the tunnel only
+ * together with a valid Access token (a person's or a service token's): two locks, always.
+ */
+async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved> {
+  if (!cfg.cfAccess || !accessVerifier) {
+    return { ok: false, status: 401, message: "This dashboard is not published for remote access (CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD unset). Use its Tailscale address." };
+  }
+  const token = accessTokenFrom(headers);
+  if (!token) {
+    return { ok: false, status: 401, message: `No Cloudflare Access token on this request. Sign in at ${cfg.cfAccess.publicUrl ?? `https://${cfg.cfAccess.teamDomain}`}.` };
+  }
+  const r = await accessVerifier.verify(token);
+  if (!r.ok) return { ok: false, status: 401, message: `Cloudflare Access token rejected: ${r.reason}` };
+  const who = identityFromClaims(r.claims);
+
+  const bearer = bearerOf(headers);
+  if (bearer !== null) {
+    if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
+    noteLogin(sessionKeyOf(r.claims), `${who.name} + dashboard key`, r.claims.country);
+    return { ok: true, user: keyIdentity(headers) };
+  }
+  if (who.service) {
+    return { ok: false, status: 401, message: "A service token must be combined with the dashboard key (Authorization: Bearer …) to use the API." };
+  }
+  if (cfg.allowedLogins.length && !cfg.allowedLogins.map((l) => l.toLowerCase()).includes(who.login)) {
+    return { ok: false, status: 403, message: `${who.login} is not in ALLOWED_LOGINS` };
+  }
+  noteLogin(sessionKeyOf(r.claims), who.login, r.claims.country);
+  return { ok: true, user: { login: who.login, name: who.name, via: "cloudflare" } };
+}
+
+/**
+ * Three ways in:
  *  1. Tailscale identity headers. The app binds to 127.0.0.1 and `tailscale serve`
  *     proxies to it, stripping any inbound Tailscale-* headers before adding its own,
  *     so they are trustworthy only on local connections. Funnel is refused.
  *  2. `Authorization: Bearer <DASHBOARD_KEY>` for scripts and the MCP connector.
  *     `X-Homelab-Agent` names the agent so its actions are attributed in the feed.
+ *  3. Through the Cloudflare Tunnel: a Cloudflare Access token, verified here (above).
  */
-export function resolveIdentity(headers: IncomingHttpHeaders, remoteAddress: string | undefined): Resolved {
-  const auth = header(headers, "authorization");
-  if (auth?.startsWith("Bearer ")) {
-    if (!keyMatches(auth.slice(7).trim())) return { ok: false, status: 401, message: "Invalid dashboard key" };
-    const agent = (header(headers, "x-homelab-agent") ?? "").trim().slice(0, 60) || "connector";
-    return { ok: true, user: { login: "dashboard-key", name: agent, viaKey: true } };
+export async function resolveIdentity(headers: IncomingHttpHeaders, remoteAddress: string | undefined): Promise<Resolved> {
+  if (isCloudflareRequest(headers)) return resolveCloudflare(headers);
+
+  const bearer = bearerOf(headers);
+  if (bearer !== null) {
+    if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
+    return { ok: true, user: keyIdentity(headers) };
   }
 
-  if (cfg.authDisabled) return { ok: true, user: { login: "local-dev", name: "Local dev" } };
+  if (cfg.authDisabled) return { ok: true, user: { login: "local-dev", name: "Local dev", via: "dev" } };
   if (!isLoopback(remoteAddress)) return { ok: false, status: 403, message: "Tailnet access only" };
   if (header(headers, "tailscale-funnel-request")) return { ok: false, status: 403, message: "Funnel requests are not allowed" };
 
@@ -79,11 +142,11 @@ export function resolveIdentity(headers: IncomingHttpHeaders, remoteAddress: str
     return { ok: false, status: 403, message: `${login} is not in ALLOWED_LOGINS` };
   }
   const rawName = header(headers, "tailscale-user-name");
-  return { ok: true, user: { login, name: rawName ? decodeRfc2047(rawName) : login } };
+  return { ok: true, user: { login, name: rawName ? decodeRfc2047(rawName) : login, via: "tailscale" } };
 }
 
-export function identityMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const result = resolveIdentity(req.headers, req.socket.remoteAddress);
+export async function identityMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const result = await resolveIdentity(req.headers, req.socket.remoteAddress);
   if (!result.ok) {
     res.status(result.status).json({ error: result.message });
     return;

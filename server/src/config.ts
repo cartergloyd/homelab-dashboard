@@ -37,6 +37,11 @@ const Env = z.object({
   DEMO: flag,
   AUTH_DISABLED: flag,
   ALLOWED_LOGINS: csv,
+  // Dashboard published through the Cloudflare Tunnel behind Cloudflare Access (SERVER_SETUP § 7b).
+  // Requests that arrive through Cloudflare must carry an Access token the dashboard verifies itself.
+  CF_ACCESS_TEAM_DOMAIN: z.string().optional(), // xgold-tech.cloudflareaccess.com
+  CF_ACCESS_AUD: z.string().optional(), // the Access application's Audience (AUD) tag
+  PUBLIC_DASHBOARD_URL: z.string().optional(), // https://dash.xgold.tech
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   SYSTEMD_USER: flag,
@@ -154,6 +159,14 @@ export const cfg = {
   demo: env.DEMO,
   authDisabled: env.AUTH_DISABLED,
   allowedLogins: env.ALLOWED_LOGINS,
+  cfAccess:
+    env.CF_ACCESS_TEAM_DOMAIN?.trim() && env.CF_ACCESS_AUD?.trim()
+      ? {
+          teamDomain: env.CF_ACCESS_TEAM_DOMAIN.trim().replace(/^https?:\/\//, "").replace(/\/$/, ""),
+          aud: env.CF_ACCESS_AUD.trim(),
+          publicUrl: env.PUBLIC_DASHBOARD_URL?.trim().replace(/\/$/, "") || null,
+        }
+      : null,
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
   systemdUser: env.SYSTEMD_USER,

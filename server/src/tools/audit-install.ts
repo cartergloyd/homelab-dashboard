@@ -470,6 +470,48 @@ try {
 }
 add("vpn", "vpn interface", vpnIfaces.length ? "pass" : "warn", vpnIfaces.length ? vpnIfaces.join(", ") + (cfg.vpn.iface ? ` (VPN_INTERFACE=${cfg.vpn.iface})` : " — set VPN_INTERFACE") : "no wireguard/tun interface found (VPN down, or VPN_PROVIDER/INTERFACE needed)");
 
+// ---- remote access: the dashboard behind Cloudflare Access (issue #10, SERVER_SETUP § 7b) ----------
+// "Two locks": Cloudflare Access in front AND the dashboard verifying the Access token itself. The
+// gates below prove the second lock from the inside (forged Tailscale headers on a Cloudflare-stamped
+// request are rejected) and, when PUBLIC_DASHBOARD_URL is set, from the outside (no token → never 200).
+
+if (cfg.cfAccess) {
+  const ca = cfg.cfAccess;
+  add("remote", "access env", "pass", `team ${ca.teamDomain}, aud ${ca.aud.slice(0, 10)}…${ca.publicUrl ? `, ${ca.publicUrl}` : " (PUBLIC_DASHBOARD_URL unset — outside checks skipped)"}`);
+  try {
+    const res = await fetch(`https://${ca.teamDomain}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(8000), headers: { accept: "application/json" } });
+    const body = (await res.json().catch(() => ({}))) as { keys?: unknown[] };
+    const n = Array.isArray(body.keys) ? body.keys.length : 0;
+    add("remote", "access signing keys", res.ok && n ? "pass" : "fail", res.ok && n ? `${n} key(s) published by ${ca.teamDomain}` : `HTTP ${res.status} from ${ca.teamDomain}/cdn-cgi/access/certs — is CF_ACCESS_TEAM_DOMAIN the team domain shown in Zero Trust → Settings?`, true);
+  } catch (e) {
+    add("remote", "access signing keys", "fail", `could not fetch ${ca.teamDomain}/cdn-cgi/access/certs: ${(e as Error).message}`, true);
+  }
+  // inside: a request that LOOKS like it came through Cloudflare, with forged Tailscale headers and no token
+  try {
+    const res = await fetch(`http://127.0.0.1:${cfg.port}/api/config`, { signal: AbortSignal.timeout(5000), redirect: "manual", headers: { "cf-ray": "audit-forged", "cf-connecting-ip": "203.0.113.7", "tailscale-user-login": "forged@example.com", "tailscale-user-name": "Forged" } });
+    add("remote", "forged Tailscale headers via Cloudflare rejected", res.status === 401 ? "pass" : "fail", res.status === 401 ? "401 without an Access token, Tailscale headers ignored" : `HTTP ${res.status} — the dashboard trusted a Tailscale header on a Cloudflare-stamped request`, true);
+  } catch (e) {
+    add("remote", "forged Tailscale headers via Cloudflare rejected", "warn", `dashboard not reachable on 127.0.0.1:${cfg.port} (${(e as Error).message}) — start it and re-run`);
+  }
+  if (ca.publicUrl) {
+    const host = new URL(ca.publicUrl).host;
+    const ips = await lookup(host, "A");
+    const pv = proxiedVerdict(ips ?? [], true);
+    add("remote", `dns ${host}`, ips === null ? "warn" : ips.length ? pv.status : "fail", ips === null ? "lookup failed" : ips.length ? pv.detail : "no record — add the tunnel route (Zero Trust → Tunnels → homelab → Routes → dash)", ips !== null);
+    const probe = async (headers: Record<string, string>): Promise<number | null> => {
+      try {
+        return (await fetch(`${ca.publicUrl}/api/config`, { signal: AbortSignal.timeout(10000), redirect: "manual", headers })).status;
+      } catch {
+        return null;
+      }
+    };
+    const anon = await probe({});
+    add("remote", "outside without a login", anon === null ? "warn" : anon !== 200 ? "pass" : "fail", anon === null ? `${ca.publicUrl} not reachable from here` : anon !== 200 ? `HTTP ${anon} (Cloudflare Access login wall)` : "HTTP 200 WITHOUT a login — the Access application is missing or does not cover this hostname", anon !== null);
+    const forged = await probe({ "tailscale-user-login": "forged@example.com", "tailscale-user-name": "Forged" });
+    add("remote", "outside with forged Tailscale headers", forged === null ? "warn" : forged !== 200 ? "pass" : "fail", forged === null ? "not reachable from here" : forged !== 200 ? `HTTP ${forged}` : "HTTP 200 — forged identity accepted", forged !== null);
+  }
+} else add("remote", "cloudflare access", "skip", "CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD unset — the dashboard is Tailscale-only (SERVER_SETUP § 7b publishes it with GitHub login + 2FA)");
+
 // ---- discovery: script folders, backup roots, mirror jobs ---------------------------------------
 
 interface Proposal {

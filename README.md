@@ -73,6 +73,10 @@ docker-compose.yml   PostgreSQL (127.0.0.1 only) + Directus.
 
 ## How access works
 
+Optionally the dashboard is also published through the Cloudflare Tunnel behind Cloudflare
+Access (GitHub login + 2FA); the dashboard verifies every such request's Access token itself
+(SERVER_SETUP § 7b).
+
 The server binds to `127.0.0.1:3000`. `tailscale serve` terminates HTTPS and
 proxies to it, adding `Tailscale-User-Login`/`Tailscale-User-Name` headers (it
 strips any such headers a client sends). The app trusts those headers only on

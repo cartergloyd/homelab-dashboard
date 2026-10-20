@@ -688,9 +688,11 @@ export interface VpnPayload {
   notes: string[];
 }
 
+export type IdentityVia = "tailscale" | "cloudflare" | "key" | "dev";
+
 export interface AppConfigPayload {
   demo: boolean;
-  user: { login: string; name: string };
+  user: { login: string; name: string; via: IdentityVia };
   links: { jellyfin: string; directus: string; qbittorrent: string | null };
   mediaRoots: string[];
   timezone: string;
