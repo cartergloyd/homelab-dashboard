@@ -222,9 +222,9 @@ override the placeholders wherever they conflict:
 - The owner's domain is `xgold.tech`, **registered at Squarespace**, served by Cloudflare DNS since
   2026-10-20 (`robin`/`rory.ns.cloudflare.com`, zone Active, DNSSEC off everywhere — the stale DS
   caused a few hours of SERVFAIL at 1.1.1.1 because the nameservers moved before the DS expired).
-  Zero Trust Free is active; the team domain is `xgold-tech.cloudflareaccess.com` (rename
-  under Zero Trust → Settings before creating Access apps if a nicer login URL is wanted; issue #10
-  needs it as `CF_ACCESS_TEAM_DOMAIN`). The records, identical to the old Squarespace set:
+  Zero Trust Free is active; the team domain is `xgold-tech.cloudflareaccess.com` (renamed
+  from the auto-generated one on 2026-10-20; issue #10 needs it as `CF_ACCESS_TEAM_DOMAIN`). Visiting
+  that domain directly shows the App Launcher's "NoAuth" page — expected, it is only a redirect target. The records, identical to the old Squarespace set:
   `@`, `www`, `fam` → GitHub Pages (`cartergloyd.github.io`); `api.fam`, `mc`, `streaming` → the
   home IP `99.116.141.110` (port-forwarded through the VPN's exceptions); SRV `_minecraft._tcp.mc`;
   SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`<app>-api` = that app's
