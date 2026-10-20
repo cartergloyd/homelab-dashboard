@@ -180,7 +180,7 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       (none on the dev Mac) — first `docker compose up` happens on the server
 - [x] **DNS cutover** done 2026-10-20: `xgold.tech` is **Active** on Cloudflare (nameservers switched
       11:33, DNSSEC removed at Squarespace, 13 records identical to the old zone, all DNS-only);
-      Zero Trust Free is activated (team `floral-glitter-d778`). Runbook SERVER_SETUP § 5.0a, records
+      Zero Trust Free is activated (team `xgold-tech`). Runbook SERVER_SETUP § 5.0a, records
       as data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (`server/test-dns.mjs`).
 - [x] Tunnel `homelab` created in Zero Trust (2026-10-20, id `0ef75471-…`) with routes
       `fam-api.xgold.tech` → `http://127.0.0.1:8056` and `ai-api.xgold.tech` → `http://127.0.0.1:8057`
@@ -222,7 +222,7 @@ override the placeholders wherever they conflict:
 - The owner's domain is `xgold.tech`, **registered at Squarespace**, served by Cloudflare DNS since
   2026-10-20 (`robin`/`rory.ns.cloudflare.com`, zone Active, DNSSEC off everywhere — the stale DS
   caused a few hours of SERVFAIL at 1.1.1.1 because the nameservers moved before the DS expired).
-  Zero Trust Free is active; the team domain is `floral-glitter-d778.cloudflareaccess.com` (rename
+  Zero Trust Free is active; the team domain is `xgold-tech.cloudflareaccess.com` (rename
   under Zero Trust → Settings before creating Access apps if a nicer login URL is wanted; issue #10
   needs it as `CF_ACCESS_TEAM_DOMAIN`). The records, identical to the old Squarespace set:
   `@`, `www`, `fam` → GitHub Pages (`cartergloyd.github.io`); `api.fam`, `mc`, `streaming` → the

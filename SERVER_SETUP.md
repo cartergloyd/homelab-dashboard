@@ -177,7 +177,7 @@ realtime and files like they would use Supabase; they never see the database por
 ### 5.0a Move `xgold.tech`'s DNS from Squarespace to Cloudflare (one-time)
 
 **Done on 2026-10-20** (zone Active, 13 records all DNS-only, Zero Trust Free active with team
-`floral-glitter-d778`). Kept as the record of how, and as the template for any future domain.
+`xgold-tech`). Kept as the record of how, and as the template for any future domain.
 Lesson learned the hard way: the nameservers were switched before the registry had dropped the DS
 record, which made 1.1.1.1 answer SERVFAIL for the whole domain for a few hours — step 2 really
 must finish before step 3.
@@ -282,7 +282,7 @@ dashboard env to paste).
 Access → Applications → Create → Self-hosted: destinations `fam-api.xgold.tech` path `admin*`
 and `ai-api.xgold.tech` path `admin*`, policy "Owner" = Allow, Emails = the owner's login
 e-mail, One-time PIN (the default IdP), 24 h session. Test: `curl -sI https://fam-api.xgold.tech/admin`
-redirects (302) to `floral-glitter-d778.cloudflareaccess.com`. For a new app, edit that
+redirects (302) to `xgold-tech.cloudflareaccess.com`. For a new app, edit that
 application and add its `<app>-api` hostname as another destination. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
 dashboard shows "behind Cloudflare Access" for the public check when this is on. Each
 Directus also runs with the rate limiter on, secure cookies, and CORS limited to the app's
