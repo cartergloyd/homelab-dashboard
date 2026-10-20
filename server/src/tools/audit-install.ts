@@ -12,14 +12,14 @@
 //   npm run discover                      # = audit --propose
 //   npm run discover -- --apply           # create the proposed mirror jobs
 import { execFile } from "node:child_process";
-import dns from "node:dns/promises";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { calendarToCron, fmtDelta, isRelevant, jobMatchesCronEntry, nextRunOf, normalizeCommand, parseCrontab, parseSystemdTimestamp, scriptPathFromCommand, wrappedCronLine, type CronEntry } from "./discover-lib.js";
-import { RR, dnssecVerdict, hostOf, proxiedVerdict, readDoh, type DohResponse, type RRName } from "./dns-lib.js";
+import { RR, dnssecVerdict, hostOf, proxiedVerdict, readDoh } from "./dns-lib.js";
+import { doh, dohWorks, lookup } from "../services/dnsLookup.js";
 import { envFileFromArgs, flag, loadEnvFile, shq } from "./env.js";
 
 const execFileP = promisify(execFile);
@@ -210,36 +210,6 @@ if (cfg.apps.length) {
 // DNSSEC validation (AD) is visible; when DoH is blocked (corporate networks, Pi-hole rules) the
 // name/address checks fall back to plain DNS against 1.1.1.1 / 8.8.8.8 and only DNSSEC is skipped.
 
-async function doh(name: string, type: RRName): Promise<DohResponse | null> {
-  try {
-    const res = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(6000) });
-    return res.ok ? ((await res.json()) as DohResponse) : null;
-  } catch {
-    return null;
-  }
-}
-const plainResolver = new dns.Resolver({ timeout: 4000, tries: 2 });
-plainResolver.setServers(["1.1.1.1", "8.8.8.8"]);
-let dohWorks: boolean | null = null;
-/** answers of `type` for `name`; null = no resolver reachable at all */
-async function lookup(name: string, type: "NS" | "A"): Promise<string[] | null> {
-  if (dohWorks !== false) {
-    const r = await doh(name, type);
-    if (r) {
-      dohWorks = true;
-      return readDoh(r, RR[type]).answers;
-    }
-    dohWorks = false;
-  }
-  try {
-    const out = type === "NS" ? await plainResolver.resolveNs(name) : await plainResolver.resolve4(name);
-    return out.map((x) => x.replace(/\.$/, "").toLowerCase());
-  } catch (e) {
-    const code = (e as { code?: string }).code;
-    return code === "ENOTFOUND" || code === "ENODATA" ? [] : null;
-  }
-}
-
 if (cfg.publicDomain) {
   const dom = cfg.publicDomain;
   const servers = await lookup(dom, "NS");
@@ -247,7 +217,7 @@ if (cfg.publicDomain) {
   else {
     const onCloudflare = servers.length > 0 && servers.every((s) => /(^|\.)ns\.cloudflare\.com$/i.test(s));
     add("dns", `${dom}: nameservers`, onCloudflare ? "pass" : "fail", servers.length ? `${servers.join(", ")}${onCloudflare ? "" : " — not Cloudflare's yet. Finish SERVER_SETUP § 5.0a (DNSSEC off at the registrar first, then switch the nameservers)"}` : "no NS answer", cfg.apps.length > 0);
-    if (dohWorks) {
+    if (dohWorks()) {
       const [ds, a] = await Promise.all([doh(dom, "DS"), doh(dom, "A")]);
       const v = dnssecVerdict({ rcode: readDoh(a, RR.A).rcode, ad: !!a?.AD, dsAtParent: readDoh(ds, RR.DS).answers.length > 0 });
       add("dns", `${dom}: dnssec`, v.status, v.detail, v.status === "fail");

@@ -84,6 +84,13 @@ const Env = z.object({
   // APP_<NAME>_CONTAINER (homelab-directus-<name>), APP_<NAME>_DB (<name>). See server/src/apps-config.ts.
   APPS: csv,
   PUBLIC_DOMAIN: z.string().optional(),
+  // Domain & hostnames card (Dashboard). Preferred source: a READ-ONLY Cloudflare API token
+  // (Zone.Zone:Read + Zone.DNS:Read, this zone only) so new records show up by themselves;
+  // fallback: the zone file (default deploy/dns/<PUBLIC_DOMAIN>.zone). HOSTNAMES_EXTRA lists
+  // planned names ("crm,shop") so they appear as "no record yet".
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  DNS_ZONE_FILE: z.string().optional(),
+  HOSTNAMES_EXTRA: csv,
   PG_BACKUP_DIR: z.string().default("/var/backups/postgres"),
   CLOUDFLARED_CONTAINER: z.string().default("homelab-cloudflared"),
   CLOUDFLARED_METRICS_URL: z.string().default("http://127.0.0.1:2000"),
@@ -206,6 +213,9 @@ export const cfg = {
   postgres: { url: env.PG_URL, container: env.POSTGRES_CONTAINER },
   apps: appsFromEnv(env.APPS, process.env, env.PUBLIC_DOMAIN?.trim() || null),
   publicDomain: env.PUBLIC_DOMAIN?.trim() || null,
+  cloudflareApiToken: env.CLOUDFLARE_API_TOKEN?.trim() || null,
+  dnsZoneFile: env.DNS_ZONE_FILE?.trim() || (env.PUBLIC_DOMAIN?.trim() ? path.resolve(here, "../../deploy/dns", `${env.PUBLIC_DOMAIN.trim()}.zone`) : null),
+  hostnamesExtra: env.HOSTNAMES_EXTRA,
   pgBackupDir: path.resolve(env.PG_BACKUP_DIR),
   cloudflared: { container: env.CLOUDFLARED_CONTAINER, metricsUrl: env.CLOUDFLARED_METRICS_URL.replace(/\/$/, "") },
   dashboardService: env.DASHBOARD_SERVICE,

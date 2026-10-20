@@ -116,3 +116,61 @@ export function proxiedVerdict(ips: string[], expectProxied: boolean): Verdict {
   if (cf.length) return { status: "fail", detail: `→ ${list} is Cloudflare's proxy — a game/stream port cannot pass through it; set the record to DNS only (grey cloud)` };
   return { status: "pass", detail: `→ ${list} (DNS only — clients connect directly)` };
 }
+
+// ---- BIND zone files (deploy/dns/<domain>.zone is the owner's DNS as data) -----------------------
+
+export interface ZoneRecord {
+  /** fully qualified, lower-case, no trailing dot */
+  name: string;
+  type: string;
+  ttl: number | null;
+  /** the rdata as written (TXT keeps its quotes, SRV its four fields) */
+  data: string;
+}
+
+function stripZoneComment(line: string): string {
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"' && line[i - 1] !== "\\") inQuote = !inQuote;
+    else if (ch === ";" && !inQuote) return line.slice(0, i);
+  }
+  return line;
+}
+
+/** Enough of RFC 1035 for hand-written zones: $ORIGIN, $TTL, @, relative/absolute names,
+ *  optional TTL and class in either order, quoted TXT strings, ; comments, continuation by indent. */
+export function parseZoneFile(text: string, origin?: string): ZoneRecord[] {
+  let org = (origin ?? "").replace(/\.$/, "").toLowerCase();
+  let defaultTtl: number | null = null;
+  let lastName = "@";
+  const out: ZoneRecord[] = [];
+  const fq = (n: string): string => (n === "@" ? org : n.endsWith(".") ? n.slice(0, -1) : org ? `${n}.${org}` : n).toLowerCase();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = stripZoneComment(raw);
+    if (!line.trim()) continue;
+    const dir = line.match(/^\$(ORIGIN|TTL)\s+(\S+)/i);
+    if (dir) {
+      const [, which = "", value = ""] = dir;
+      if (which.toUpperCase() === "ORIGIN") org = value.replace(/\.$/, "").toLowerCase();
+      else defaultTtl = Number(value) || null;
+      continue;
+    }
+    if (line.startsWith("$")) continue;
+    const tokens = line.match(/"(?:[^"\\]|\\.)*"|\S+/g) ?? [];
+    if (!tokens.length) continue;
+    const name = /^\s/.test(raw) ? lastName : (tokens.shift() as string);
+    let ttl = defaultTtl;
+    for (let i = 0; i < 2; i++) {
+      const t0 = tokens[0];
+      if (t0 === undefined) break;
+      if (/^\d+$/.test(t0)) ttl = Number(tokens.shift());
+      else if (/^(IN|CH|HS)$/i.test(t0)) tokens.shift();
+    }
+    const type = tokens.shift()?.toUpperCase();
+    if (!type) continue;
+    lastName = name;
+    out.push({ name: fq(name), type, ttl, data: tokens.join(" ") });
+  }
+  return out;
+}

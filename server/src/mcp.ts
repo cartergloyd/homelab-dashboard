@@ -195,6 +195,12 @@ server.registerTool(
 );
 
 server.registerTool(
+  "hostnames_status",
+  { title: "Domain & hostnames", description: "Every hostname under the owner's domain (sites, APIs, the dashboard, Minecraft, streaming, planned names) with its DNS records, where it points, whether Cloudflare proxies it, the live answer and a probe (HTTPS status / login wall / Cloudflare 5xx, Minecraft ping). Read-only; never changes DNS.", inputSchema: { refresh: z.boolean().default(false) } },
+  async ({ refresh }) => text(await call("GET", `/api/hostnames${refresh ? "?refresh=1" : ""}`)),
+);
+
+server.registerTool(
   "staged_updates",
   { title: "Staged Paper / plugin updates", description: "Installed Paper build and every plugin's version (from the jars), what is staged in the update folder for the next restart, and the latest upstream release (PaperMC, Modrinth, Hangar, GitHub) with release dates; plus when the update/restart job runs next. Read-only.", inputSchema: { refresh: z.boolean().default(false).describe("re-read jars and re-query upstream now") } },
   async ({ refresh }) => text(await call("GET", `/api/updates${refresh ? "?refresh=1" : ""}`)),

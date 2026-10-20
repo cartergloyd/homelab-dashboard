@@ -18,4 +18,6 @@ consistent, each `<app>-api` resolves to Cloudflare (proxied) and the Minecraft 
 **not**.
 
 This is real data about the owner's domain, not an `[INSTALLER]` placeholder. When a record
-changes on purpose, change it here too.
+changes on purpose, change it here too — the Dashboard's **Domain & hostnames** card reads this
+file when no read-only `CLOUDFLARE_API_TOKEN` is configured (SERVER_SETUP § 6h), and the audit's
+`[dns]` section is independent of both.

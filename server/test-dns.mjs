@@ -51,3 +51,17 @@ eq(proxiedVerdict(["99.116.141.110"], false).status, "pass", "Minecraft DNS only
 eq(proxiedVerdict(["104.21.5.6"], false).status, "fail", "Minecraft accidentally proxied (exactly what the import did)");
 
 console.log(`dns-lib: ${n} checks passed`);
+
+// zone file parser (the repo's own zone file + edge cases)
+import fs from "node:fs";
+import { parseZoneFile } from "./dist/tools/dns-lib.js";
+const zone = parseZoneFile(fs.readFileSync(new URL("../deploy/dns/xgold.tech.zone", import.meta.url), "utf8"));
+eq(zone.length, 13, "13 records in deploy/dns/xgold.tech.zone");
+eq(zone.filter((r) => r.name === "xgold.tech" && r.type === "A").length, 4, "@ expands to the origin");
+eq(zone.find((r) => r.type === "SRV"), { name: "_minecraft._tcp.mc.xgold.tech", type: "SRV", ttl: 3600, data: "0 5 25565 mc.xgold.tech." }, "SRV keeps its four fields");
+eq(zone.find((r) => r.name === "fam.xgold.tech")?.data, "cartergloyd.github.io.", "relative owner name, absolute target");
+eq(zone.find((r) => r.name === "_dmarc.xgold.tech")?.data, '"v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s"', "semicolons inside quotes are data, not comments");
+eq(zone.find((r) => r.name === "streaming.xgold.tech")?.ttl, 14400, "explicit TTL");
+const small = parseZoneFile("$ORIGIN example.com.\n$TTL 300\nwww IN CNAME host.example.net. ; comment\n  IN A 192.0.2.1\n@ 60 IN TXT \"a;b\"\nmail.example.com. IN MX 10 mx.example.com.\n");
+eq(small.map((r) => `${r.name} ${r.type} ${r.ttl} ${r.data}`), ["www.example.com CNAME 300 host.example.net.", "www.example.com A 300 192.0.2.1", "example.com TXT 60 \"a;b\"", "mail.example.com MX 300 10 mx.example.com."], "$TTL default, indented continuation, TTL before class, absolute owner");
+console.log(`zone parser: ${n} checks total (dns-lib + zone)`);

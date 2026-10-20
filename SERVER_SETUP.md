@@ -605,6 +605,33 @@ that runs next; if it says none, the mirror from § 6c is missing. Verify: insta
 shows the build from the jar name, each plugin shows a version, and anything in the
 staging folder appears in the Staged column.
 
+## 6h. Domain & hostnames card (Dashboard)
+
+The landing page lists every name under `PUBLIC_DOMAIN` — sites (`fam`, `www`, `@`), APIs
+(`fam-api`, `ai-api`), the dashboard (`dash`), Minecraft (`mc`, with its SRV port), streaming,
+legacy and planned names — with the DNS records behind it, where it points (GitHub Pages / home
+IP / Cloudflare Tunnel), Cloudflare's proxy flag, the live public answer and a probe that fits the
+role: HTTPS status (a 302 to the Access login counts as healthy, a Cloudflare 530 means the tunnel
+has no connector), Minecraft server-list ping with player count, Jellyfin's `/health`. It never
+changes DNS.
+
+Where the names come from, best first:
+
+1. **A read-only Cloudflare API token** (recommended — new records appear by themselves):
+   Cloudflare → profile icon → *My Profile* → *API Tokens* → *Create Token* → *Create Custom
+   Token*: name `homelab-dashboard read DNS`, permissions **Zone · Zone · Read** and **Zone · DNS ·
+   Read**, zone resources *Include · Specific zone · xgold.tech*. Put it in the **dashboard** env
+   (not the compose `.env`): `CLOUDFLARE_API_TOKEN=…`. It can read records and nothing else.
+2. Otherwise the zone file `deploy/dns/<domain>.zone` (`DNS_ZONE_FILE` to point elsewhere) — keep
+   it current when records change on purpose.
+3. Always: what the config implies — `APPS` (site + `-api` per app), `PUBLIC_DASHBOARD_URL`,
+   `MC_PUBLIC_ADDRESS`, and `HOSTNAMES_EXTRA=crm,shop` for names you plan to create (they show as
+   "no record yet" until they exist).
+
+Probing the home IP from the server itself crosses the router (hairpin NAT); if `mc` or
+`streaming` show "no answer" from inside while they work from a phone on mobile data, that is the
+router, not the service — the card says so. MCP: `hostnames_status`.
+
 ## 6d. VPN tab
 
 The owner runs a VPN on this server with split-tunnel exceptions (at least Minecraft and

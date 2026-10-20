@@ -624,6 +624,46 @@ export interface AppsPayload {
   checkedAt: string;
 }
 
+// ---- Domain & hostnames card (Dashboard) --------------------------------------------------
+
+export type HostRole = "site" | "api" | "dashboard" | "game" | "stream" | "other";
+
+export interface HostnameProbe {
+  kind: "https" | "minecraft" | "none";
+  /** null = not probed (no record) */
+  ok: boolean | null;
+  httpStatus: number | null;
+  latencyMs: number | null;
+  detail: string;
+}
+
+export interface HostnameRow {
+  host: string;
+  role: HostRole;
+  /** the DNS records behind this name, as "TYPE data" */
+  records: string[];
+  source: "cloudflare" | "zonefile" | "config" | "extra";
+  /** human description of where it points: "GitHub Pages", "home IP", "Cloudflare Tunnel", an IP */
+  target: string | null;
+  /** Cloudflare's orange cloud; from the API when available, else inferred from the live answer */
+  proxied: boolean | null;
+  resolved: string[];
+  probe: HostnameProbe;
+  state: ServiceState;
+  note?: string;
+}
+
+export interface HostnamesPayload {
+  domain: string | null;
+  source: "cloudflare" | "zonefile" | "config" | "none";
+  zoneFile: string | null;
+  rows: HostnameRow[];
+  /** records that are not hosts (TXT/MX/NS), as "TYPE name data" */
+  otherRecords: string[];
+  checkedAt: string;
+  error?: string;
+}
+
 export interface SidecarPayload {
   settings: SidecarSettings;
   state: SidecarState;

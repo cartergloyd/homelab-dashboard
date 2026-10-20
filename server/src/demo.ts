@@ -17,7 +17,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { cfg } from "./config.js";
-import type { AppsPayload, ReclaimPayload, StagedUpdatePayload } from "./types.js";
+import type { AppsPayload, ReclaimPayload, StagedUpdatePayload, HostnamesPayload, HostnameProbe } from "./types.js";
 import type {
   ContainerInfo,
   DatabasePayload,
@@ -556,6 +556,35 @@ export function apps(): AppsPayload {
       exposure: { binds: ["127.0.0.1"], loopbackOnly: true },
     },
     backupDir: "/var/backups/postgres",
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+// ---- domain & hostnames ---------------------------------------------------
+
+export function hostnames(): HostnamesPayload {
+  const https = (status: number, latencyMs: number, detail?: string): HostnameProbe => ({ kind: "https", ok: status < 400, httpStatus: status, latencyMs, detail: detail ?? `HTTPS ${status}` });
+  const none = (detail: string): HostnameProbe => ({ kind: "none", ok: null, httpStatus: null, latencyMs: null, detail });
+  const cf = ["104.21.4.224", "172.67.132.141"];
+  const gh = ["185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153"];
+  return {
+    domain: "xgold.tech",
+    source: "cloudflare",
+    zoneFile: null,
+    rows: [
+      { host: "dash.xgold.tech", role: "dashboard", records: ["CNAME 0ef75471-0031-489c-ab42-368e17546fe0.cfargotunnel.com"], source: "cloudflare", target: "Cloudflare Tunnel", proxied: true, resolved: cf, probe: https(302, 61, "login wall (Cloudflare Access)"), state: "ok" },
+      { host: "xgold.tech", role: "site", records: gh.map((ip) => `A ${ip}`), source: "cloudflare", target: "GitHub Pages", proxied: false, resolved: gh, probe: https(301, 88, "redirects to www.xgold.tech/"), state: "ok" },
+      { host: "www.xgold.tech", role: "site", records: ["CNAME cartergloyd.github.io"], source: "cloudflare", target: "GitHub Pages (cartergloyd.github.io)", proxied: false, resolved: gh, probe: https(200, 95), state: "ok" },
+      { host: "fam.xgold.tech", role: "site", records: ["CNAME cartergloyd.github.io"], source: "cloudflare", target: "GitHub Pages (cartergloyd.github.io)", proxied: false, resolved: gh, probe: https(200, 102), state: "ok" },
+      { host: "ai.xgold.tech", role: "site", records: [], source: "config", target: null, proxied: null, resolved: [], probe: none("no record yet"), state: "unavailable", note: "the ai front-end is not published yet" },
+      { host: "fam-api.xgold.tech", role: "api", records: ["CNAME 0ef75471-0031-489c-ab42-368e17546fe0.cfargotunnel.com"], source: "cloudflare", target: "Cloudflare Tunnel", proxied: true, resolved: cf, probe: https(200, 148), state: "ok" },
+      { host: "ai-api.xgold.tech", role: "api", records: ["CNAME 0ef75471-0031-489c-ab42-368e17546fe0.cfargotunnel.com"], source: "cloudflare", target: "Cloudflare Tunnel", proxied: true, resolved: cf, probe: https(530, 140, "Cloudflare 530 — origin not reachable (tunnel down?)"), state: "down" },
+      { host: "mc.xgold.tech", role: "game", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "minecraft", ok: true, httpStatus: null, latencyMs: 23, detail: "3/20 players · Paper 1.21.8" }, state: "ok", note: "SRV → port 25565" },
+      { host: "streaming.xgold.tech", role: "stream", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: https(200, 210, "Jellyfin answers on 8096"), state: "ok" },
+      { host: "api.fam.xgold.tech", role: "api", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "https", ok: false, httpStatus: null, latencyMs: null, detail: "connect ETIMEDOUT" }, state: "down", note: "legacy pre-tunnel API host — delete once nothing uses it" },
+      { host: "crm.xgold.tech", role: "other", records: [], source: "extra", target: null, proxied: null, resolved: [], probe: none("no record yet"), state: "unavailable", note: "planned (HOSTNAMES_EXTRA)" },
+    ],
+    otherRecords: ['TXT @ "v=spf1 -all"', 'TXT _dmarc "v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s"', 'TXT _domainkey "v=DKIM1; p="', "SRV _minecraft._tcp.mc.xgold.tech → 0 5 25565 mc.xgold.tech"],
     checkedAt: new Date().toISOString(),
   };
 }

@@ -195,6 +195,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       incl. a forged-header probe; `server/test-cf-access.mjs`). Env `CF_ACCESS_TEAM_DOMAIN`,
       `CF_ACCESS_AUD`, `PUBLIC_DASHBOARD_URL`. SERVER_SETUP § 7b = GitHub OAuth app → Access app
       (GitHub only) → env → tunnel route `dash`.
+- [x] **Domain & hostnames card** on the Dashboard (Carter, 2026-10-20: "a list of subdomains …
+      and their statuses"): `services/hostnames.ts` merges the Cloudflare DNS API (read-only token)
+      or `deploy/dns/<domain>.zone` (`dns-lib.ts parseZoneFile`) with config-implied names (apps,
+      dash, mc, `HOSTNAMES_EXTRA` planned names), resolves each publicly (`services/dnsLookup.ts`,
+      shared with the audit), infers the role, and probes it (HTTPS / Access login wall / Cloudflare
+      5xx, Minecraft ping, Jellyfin). `GET /api/hostnames`, MCP `hostnames_status`,
+      `HostnamesCard`. Read-only by design.
 - [ ] Issue #10 part A, Cloudflare side: GitHub login method, Access app for `dash.xgold.tech`,
       AUD tag into the env, tunnel route `dash` → the dashboard's real port
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
@@ -358,6 +365,11 @@ override the placeholders wherever they conflict:
   tunnel requires a valid Access token as well. GitHub was chosen because it enforces 2FA on every
   account and needs one OAuth app, no money; e-mail one-time PIN is a single factor and is not
   offered for the dashboard. No JWT library: Node's `crypto.verify` with JWK import.
+- 2026-10-20 **The hostnames card reads DNS, never writes it.** Preferred source is a Cloudflare
+  API token scoped to Zone:Read + DNS:Read on this zone only (an integration secret like the
+  Jellyfin key, not an AI API key); the zone file is the fallback. Changing records stays a human
+  action in Cloudflare — the classifier refuses DNS edits for the agent anyway, and a dashboard that
+  could rewrite DNS would be a far bigger prize than one that can read it.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or
