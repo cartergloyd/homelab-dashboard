@@ -62,7 +62,7 @@ web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
 deploy/   systemd units, sudoers rule, env template      SERVER_SETUP.md = install handoff
 scripts/  hl-run.sh — tee a terminal script's output into the alerts feed
 docker-compose.yml   PostgreSQL (127.0.0.1 only) + personal Directus (Tailscale) + one Directus per
-                     public app (fam, ai → 127.0.0.1:805x, published as api.<app>.xgold.tech) +
+                     public app (fam, ai → 127.0.0.1:805x, published as <app>-api.xgold.tech) +
                      cloudflared (Cloudflare Tunnel, host network → 127.0.0.1:<port>)
                      services/apps.ts reads it all; apps-config.ts parses APPS / APP_<NAME>_*
 deploy/dns/          the owner's real DNS records as a BIND zone (import into Cloudflare, § 5.0a)
@@ -182,9 +182,9 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       11:33, DNSSEC removed at Squarespace, 13 records identical to the old zone, all DNS-only);
       Zero Trust Free is activated (team `floral-glitter-d778`). Runbook SERVER_SETUP § 5.0a, records
       as data in `deploy/dns/xgold.tech.zone`, `audit:install` `[dns]` section (`server/test-dns.mjs`).
-- [ ] Tunnel: create `homelab` in Zero Trust, token into the compose `.env`, public hostnames
-      `api.fam` / `api.ai` → `127.0.0.1:8056/8057` (delete the old `api.fam` A record first), first
-      `docker compose up` on the server, Access on `/admin`
+- [x] Tunnel `homelab` created in Zero Trust (2026-10-20, id `0ef75471-…`) with routes
+      `fam-api.xgold.tech` → `http://127.0.0.1:8056` and `ai-api.xgold.tech` → `http://127.0.0.1:8057`
+- [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up`, Access on `/admin`
 - [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
       Codex version on the server (plain-text output still works, resume is skipped if absent)
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
@@ -223,8 +223,9 @@ override the placeholders wherever they conflict:
   needs it as `CF_ACCESS_TEAM_DOMAIN`). The records, identical to the old Squarespace set:
   `@`, `www`, `fam` → GitHub Pages (`cartergloyd.github.io`); `api.fam`, `mc`, `streaming` → the
   home IP `99.116.141.110` (port-forwarded through the VPN's exceptions); SRV `_minecraft._tcp.mc`;
-  SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`api.<app>` = that app's
-  Directus, `<app>` = its front-end**. The first apps are `fam` and `ai`.
+  SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`<app>-api` = that app's
+  Directus, `<app>` = its front-end** (single level: Universal SSL covers `*.xgold.tech` only; the
+  legacy `api.fam` A record stays until nothing uses it). The first apps are `fam` and `ai`.
 - A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
   failures are a known "needs a human" incident, not a server fault.
 
@@ -318,9 +319,11 @@ override the placeholders wherever they conflict:
   The personal Directus stays Tailscale-only and is NOT in the tunnel.
 - 2026-10-19 Data for the stack lives outside the source checkout (`PGDATA_DIR`,
   `APPS_DATA_DIR`, default `/srv/homelab/…`) so a re-clone can never lose it.
-- 2026-10-20 **`api.<app>.xgold.tech` is the app's Directus; `<app>.xgold.tech` is its front-end.**
+- 2026-10-20 **`<app>-api.xgold.tech` is the app's Directus; `<app>.xgold.tech` is its front-end.**
   Found in the live DNS: `fam.xgold.tech` is already a GitHub Pages site and `api.fam` its API
-  host. Defaults in `apps-config.ts` (`publicUrl` = api., `siteUrl` = bare), compose `PUBLIC_URL`,
+  host. First chosen as `api.<app>`, changed the same day: Cloudflare's free Universal SSL covers
+  one subdomain level only, and a multi-level name needs the paid Advanced Certificate Manager.
+  Defaults in `apps-config.ts` (`publicUrl` = `<name>-api`, `siteUrl` = bare), compose `PUBLIC_URL`,
   CORS default = the site origin, `add-app.sh`, docs; `APP_<NAME>_PUBLIC_URL` / `_SITE_URL` override.
 - 2026-10-20 **cloudflared runs with `network_mode: host`.** A bridge container cannot reach
   services bound to 127.0.0.1 on the host (`host.docker.internal` is the bridge gateway, not

@@ -151,10 +151,12 @@ copy the key for `JELLYFIN_API_KEY`. (Jellyfin 12+ requires the modern
 What this gives the owner: **one PostgreSQL** (bound to 127.0.0.1, never reachable from
 anywhere else), the **personal Directus** over Tailscale (port 8055, unchanged), and **one
 Directus per public app** — `fam` and `ai` to start — each with its **own database, own
-login role, own users, own files and own admin**, published at `https://api.fam.xgold.tech`
-and `https://api.ai.xgold.tech` through a **Cloudflare Tunnel**. The bare `fam.xgold.tech` /
+login role, own users, own files and own admin**, published at `https://fam-api.xgold.tech`
+and `https://ai-api.xgold.tech` through a **Cloudflare Tunnel**. The bare `fam.xgold.tech` /
 `ai.xgold.tech` names stay the apps' **front-ends** (GitHub Pages today) — the convention is
-`<app>` = site, `api.<app>` = that app's Directus. Nothing is port-forwarded on the
+`<app>` = site, `<app>-api` = that app's Directus. Single-level names on purpose: the free
+Universal SSL certificate covers `*.xgold.tech` only; `api.fam.xgold.tech` would need the paid
+Advanced Certificate Manager. Nothing is port-forwarded on the
 router: `cloudflared` makes outbound connections to Cloudflare, Cloudflare terminates TLS
 and routes each hostname to the right container. Apps use Directus's auth, REST/GraphQL,
 realtime and files like they would use Supabase; they never see the database port.
@@ -246,10 +248,10 @@ the admin e-mails, and leave `CLOUDFLARE_TUNNEL_TOKEN` for the next step. One
 2. On "Install and run a connector" choose **Docker** and copy **only the token** — the long
    string after `--token` — into `CLOUDFLARE_TUNNEL_TOKEN` in `.env`. Do not run their
    command; compose runs the connector (on the host network, so it reaches the loopback ports).
-3. **Public Hostname** tab → Add: subdomain `api.fam`, domain `xgold.tech`, type **HTTP**, URL
-   `127.0.0.1:8056`. Add another: `api.ai` → `127.0.0.1:8057`. Cloudflare creates a proxied
-   CNAME per hostname. If `api.fam` still has the A record from § 5.0a, delete that record
-   first — Cloudflare refuses to add a hostname over an existing record.
+3. Tunnel page → **Routes → Add route → Published application**: subdomain `fam-api`, domain
+   `xgold.tech`, Service URL `http://127.0.0.1:8056`. Add another: `ai-api` →
+   `http://127.0.0.1:8057`. Cloudflare creates a proxied CNAME per hostname (done 2026-10-20 for
+   both). The old `api.fam` A record (home IP) is legacy — delete it once nothing uses it.
 4. Do **not** add `fam` / `ai` themselves — those are the apps' front-ends (GitHub Pages). The
    dashboard's own hostname (`dash` → `127.0.0.1:3000`) belongs to issue #10: add it only once
    that PR's Access-token validation is deployed (until then the dashboard answers 401 to
@@ -260,12 +262,12 @@ the admin e-mails, and leave `CLOUDFLARE_TUNNEL_TOKEN` for the next step. One
 ```bash
 sudo docker compose up -d && sudo docker compose ps
 sudo docker logs homelab-cloudflared 2>&1 | grep -i "registered tunnel connection" | head -4   # expect 4 lines
-curl -s https://api.fam.xgold.tech/server/health ; echo                                    # {"status":"ok"}
-curl -s https://api.ai.xgold.tech/server/health ; echo
+curl -s https://fam-api.xgold.tech/server/health ; echo                                    # {"status":"ok"}
+curl -s https://ai-api.xgold.tech/server/health ; echo
 sudo ss -ltnp | grep -E ':(5432|805[67]|2000)\b'                                           # every line 127.0.0.1 (acceptance criterion 3)
 ```
 
-Open `https://api.fam.xgold.tech/admin`, sign in with `APP_FAM_ADMIN_*`, change the password,
+Open `https://fam-api.xgold.tech/admin`, sign in with `APP_FAM_ADMIN_*`, change the password,
 create the first collection and a role for app users. Same for `ai`. The personal Directus
 is still `http://<tailscale-name>:8055` only.
 
@@ -276,9 +278,9 @@ dashboard env to paste).
 
 ### 5.4 Protect the admin UIs (recommended)
 
-Zero Trust → **Access → Applications → Add → Self-hosted**: domain `api.fam.xgold.tech`, path
+Zero Trust → **Access → Applications → Add → Self-hosted**: domain `fam-api.xgold.tech`, path
 `admin*` → policy "Allow" for the owner's e-mail(s) with One-time PIN (or Google). Repeat for
-`api.ai`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
+`ai-api`. The API paths stay reachable for the apps; only the admin panel gets a login wall. The
 dashboard shows "behind Cloudflare Access" for the public check when this is on. Each
 Directus also runs with the rate limiter on, secure cookies, and CORS limited to the app's
 site origin (`https://fam.xgold.tech`; `APP_<NAME>_CORS_ORIGIN` to add more, e.g. a dev origin).
@@ -313,7 +315,7 @@ nameservers, a consistent DNSSEC state and a non-proxied Minecraft record are ga
 
 ```ts
 import { createDirectus, authentication, rest, realtime } from "@directus/sdk";
-const fam = createDirectus("https://api.fam.xgold.tech").with(authentication()).with(rest()).with(realtime()); // called from the site at https://fam.xgold.tech (CORS already allows it)
+const fam = createDirectus("https://fam-api.xgold.tech").with(authentication()).with(rest()).with(realtime()); // called from the site at https://fam.xgold.tech (CORS already allows it)
 await fam.login({ email, password });            // users you created in fam's admin
 const items = await fam.request(readItems("chores"));
 ```
@@ -673,7 +675,7 @@ HTTPS connections to Cloudflare. Recommended home-router settings:
 | IPv6 firewall | **On** (default deny inbound) if the ISP provides IPv6. | Inbound IPv6 bypasses NAT; the firewall must do the job NAT does for IPv4. |
 | Tailscale | No forward needed. Optional: forward one UDP port and run `tailscaled` with `--port=<that port>` for more direct connections. | Tailscale traverses NAT by itself and falls back to relays; a fixed forwarded port avoids relays on strict NATs. |
 | Local DNS filters (Pi-hole etc.) | Don't block `*.cloudflareaccess.com`, `*.argotunnel.com`, `*.cfargotunnel.com`, `region1.v2.argotunnel.com`, `api.cloudflare.com`. | cloudflared and Cloudflare Access use these. |
-| Hairpin NAT / local overrides for `api.fam.xgold.tech` | Not needed. | From inside the house the apps still go out to Cloudflare and back through the tunnel, which works everywhere. |
+| Hairpin NAT / local overrides for `fam-api.xgold.tech` | Not needed. | From inside the house the apps still go out to Cloudflare and back through the tunnel, which works everywhere. |
 | QoS | Optional: prioritise the server's Minecraft traffic. | Keeps gameplay smooth while backups or uploads run. |
 
 The server-side VPN (split tunnel) is unaffected: cloudflared's outbound connections and
@@ -688,7 +690,7 @@ Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions
 - [ ] **Database** page shows Directus `ok` and Postgres connected
 - [ ] `sudo ss -ltnp | grep 5432` shows `127.0.0.1` only (also 8056, 8057, 2000)
 - [ ] `dig +short NS xgold.tech` → `robin`/`rory.ns.cloudflare.com`, Cloudflare's overview says **Active**, and `dig +short mc.xgold.tech` is still the home IP, not a Cloudflare address (§ 5.0a)
-- [ ] `https://api.fam.xgold.tech/server/health` and `https://api.ai.xgold.tech/server/health` return ok from outside the house; `/admin` asks for the Cloudflare Access login; `https://fam.xgold.tech` still shows the GitHub Pages site
+- [ ] `https://fam-api.xgold.tech/server/health` and `https://ai-api.xgold.tech/server/health` return ok from outside the house; `/admin` asks for the Cloudflare Access login; `https://fam.xgold.tech` still shows the GitHub Pages site
 - [ ] **Database & apps** shows the tunnel connected and a green card per app; a dump exists for each database in `PG_BACKUP_DIR`
 - [ ] No router port forwards exist for 5432, 8055–8057, 2000 or 3000 (§ 8b)
 - [ ] **Minecraft → Live server alerts** shows Paper log lines; "Problems & maintenance" hides the routine ones

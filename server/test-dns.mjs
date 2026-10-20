@@ -32,7 +32,7 @@ eq(hostOf("MC.xgold.tech."), "mc.xgold.tech", "lower-case, trailing dot");
 eq(hostOf("[2001:db8::1]:25565"), "2001:db8::1", "bracketed IPv6 with port");
 
 // DoH reading
-const sample = { Status: 0, AD: false, Answer: [{ name: "api.fam.xgold.tech", type: 5, TTL: 300, data: "abc.cfargotunnel.com." }, { name: "api.fam.xgold.tech", type: 1, TTL: 300, data: "104.21.5.6" }, { name: "api.fam.xgold.tech", type: 1, TTL: 300, data: "172.67.1.2" }] };
+const sample = { Status: 0, AD: false, Answer: [{ name: "fam-api.xgold.tech", type: 5, TTL: 300, data: "abc.cfargotunnel.com." }, { name: "fam-api.xgold.tech", type: 1, TTL: 300, data: "104.21.5.6" }, { name: "fam-api.xgold.tech", type: 1, TTL: 300, data: "172.67.1.2" }] };
 eq(readDoh(sample, RR.A), { rcode: "NOERROR", answers: ["104.21.5.6", "172.67.1.2"], ad: false }, "only the requested type, in order");
 eq(readDoh({ Status: 3 }, RR.A), { rcode: "NXDOMAIN", answers: [], ad: false }, "NXDOMAIN with no answers");
 eq(readDoh(null, RR.NS).rcode, "ERROR", "no response");

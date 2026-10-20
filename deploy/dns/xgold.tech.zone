@@ -10,9 +10,9 @@
 ; NOT included: _domainconnect CNAME → _domainconnect.domains.squarespace.com — Squarespace's
 ; Domain Connect only works while Squarespace serves DNS; delete it from the Cloudflare zone.
 ;
-; After the cutover the tunnel adds its own records: api.fam, api.ai (later dash) become
-; proxied CNAMEs to <tunnel-id>.cfargotunnel.com — delete the api.fam A record first, then
-; add the hostname in Zero Trust → Tunnels → Public Hostname (SERVER_SETUP § 5.2).
+; After the cutover the tunnel adds its own records: fam-api, ai-api (later dash) are proxied
+; CNAMEs to <tunnel-id>.cfargotunnel.com, added as routes of the tunnel (SERVER_SETUP § 5.2).
+; The api.fam A record below is the legacy pre-tunnel API host — delete it once nothing uses it.
 ; mc / streaming MUST stay DNS-only: Minecraft and Jellyfin are not HTTP on 80/443 and the
 ; Cloudflare proxy would break them. The audit's [dns] section checks exactly this.
 

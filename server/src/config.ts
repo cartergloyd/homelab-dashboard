@@ -73,7 +73,7 @@ const Env = z.object({
   // postgres://user:pass@127.0.0.1:5432/personal
   PG_URL: z.string().optional(),
   // Directus-per-app platform (SERVER_SETUP § 5): app names; each has its own Postgres database,
-  // role and Directus, published as https://api.<name>.<PUBLIC_DOMAIN> by the Cloudflare Tunnel
+  // role and Directus, published as https://<name>-api.<PUBLIC_DOMAIN> by the Cloudflare Tunnel
   // (https://<name>.<PUBLIC_DOMAIN> is the app's front-end).
   // Per app: APP_<NAME>_URL (loopback Directus, default 8056, 8057 …), APP_<NAME>_PUBLIC_URL,
   // APP_<NAME>_CONTAINER (homelab-directus-<name>), APP_<NAME>_DB (<name>). See server/src/apps-config.ts.

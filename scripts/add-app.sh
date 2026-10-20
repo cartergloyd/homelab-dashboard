@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Add an app (its own database + role, and the snippets for its own Directus + hostname).
-# Hostnames: the Directus (API + /admin) is api.<name>.<domain> through the tunnel; <name>.<domain>
+# Hostnames: the Directus (API + /admin) is <name>-api.<domain> through the tunnel (single level —
+# the free Universal SSL cert covers *.<domain> only); <name>.<domain>
 # is left for the app's front-end (GitHub Pages or wherever it is hosted).
 #
 #   scripts/add-app.sh <name>            e.g. scripts/add-app.sh shop
@@ -73,7 +74,7 @@ APP_${upper}_ADMIN_PASSWORD=$admin_pw
       DB_PASSWORD: \${APP_${upper}_DB_PASSWORD}
       ADMIN_EMAIL: \${APP_${upper}_ADMIN_EMAIL}
       ADMIN_PASSWORD: \${APP_${upper}_ADMIN_PASSWORD}
-      PUBLIC_URL: https://api.$name.\${PUBLIC_DOMAIN}
+      PUBLIC_URL: https://$name-api.\${PUBLIC_DOMAIN}
       IP_TRUST_PROXY: "true"
       RATE_LIMITER_ENABLED: "true"
       RATE_LIMITER_POINTS: "50"
@@ -94,15 +95,15 @@ APP_${upper}_ADMIN_PASSWORD=$admin_pw
   … and add "- directus-$name" under cloudflared → depends_on.
 
 ================ 3. Cloudflare Zero Trust → Networks → Tunnels → your tunnel → Public Hostname ================
-  Subdomain: api.$name   Domain: $PUBLIC_DOMAIN   Service: HTTP   URL: 127.0.0.1:$port
+  Add route → Published application: Subdomain: $name-api   Domain: $PUBLIC_DOMAIN   Service URL: http://127.0.0.1:$port
   (cloudflared runs on the host network, so it reaches the loopback port directly)
-  (optional) Access → Applications: protect https://api.$name.$PUBLIC_DOMAIN/admin* with your login
+  (optional) Access → Applications: protect https://$name-api.$PUBLIC_DOMAIN/admin* with your login
   Front-end: point $name.$PUBLIC_DOMAIN at wherever the site is hosted (plain DNS record, not a tunnel hostname)
 
 ================ 4. dashboard env (/etc/homelab-dashboard.env or the real env file) ================
 APPS=…,$name          (append)
 APP_${upper}_URL=http://127.0.0.1:$port
-# APP_${upper}_PUBLIC_URL defaults to https://api.$name.$PUBLIC_DOMAIN and APP_${upper}_SITE_URL to https://$name.$PUBLIC_DOMAIN
+# APP_${upper}_PUBLIC_URL defaults to https://$name-api.$PUBLIC_DOMAIN and APP_${upper}_SITE_URL to https://$name.$PUBLIC_DOMAIN
 
 Then: docker compose up -d && sudo systemctl restart homelab-dashboard && npm run audit:install
 EOF

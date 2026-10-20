@@ -517,7 +517,7 @@ export function apps(): AppsPayload {
       {
         name: "fam",
         url: "http://127.0.0.1:8056",
-        publicUrl: "https://api.fam.xgold.tech",
+        publicUrl: "https://fam-api.xgold.tech",
         siteUrl: "https://fam.xgold.tech",
         containerName: "homelab-directus-fam",
         db: "fam",
@@ -531,7 +531,7 @@ export function apps(): AppsPayload {
       {
         name: "ai",
         url: "http://127.0.0.1:8057",
-        publicUrl: "https://api.ai.xgold.tech",
+        publicUrl: "https://ai-api.xgold.tech",
         siteUrl: "https://ai.xgold.tech",
         containerName: "homelab-directus-ai",
         db: "ai",
@@ -543,7 +543,7 @@ export function apps(): AppsPayload {
         backup: { latest: ago(55), file: "/var/backups/postgres/ai-20261017-040002.sql.gz", bytes: 18.4 * 1024 ** 2, count: 12 },
       },
     ],
-    tunnel: { container: container("cloudflare/cloudflared:latest", 72), ready: true, connections: 4, hostnames: ["api.fam.xgold.tech", "api.ai.xgold.tech"] },
+    tunnel: { container: container("cloudflare/cloudflared:latest", 72), ready: true, connections: 4, hostnames: ["fam-api.xgold.tech", "ai-api.xgold.tech"] },
     postgres: {
       connected: true,
       version: "PostgreSQL 16.4 on x86_64-pc-linux-gnu",

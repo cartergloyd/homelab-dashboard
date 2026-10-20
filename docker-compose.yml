@@ -1,7 +1,8 @@
 # Personal database platform: one PostgreSQL, one database + one Directus per app,
 # and a Cloudflare Tunnel that publishes each app's Directus on its own hostname
-# (api.fam.xgold.tech, api.ai.xgold.tech, …) without opening a single router port. The bare
-# fam.xgold.tech / ai.xgold.tech names stay the apps' front-ends (GitHub Pages today).
+# (fam-api.xgold.tech, ai-api.xgold.tech, …) without opening a single router port. The bare
+# fam.xgold.tech / ai.xgold.tech names stay the apps' front-ends (GitHub Pages today). Single-level
+# names on purpose: the free Universal SSL certificate covers *.xgold.tech only.
 #
 #   PostgreSQL        127.0.0.1:5432 only — never reachable from the LAN, the tailnet or
 #                     the internet. Apps and browsers talk to Directus, never to Postgres.
@@ -91,7 +92,7 @@ services:
       DB_PASSWORD: ${APP_FAM_DB_PASSWORD}
       ADMIN_EMAIL: ${APP_FAM_ADMIN_EMAIL}
       ADMIN_PASSWORD: ${APP_FAM_ADMIN_PASSWORD}
-      PUBLIC_URL: https://api.fam.${PUBLIC_DOMAIN}
+      PUBLIC_URL: https://fam-api.${PUBLIC_DOMAIN}
       # behind Cloudflare: trust the proxy for client IPs, rate-limit, secure cookies. CORS allows the
       # app's SITE origin (its front-end at fam.<domain>); the admin UI is same-origin and needs nothing.
       IP_TRUST_PROXY: "true"
@@ -130,7 +131,7 @@ services:
       DB_PASSWORD: ${APP_AI_DB_PASSWORD}
       ADMIN_EMAIL: ${APP_AI_ADMIN_EMAIL}
       ADMIN_PASSWORD: ${APP_AI_ADMIN_PASSWORD}
-      PUBLIC_URL: https://api.ai.${PUBLIC_DOMAIN}
+      PUBLIC_URL: https://ai-api.${PUBLIC_DOMAIN}
       IP_TRUST_PROXY: "true"
       RATE_LIMITER_ENABLED: "true"
       RATE_LIMITER_POINTS: "50"
@@ -156,7 +157,7 @@ services:
   # (127.0.0.1:3000) once issue #10's auth lands. cloudflared only dials out, so host mode costs
   # nothing in exposure; its own metrics listener stays on loopback too.
   # Hostname routing lives in Cloudflare Zero Trust → Networks → Tunnels → this tunnel →
-  # Public Hostname: api.fam.<domain> → http://127.0.0.1:8056, api.ai.<domain> → http://127.0.0.1:8057
+  # Public Hostname: fam-api.<domain> → http://127.0.0.1:8056, ai-api.<domain> → http://127.0.0.1:8057
   # (later: dash.<domain> → http://127.0.0.1:3000). fam.<domain> / ai.<domain> are the apps'
   # front-ends (GitHub Pages) and are NOT tunnel hostnames.
   cloudflared:

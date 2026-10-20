@@ -13,11 +13,11 @@ const apps = appsFromEnv(["fam", " ai ", ""], {}, "xgold.tech");
 eq(apps.length, 2, "blank skipped, names trimmed");
 eq(
   apps[0],
-  { name: "fam", url: "http://127.0.0.1:8056", publicUrl: "https://api.fam.xgold.tech", siteUrl: "https://fam.xgold.tech", container: "homelab-directus-fam", db: "fam" },
-  "defaults for the first app: Directus at api.<name>.<domain>, the site at <name>.<domain>",
+  { name: "fam", url: "http://127.0.0.1:8056", publicUrl: "https://fam-api.xgold.tech", siteUrl: "https://fam.xgold.tech", container: "homelab-directus-fam", db: "fam" },
+  "defaults for the first app: Directus at <name>-api.<domain>, the site at <name>.<domain>",
 );
 eq(apps[1].url, "http://127.0.0.1:8057", "ports count up in APPS order");
-eq(apps[1].publicUrl, "https://api.ai.xgold.tech", "public URL from the domain");
+eq(apps[1].publicUrl, "https://ai-api.xgold.tech", "public URL from the domain");
 eq(apps[1].siteUrl, "https://ai.xgold.tech", "site URL from the domain");
 
 const custom = appsFromEnv(

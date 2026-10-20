@@ -9,11 +9,12 @@ the invariants it protects are:
 |---|---|---|
 | `mc`, `streaming` (A → home IP) | **DNS only** | Minecraft (TCP 25565) and Jellyfin are not HTTP on 80/443; Cloudflare's proxy would break them |
 | `@`, `www`, `fam` (GitHub Pages) | DNS only for the cutover | identical behaviour to today; proxying is an optional later step (needs SSL/TLS mode *Full*) |
-| `api.fam`, `api.ai`, later `dash` | **proxied CNAMEs created by the tunnel** | the only records Cloudflare should proxy; never A records to the home IP |
+| `fam-api`, `ai-api`, later `dash` | **proxied CNAMEs created by the tunnel** | the only records Cloudflare should proxy; never A records to the home IP. Single-level names: Universal SSL covers `*.xgold.tech` only |
+| `api.fam` (A → home IP) | legacy, DNS only | the pre-tunnel API host; delete once nothing uses it |
 | `_minecraft._tcp.mc` SRV, the TXTs | unchanged | |
 
 `npm run audit:install` → `[dns]` verifies the nameservers are Cloudflare's, DNSSEC is
-consistent, each `api.<app>` resolves to Cloudflare (proxied) and the Minecraft host does
+consistent, each `<app>-api` resolves to Cloudflare (proxied) and the Minecraft host does
 **not**.
 
 This is real data about the owner's domain, not an `[INSTALLER]` placeholder. When a record
