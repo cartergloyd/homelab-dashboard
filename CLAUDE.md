@@ -206,6 +206,12 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       identity e-mail = the owner's), Access application "Homelab dashboard" for `dash.xgold.tech`
       (GitHub only, Owner policy, 24 h, id `ff50007a-…`, AUD in SERVER_SETUP § 7b), tunnel route
       `dash` → `http://127.0.0.1:8088`
+- [x] **Twenty CRM** as a second app kind (Carter, 2026-10-21): `APP_<NAME>_KIND=twenty` in
+      `apps-config.ts` (site = the app, `/healthz`, container `homelab-twenty`, 127.0.0.1:3020),
+      compose services `redis` + `twenty-server` + `twenty-worker` on the shared Postgres (database +
+      role `crm`), `add-app.sh --kind twenty`, kind-aware Database card / status row / audit / hostnames
+      role `app`, SERVER_SETUP § 5.8 with the multi-user access model. Still to do in Cloudflare: the
+      tunnel route `crm` → 127.0.0.1:3020 and the "Twenty CRM" Access app (needs the e-mail list).
 - [ ] Issue #10 part A, server side: pull main, build, add `CF_ACCESS_*` + `PUBLIC_DASHBOARD_URL`
       to the dashboard env, restart; confirm `PORT`/`HOST` (route assumes 8088 on loopback)
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
@@ -374,6 +380,11 @@ override the placeholders wherever they conflict:
   Jellyfin key, not an AI API key); the zone file is the fallback. Changing records stays a human
   action in Cloudflare — the classifier refuses DNS edits for the agent anyway, and a dashboard that
   could rewrite DNS would be a far bigger prize than one that can read it.
+- 2026-10-21 **CRM for several people: Twenty's own accounts first, Cloudflare Access as the outer
+  lock with an e-mail allow-list.** Carter wants multiple users. GitHub-only login would force every
+  family member onto GitHub, so the "Twenty CRM" Access app allows listed e-mails with One-time PIN
+  (plus GitHub for the owner), long sessions, and Twenty handles accounts, roles and 2FA inside.
+  Adding a person = one e-mail in the policy + an invite in Twenty. Access stays removable.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

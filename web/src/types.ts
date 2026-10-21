@@ -530,8 +530,11 @@ export interface AppDbStats {
   error?: string;
 }
 
+export type AppKind = "directus" | "twenty";
+
 export interface AppStatus {
   name: string;
+  kind: AppKind;
   url: string;
   publicUrl: string | null;
   /** the app's front-end site (<name>.<domain>, GitHub Pages today); informational */
@@ -580,7 +583,7 @@ export interface AppsPayload {
 
 // ---- Domain & hostnames card (Dashboard) --------------------------------------------------
 
-export type HostRole = "site" | "api" | "dashboard" | "game" | "stream" | "other";
+export type HostRole = "site" | "api" | "app" | "dashboard" | "game" | "stream" | "other";
 
 export interface HostnameProbe {
   kind: "https" | "minecraft" | "none";

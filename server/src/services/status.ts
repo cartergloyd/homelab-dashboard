@@ -79,7 +79,7 @@ async function checkApps(): Promise<ServiceStatus[]> {
     const apps = a.apps.map((x) =>
       result(
         `app:${x.name}`,
-        `Directus · ${x.name}`,
+        `${x.kind === "twenty" ? "Twenty CRM" : "Directus"} · ${x.name}`,
         x.state,
         [x.local.ok ? "healthy" : (x.local.error ?? "not healthy"), x.public.ok === true ? "public ok" : x.public.ok === false ? "public unreachable" : null, x.database.exists ? `${x.database.collections ?? 0} collections · ${x.database.users ?? 0} users` : "database missing"].filter(Boolean).join(" · "),
         x.local.latencyMs,

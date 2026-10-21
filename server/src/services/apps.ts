@@ -10,7 +10,7 @@ import pg from "pg";
 import { cfg } from "../config.js";
 import * as demo from "../demo.js";
 import { containerInfo, dockerAvailable } from "./docker.js";
-import type { AppContainer, AppDbStats, AppStatus, AppsPayload, PgDatabaseRow, ServiceState, TunnelStatus } from "../types.js";
+import type { AppContainer, AppDbStats, AppKind, AppStatus, AppsPayload, PgDatabaseRow, ServiceState, TunnelStatus } from "../types.js";
 
 const execFileP = promisify(execFile);
 const TTL_MS = 15_000;
@@ -34,23 +34,24 @@ async function container(name: string): Promise<AppContainer | null> {
   return c ? { state: c.state, startedAt: c.startedAt, image: c.image } : null;
 }
 
-async function health(url: string, timeoutMs: number): Promise<{ ok: boolean | null; status: string | null; httpStatus: number | null; latencyMs: number | null; note?: string }> {
+async function health(url: string, timeoutMs: number, path = "/server/health"): Promise<{ ok: boolean | null; status: string | null; httpStatus: number | null; latencyMs: number | null; note?: string }> {
   const t = Date.now();
   try {
-    const res = await fetch(`${url}/server/health`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { Accept: "application/json" } });
+    const res = await fetch(`${url}${path}`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { Accept: "application/json" } });
     const latencyMs = Date.now() - t;
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location") ?? "";
       return { ok: true, status: "login-wall", httpStatus: res.status, latencyMs, note: /cloudflareaccess/i.test(loc) ? "behind Cloudflare Access (login required)" : `redirects to ${loc}` };
     }
     const body = (await res.json().catch(() => ({}))) as { status?: string };
+    // Directus answers {"status":"ok"}; Twenty's /healthz is a plain 200
     return { ok: res.ok && (body.status ?? "ok") === "ok", status: body.status ?? (res.ok ? "ok" : "error"), httpStatus: res.status, latencyMs };
   } catch (e) {
     return { ok: false, status: null, httpStatus: null, latencyMs: null, note: (e as Error).message };
   }
 }
 
-async function dbStats(db: string): Promise<AppDbStats> {
+async function dbStats(db: string, kind: AppKind = "directus"): Promise<AppDbStats> {
   const empty: AppDbStats = { exists: false, sizeBytes: null, tables: null, collections: null, users: null, lastLogin: null };
   const core = poolFor(new URL(cfg.postgres.url ?? "postgres://x/postgres").pathname.slice(1) || "postgres");
   if (!core) return { ...empty, error: "PG_URL not set" };
@@ -62,19 +63,26 @@ async function dbStats(db: string): Promise<AppDbStats> {
   }
   const p = poolFor(db)!;
   try {
+    // directus: everything lives in public (its own tables are directus_*); twenty: core + metadata
+    // schemas plus one workspace_<id> schema per workspace holding the CRM objects
     const [size, tables, coll] = await Promise.all([
       p.query<{ size: string }>("select pg_database_size(current_database())::bigint as size"),
-      p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema = 'public'"),
-      p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name not like 'directus\\_%'"),
+      p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_type = 'BASE TABLE'"),
+      kind === "twenty"
+        ? p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema like 'workspace\\_%' and table_type = 'BASE TABLE'")
+        : p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name not like 'directus\\_%'"),
     ]);
     let users: number | null = null;
     let lastLogin: string | null = null;
     try {
-      const u = await p.query<{ n: number; last: Date | null }>("select count(*)::int as n, max(last_access) as last from directus_users");
+      const u =
+        kind === "twenty"
+          ? await p.query<{ n: number; last: Date | null }>('select count(*)::int as n, max("updatedAt") as last from core."user"')
+          : await p.query<{ n: number; last: Date | null }>("select count(*)::int as n, max(last_access) as last from directus_users");
       users = u.rows[0]?.n ?? 0;
       lastLogin = u.rows[0]?.last ? new Date(u.rows[0].last).toISOString() : null;
     } catch {
-      // Directus has not bootstrapped this database yet
+      // the app has not bootstrapped this database yet
     }
     return { exists: true, sizeBytes: Number(size.rows[0]?.size ?? 0), tables: tables.rows[0]?.n ?? 0, collections: coll.rows[0]?.n ?? 0, users, lastLogin };
   } catch (e) {
@@ -126,7 +134,7 @@ async function tunnelStatus(): Promise<TunnelStatus> {
 }
 
 async function appStatus(a: (typeof cfg.apps)[number]): Promise<AppStatus> {
-  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000), a.publicUrl ? health(a.publicUrl, 8000) : Promise.resolve(null), dbStats(a.db), latestBackup(a.db)]);
+  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000, a.healthPath), a.publicUrl ? health(a.publicUrl, 8000, a.healthPath) : Promise.resolve(null), dbStats(a.db, a.kind), latestBackup(a.db)]);
   let state: ServiceState = "ok";
   if (!local.ok || !database.exists) state = c?.state === "running" || database.exists ? "degraded" : c ? "down" : "unavailable";
   if (local.ok && pub && pub.ok === false) state = "degraded";
@@ -135,6 +143,7 @@ async function appStatus(a: (typeof cfg.apps)[number]): Promise<AppStatus> {
   if (state === "ok" && (!backup.latest || Date.now() - Date.parse(backup.latest) > 48 * 3_600_000)) state = "degraded";
   return {
     name: a.name,
+    kind: a.kind,
     url: a.url,
     publicUrl: a.publicUrl,
     siteUrl: a.siteUrl,

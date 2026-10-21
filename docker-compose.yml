@@ -8,7 +8,8 @@
 #                     the internet. Apps and browsers talk to Directus, never to Postgres.
 #   directus          the owner's personal database UI, Tailscale-only (port 8055)
 #   directus-<app>    one per app, bound to 127.0.0.1:805x so only the tunnel and the
-#                     dashboard can reach it; the tunnel reaches it by service name
+#                     dashboard can reach it
+#   twenty-server/-worker + redis   the Twenty CRM at crm.<domain>, 127.0.0.1:3020 (§ 5.8)
 #   cloudflared       outbound-only connection to Cloudflare, on the HOST network so it can
 #                     reach every loopback-only listener (Directuses, later the dashboard);
 #                     hostnames → 127.0.0.1:<port> are configured in Zero Trust (SERVER_SETUP § 5)
@@ -16,7 +17,7 @@
 # The dashboard itself runs natively (see SERVER_SETUP.md), not in this stack.
 #
 # [INSTALLER] This stack is NEW infrastructure. Check first: (1) nothing else on the
-# server uses ports 5432, 8055-8057, 2000 (`ss -ltnp`); (2) the pinned image tags are still
+# server uses ports 5432, 8055-8057, 3020, 2000 (`ss -ltnp`); (2) the pinned image tags are still
 # current (postgres:16, directus/directus:11.9.3 were current in Oct 2026; cloudflared
 # tracks `latest` on purpose — Cloudflare retires old clients). Container names must match
 # the dashboard env (DIRECTUS_CONTAINER, POSTGRES_CONTAINER, APP_<NAME>_CONTAINER,
@@ -35,6 +36,7 @@ services:
       APPS: ${APPS}
       APP_FAM_DB_PASSWORD: ${APP_FAM_DB_PASSWORD}
       APP_AI_DB_PASSWORD: ${APP_AI_DB_PASSWORD}
+      APP_CRM_DB_PASSWORD: ${APP_CRM_DB_PASSWORD}
     volumes:
       # [INSTALLER] keep the data OUTSIDE the source checkout, e.g. PGDATA_DIR=/srv/homelab/pgdata
       - ${PGDATA_DIR:-./pgdata}:/var/lib/postgresql/data
@@ -150,6 +152,93 @@ services:
     ports:
       - "127.0.0.1:8057:8055"
 
+  # ---- Twenty CRM (crm.<domain>): the self-hosted CRM for several people -----------------
+  # Same Postgres (its own database + role "crm", created by 01-apps.sh / add-app.sh), its own
+  # Redis, two containers from one image (server + worker), files under APPS_DATA_DIR/crm.
+  # Published by the tunnel as https://crm.<domain> → http://127.0.0.1:3020; Cloudflare Access
+  # (allow-listed e-mails) sits in front, Twenty's own accounts behind it (SERVER_SETUP § 5.8).
+  # [INSTALLER] Twenty wants ~2 GB RAM for itself (free -h). Pin TWENTY_TAG to a release.
+  redis:
+    image: redis:7-alpine
+    container_name: homelab-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory-policy", "noeviction", "--save", "60", "1"]
+    volumes:
+      - ${APPS_DATA_DIR:-./apps}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # no ports: only the Twenty containers on the compose network use it
+
+  twenty-server:
+    image: twentycrm/twenty:${TWENTY_TAG:-latest}
+    container_name: homelab-twenty
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_PORT: 3000
+      # the password is pasted into this URL unencoded: hex only (openssl rand -hex 32)
+      PG_DATABASE_URL: postgres://crm:${APP_CRM_DB_PASSWORD}@postgres:5432/crm
+      SERVER_URL: https://crm.${PUBLIC_DOMAIN}
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${APP_CRM_ENCRYPTION_KEY}
+      STORAGE_TYPE: local
+      DISABLE_DB_MIGRATIONS: "false"
+      DISABLE_CRON_JOBS_REGISTRATION: "false"
+      # outbound e-mail for invites and password resets (optional; empty = none)
+      EMAIL_DRIVER: ${TWENTY_EMAIL_DRIVER:-}
+      EMAIL_SMTP_HOST: ${TWENTY_EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${TWENTY_EMAIL_SMTP_PORT:-}
+      EMAIL_SMTP_USER: ${TWENTY_EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_PASSWORD: ${TWENTY_EMAIL_SMTP_PASSWORD:-}
+      EMAIL_FROM_ADDRESS: ${TWENTY_EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${TWENTY_EMAIL_FROM_NAME:-Twenty CRM}
+    volumes:
+      - ${APPS_DATA_DIR:-./apps}/crm/local-storage:/app/packages/twenty-server/.local-storage
+    ports:
+      # loopback only: the tunnel (host network) and the dashboard reach it at 127.0.0.1:3020
+      - "127.0.0.1:3020:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:3000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  twenty-worker:
+    image: twentycrm/twenty:${TWENTY_TAG:-latest}
+    container_name: homelab-twenty-worker
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      twenty-server:
+        condition: service_healthy
+    environment:
+      PG_DATABASE_URL: postgres://crm:${APP_CRM_DB_PASSWORD}@postgres:5432/crm
+      SERVER_URL: https://crm.${PUBLIC_DOMAIN}
+      REDIS_URL: redis://redis:6379
+      ENCRYPTION_KEY: ${APP_CRM_ENCRYPTION_KEY}
+      STORAGE_TYPE: local
+      # migrations and cron registration already run on the server container
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+      EMAIL_DRIVER: ${TWENTY_EMAIL_DRIVER:-}
+      EMAIL_SMTP_HOST: ${TWENTY_EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${TWENTY_EMAIL_SMTP_PORT:-}
+      EMAIL_SMTP_USER: ${TWENTY_EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_PASSWORD: ${TWENTY_EMAIL_SMTP_PASSWORD:-}
+      EMAIL_FROM_ADDRESS: ${TWENTY_EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${TWENTY_EMAIL_FROM_NAME:-Twenty CRM}
+    volumes:
+      - ${APPS_DATA_DIR:-./apps}/crm/local-storage:/app/packages/twenty-server/.local-storage
+
   # ---- Cloudflare Tunnel: outbound only, no router ports, TLS at Cloudflare's edge -------
   # Runs on the HOST network: a bridge container cannot reach services bound to 127.0.0.1 on
   # the host (host.docker.internal is the bridge gateway, not loopback), and everything this
@@ -168,5 +257,6 @@ services:
     depends_on:
       - directus-fam
       - directus-ai
+      - twenty-server
     # /ready and /metrics for the dashboard's tunnel status (CLOUDFLARED_METRICS_URL), loopback only
     command: tunnel --no-autoupdate --metrics 127.0.0.1:2000 run --token ${CLOUDFLARE_TUNNEL_TOKEN}

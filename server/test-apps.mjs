@@ -13,7 +13,7 @@ const apps = appsFromEnv(["fam", " ai ", ""], {}, "xgold.tech");
 eq(apps.length, 2, "blank skipped, names trimmed");
 eq(
   apps[0],
-  { name: "fam", url: "http://127.0.0.1:8056", publicUrl: "https://fam-api.xgold.tech", siteUrl: "https://fam.xgold.tech", container: "homelab-directus-fam", db: "fam" },
+  { name: "fam", kind: "directus", url: "http://127.0.0.1:8056", publicUrl: "https://fam-api.xgold.tech", siteUrl: "https://fam.xgold.tech", container: "homelab-directus-fam", db: "fam", healthPath: "/server/health" },
   "defaults for the first app: Directus at <name>-api.<domain>, the site at <name>.<domain>",
 );
 eq(apps[1].url, "http://127.0.0.1:8057", "ports count up in APPS order");
@@ -27,7 +27,7 @@ const custom = appsFromEnv(
 );
 eq(
   custom[0],
-  { name: "shop", url: "http://127.0.0.1:9000", publicUrl: "https://store.example.com", siteUrl: "https://shop.example.com", container: "shop-directus", db: "shopdb" },
+  { name: "shop", kind: "directus", url: "http://127.0.0.1:9000", publicUrl: "https://store.example.com", siteUrl: "https://shop.example.com", container: "shop-directus", db: "shopdb", healthPath: "/server/health" },
   "every field overridable; trailing slashes dropped",
 );
 
@@ -37,3 +37,14 @@ assert.throws(() => appsFromEnv(["Bad Name"], {}, null), /not a valid app name/,
 n++;
 
 console.log(`apps-config: ${n} checks passed`);
+
+// second app kind: Twenty CRM
+const mixed = appsFromEnv(["fam", "crm", "ai"], { APP_CRM_KIND: "twenty" }, "xgold.tech");
+eq(mixed.map((a) => [a.name, a.kind, a.url, a.publicUrl, a.siteUrl, a.container, a.healthPath]), [
+  ["fam", "directus", "http://127.0.0.1:8056", "https://fam-api.xgold.tech", "https://fam.xgold.tech", "homelab-directus-fam", "/server/health"],
+  ["crm", "twenty", "http://127.0.0.1:3020", "https://crm.xgold.tech", null, "homelab-twenty", "/healthz"],
+  ["ai", "directus", "http://127.0.0.1:8057", "https://ai-api.xgold.tech", "https://ai.xgold.tech", "homelab-directus-ai", "/server/health"],
+], "twenty apps do not consume a directus port; crm is the site itself");
+assert.throws(() => appsFromEnv(["x"], { APP_X_KIND: "wordpress" }, null), /APP_X_KIND/, "unknown kinds are rejected at boot");
+n++;
+console.log(`apps-config (kinds): ${n} checks total`);

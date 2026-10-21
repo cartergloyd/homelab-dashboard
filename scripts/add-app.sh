@@ -4,7 +4,8 @@
 # the free Universal SSL cert covers *.<domain> only); <name>.<domain>
 # is left for the app's front-end (GitHub Pages or wherever it is hosted).
 #
-#   scripts/add-app.sh <name>            e.g. scripts/add-app.sh shop
+#   scripts/add-app.sh <name>            e.g. scripts/add-app.sh shop          (a Directus app)
+#   scripts/add-app.sh <name> --kind twenty   the Twenty CRM (one instance; see SERVER_SETUP § 5.8)
 #
 # Creates the role and database in the RUNNING postgres container (idempotent), generates
 # secrets, and PRINTS what to paste: .env lines, the docker-compose service block, the
@@ -13,8 +14,10 @@
 set -euo pipefail
 
 name="${1:-}"
-if ! [[ "$name" =~ ^[a-z][a-z0-9_-]{0,30}$ ]]; then
-  echo "usage: scripts/add-app.sh <name>   (lowercase letters, digits, - _)" >&2
+kind="directus"
+if [ "${2:-}" = "--kind" ]; then kind="${3:-}"; fi
+if ! [[ "$name" =~ ^[a-z][a-z0-9_-]{0,30}$ ]] || ! [[ "$kind" =~ ^(directus|twenty)$ ]]; then
+  echo "usage: scripts/add-app.sh <name> [--kind directus|twenty]   (name: lowercase letters, digits, - _)" >&2
   exit 64
 fi
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,6 +48,33 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'app', :'app') WHERE NOT EXISTS (S
 SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', :'app') \gexec
 SQL
 echo "done."
+
+if [ "$kind" = "twenty" ]; then
+  enc="$(openssl rand -base64 32)"
+  cat <<EOF
+
+================ 1. append to $envfile ================
+APP_${upper}_DB_PASSWORD=$pw
+APP_${upper}_ENCRYPTION_KEY=$enc
+TWENTY_TAG=v2.38.1          (check https://hub.docker.com/r/twentycrm/twenty/tags)
+(and add "$name" to APPS=… so a fresh cluster would recreate it)
+
+================ 2. docker-compose.yml ================
+The twenty-server / twenty-worker / redis services in the repo\x27s compose file already use the
+database "$name" and the role "$name" — if you named the app differently, change "crm" there.
+
+================ 3. Cloudflare Zero Trust → Networking → Tunnels → homelab → Routes ================
+  Add route → Published application: Subdomain: $name   Domain: $PUBLIC_DOMAIN   Service URL: http://127.0.0.1:3020
+  Access → Applications → Create → Self-hosted: $name.$PUBLIC_DOMAIN (no path), policy = allow-listed e-mails
+
+================ 4. dashboard env (/etc/homelab-dashboard.env or the real env file) ================
+APPS=…,$name          (append)
+APP_${upper}_KIND=twenty
+
+Then: docker compose up -d && sudo systemctl restart homelab-dashboard && npm run audit:install
+EOF
+  exit 0
+fi
 
 cat <<EOF
 

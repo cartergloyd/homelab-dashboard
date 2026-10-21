@@ -1,33 +1,43 @@
-// Directus-per-app configuration (fam, ai, …). Pure so it can be unit-tested; config.ts
-// calls it with process.env.
+// Per-app configuration (fam, ai, crm, …). Pure so it can be unit-tested; config.ts calls it
+// with process.env.
 //
-// Hostname convention (decided 2026-10-20 from the owner's existing DNS): an app's SITE — its
-// front-end, a GitHub Pages site today — is https://<name>.<domain>; the app's Directus (API +
-// /admin), published by the Cloudflare Tunnel, is https://<name>-api.<domain>. Single-level on
-// purpose: Cloudflare's free Universal SSL covers *.<domain> only, so api.<name>.<domain> would
-// need the paid Advanced Certificate Manager.
+// Two kinds of app share the one PostgreSQL (one database + one login role each):
+//   directus  (default) a Directus instance = the app's API + /admin, published as
+//             https://<name>-api.<domain>; the app's SITE (its front-end, GitHub Pages today) is
+//             https://<name>.<domain>. Single-level names on purpose: the free Universal SSL
+//             covers *.<domain> only, so api.<name>.<domain> would need the paid certificate manager.
+//   twenty    the self-hosted Twenty CRM: one web app at https://<name>.<domain> (no separate site),
+//             health at /healthz, container homelab-twenty, loopback port 3020.
 //
-//   APPS=fam,ai                                    the app names (also the Postgres database + role names)
-//   PUBLIC_DOMAIN=xgold.tech                       the owner's domain, on Cloudflare DNS
-//   APP_FAM_URL=http://127.0.0.1:8056              where the dashboard reaches fam's Directus (default: 8056, 8057, … in APPS order)
-//   APP_FAM_PUBLIC_URL=https://fam-api.xgold.tech  fam's Directus through the tunnel (default from PUBLIC_DOMAIN)
-//   APP_FAM_SITE_URL=https://fam.xgold.tech        fam's front-end (default from PUBLIC_DOMAIN; shown, never probed)
-//   APP_FAM_CONTAINER=homelab-directus-fam         its container (default)
-//   APP_FAM_DB=fam                                 its database (default: the name)
+//   APPS=fam,ai,crm                                 the app names (also the Postgres database + role names)
+//   PUBLIC_DOMAIN=xgold.tech                        the owner's domain, on Cloudflare DNS
+//   APP_CRM_KIND=twenty                             directus (default) | twenty
+//   APP_FAM_URL=http://127.0.0.1:8056               where the dashboard reaches the app (default: 8056, 8057, … for
+//                                                   directus apps in APPS order; 3020 for twenty)
+//   APP_FAM_PUBLIC_URL=https://fam-api.xgold.tech   what users/apps open through the tunnel (default by kind)
+//   APP_FAM_SITE_URL=https://fam.xgold.tech         directus only: the front-end (shown, never probed)
+//   APP_FAM_CONTAINER=homelab-directus-fam          its container (default by kind)
+//   APP_FAM_DB=fam                                  its database (default: the name)
+
+export type AppKind = "directus" | "twenty";
 
 export interface AppConfig {
   name: string;
-  /** dashboard → Directus, loopback */
+  kind: AppKind;
+  /** dashboard → the app, loopback */
   url: string;
-  /** users/apps → Directus through the tunnel (<name>-api.<domain>); null when neither APP_<NAME>_PUBLIC_URL nor PUBLIC_DOMAIN is set */
+  /** users/apps → the app through the tunnel; null when neither APP_<NAME>_PUBLIC_URL nor PUBLIC_DOMAIN is set */
   publicUrl: string | null;
-  /** the app's front-end site (<name>.<domain>); informational — the dashboard never probes it */
+  /** directus: the app's front-end site (<name>.<domain>); null for kinds that are the site themselves */
   siteUrl: string | null;
   container: string;
   db: string;
+  /** GET path that answers 200 when the app is healthy */
+  healthPath: string;
 }
 
 export const APP_NAME_RE = /^[a-z][a-z0-9_-]{0,30}$/;
+export const APP_KINDS: AppKind[] = ["directus", "twenty"];
 
 export function envKey(name: string): string {
   return name.toUpperCase().replace(/-/g, "_");
@@ -37,21 +47,29 @@ const clean = (u: string | null): string | null => (u ? u.replace(/\/$/, "") : n
 
 export function appsFromEnv(names: string[], env: Record<string, string | undefined>, domain: string | null): AppConfig[] {
   const out: AppConfig[] = [];
-  let i = 0;
+  let directusIndex = 0;
   for (const raw of names) {
     const name = raw.trim();
     if (!name) continue;
     if (!APP_NAME_RE.test(name)) throw new Error(`APPS: "${name}" is not a valid app name (lowercase letters, digits, - _)`);
     const k = envKey(name);
+    const kindRaw = (env[`APP_${k}_KIND`]?.trim().toLowerCase() || "directus") as AppKind;
+    if (!APP_KINDS.includes(kindRaw)) throw new Error(`APP_${k}_KIND: "${kindRaw}" is not one of ${APP_KINDS.join(", ")}`);
+    const kind = kindRaw;
+    const defaults =
+      kind === "twenty"
+        ? { url: "http://127.0.0.1:3020", publicHost: domain ? `${name}.${domain}` : null, siteHost: null, container: "homelab-twenty", healthPath: "/healthz" }
+        : { url: `http://127.0.0.1:${8056 + directusIndex++}`, publicHost: domain ? `${name}-api.${domain}` : null, siteHost: domain ? `${name}.${domain}` : null, container: `homelab-directus-${name}`, healthPath: "/server/health" };
     out.push({
       name,
-      url: (env[`APP_${k}_URL`]?.trim() || `http://127.0.0.1:${8056 + i}`).replace(/\/$/, ""),
-      publicUrl: clean(env[`APP_${k}_PUBLIC_URL`]?.trim() || (domain ? `https://${name}-api.${domain}` : null)),
-      siteUrl: clean(env[`APP_${k}_SITE_URL`]?.trim() || (domain ? `https://${name}.${domain}` : null)),
-      container: env[`APP_${k}_CONTAINER`]?.trim() || `homelab-directus-${name}`,
+      kind,
+      url: (env[`APP_${k}_URL`]?.trim() || defaults.url).replace(/\/$/, ""),
+      publicUrl: clean(env[`APP_${k}_PUBLIC_URL`]?.trim() || (defaults.publicHost ? `https://${defaults.publicHost}` : null)),
+      siteUrl: clean(env[`APP_${k}_SITE_URL`]?.trim() || (defaults.siteHost ? `https://${defaults.siteHost}` : null)),
+      container: env[`APP_${k}_CONTAINER`]?.trim() || defaults.container,
       db: env[`APP_${k}_DB`]?.trim() || name,
+      healthPath: defaults.healthPath,
     });
-    i++;
   }
   return out;
 }

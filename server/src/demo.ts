@@ -516,6 +516,7 @@ export function apps(): AppsPayload {
     apps: [
       {
         name: "fam",
+        kind: "directus",
         url: "http://127.0.0.1:8056",
         publicUrl: "https://fam-api.xgold.tech",
         siteUrl: "https://fam.xgold.tech",
@@ -530,6 +531,7 @@ export function apps(): AppsPayload {
       },
       {
         name: "ai",
+        kind: "directus",
         url: "http://127.0.0.1:8057",
         publicUrl: "https://ai-api.xgold.tech",
         siteUrl: "https://ai.xgold.tech",
@@ -582,7 +584,7 @@ export function hostnames(): HostnamesPayload {
       { host: "mc.xgold.tech", role: "game", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "minecraft", ok: true, httpStatus: null, latencyMs: 23, detail: "3/20 players · Paper 1.21.8" }, state: "ok", note: "SRV → port 25565" },
       { host: "streaming.xgold.tech", role: "stream", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: https(200, 210, "Jellyfin answers on 8096"), state: "ok" },
       { host: "api.fam.xgold.tech", role: "api", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "https", ok: false, httpStatus: null, latencyMs: null, detail: "connect ETIMEDOUT" }, state: "down", note: "legacy pre-tunnel API host — delete once nothing uses it" },
-      { host: "crm.xgold.tech", role: "other", records: [], source: "extra", target: null, proxied: null, resolved: [], probe: none("no record yet"), state: "unavailable", note: "planned (HOSTNAMES_EXTRA)" },
+      { host: "crm.xgold.tech", role: "app", records: [], source: "config", target: null, proxied: null, resolved: [], probe: none("no record yet"), state: "unavailable", note: "Twenty CRM — tunnel route not added yet" },
     ],
     otherRecords: ['TXT @ "v=spf1 -all"', 'TXT _dmarc "v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s"', 'TXT _domainkey "v=DKIM1; p="', "SRV _minecraft._tcp.mc.xgold.tech → 0 5 25565 mc.xgold.tech"],
     checkedAt: new Date().toISOString(),

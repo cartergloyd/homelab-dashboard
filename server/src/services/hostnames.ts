@@ -68,7 +68,7 @@ const HOST_TYPES = new Set(["A", "AAAA", "CNAME"]);
 function roleOf(host: string, domain: string, mcHost: string | null, streamHost: string | null, dashHost: string | null): HostRole {
   for (const a of cfg.apps) {
     if (a.siteUrl && new URL(a.siteUrl).host === host) return "site";
-    if (a.publicUrl && new URL(a.publicUrl).host === host) return "api";
+    if (a.publicUrl && new URL(a.publicUrl).host === host) return a.kind === "directus" ? "api" : "app";
   }
   if (dashHost && host === dashHost) return "dashboard";
   if (mcHost && host === mcHost) return "game";
@@ -123,6 +123,8 @@ async function probe(host: string, role: HostRole, port: number | null): Promise
     }
     case "api":
       return httpsProbe(`https://${host}/server/health`);
+    case "app":
+      return httpsProbe(`https://${host}/healthz`);
     case "dashboard":
       return httpsProbe(`https://${host}/api/health`);
     case "stream": {
@@ -203,7 +205,7 @@ export async function hostnamesStatus(force = false): Promise<HostnamesPayload> 
       return { host, role, records: recs.map((r) => `${r.type} ${r.data}`), source, target: describeTarget(recs, homeIp) ?? (resolved.length ? resolved.join(", ") : null), proxied, resolved, probe: p, state: note?.startsWith("proxied") ? "down" : stateOf(p, resolved, planned), note };
     }),
   );
-  const order: Record<HostRole, number> = { dashboard: 0, site: 1, api: 2, game: 3, stream: 4, other: 5 };
+  const order: Record<HostRole, number> = { dashboard: 0, site: 1, api: 2, app: 3, game: 4, stream: 5, other: 6 };
   rows.sort((a, b) => order[a.role] - order[b.role] || a.host.localeCompare(b.host));
   const value: HostnamesPayload = { domain, source: loaded.source, zoneFile: loaded.source === "zonefile" ? cfg.dnsZoneFile : null, rows, otherRecords, checkedAt: new Date().toISOString(), error: loaded.error };
   statusCache = { at: Date.now(), value };

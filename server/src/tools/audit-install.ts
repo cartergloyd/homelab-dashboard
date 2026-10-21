@@ -194,8 +194,8 @@ if (cfg.apps.length) {
   add("apps", "cloudflared", a.tunnel.ready ? "pass" : "fail", a.tunnel.ready ? `${a.tunnel.connections} connection(s) → ${a.tunnel.hostnames.join(", ")}` : (a.tunnel.error ?? "tunnel not ready — check CLOUDFLARE_TUNNEL_TOKEN and `docker logs ${cfg.cloudflared.container}`"), true);
   for (const x of a.apps) {
     add("apps", `${x.name}: container`, x.container?.state === "running" ? "pass" : "fail", x.container ? `${x.containerName}: ${x.container.state}` : `${x.containerName} not found (docker ps)`, true);
-    add("apps", `${x.name}: directus (local)`, x.local.ok ? "pass" : "fail", x.local.ok ? `${x.url} healthy (${x.local.latencyMs} ms)` : `${x.url}: ${x.local.error ?? "not healthy"}`, true);
-    add("apps", `${x.name}: directus (public)`, x.public.ok === true ? "pass" : x.public.ok === null ? "warn" : "fail", x.public.ok === true ? `${x.publicUrl} answers over HTTPS (${x.public.latencyMs} ms)${x.public.note ? ` — ${x.public.note}` : ""}` : (x.public.note ?? `${x.publicUrl} not reachable — DNS/tunnel hostname missing?`));
+    add("apps", `${x.name}: ${x.kind} (local)`, x.local.ok ? "pass" : "fail", x.local.ok ? `${x.url} healthy (${x.local.latencyMs} ms)` : `${x.url}: ${x.local.error ?? "not healthy"}`, true);
+    add("apps", `${x.name}: ${x.kind} (public)`, x.public.ok === true ? "pass" : x.public.ok === null ? "warn" : "fail", x.public.ok === true ? `${x.publicUrl} answers over HTTPS (${x.public.latencyMs} ms)${x.public.note ? ` — ${x.public.note}` : ""}` : (x.public.note ?? `${x.publicUrl} not reachable — DNS/tunnel hostname missing?`));
     add("apps", `${x.name}: database`, x.database.exists ? "pass" : "fail", x.database.exists ? `"${x.db}": ${x.database.collections ?? 0} collections, ${x.database.users ?? 0} users` : (x.database.error ?? `database "${x.db}" missing — scripts/add-app.sh ${x.name}`), true);
     const port = Number(new URL(x.url).port || 80);
     const binds = await portBinds(port);

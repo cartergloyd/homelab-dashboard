@@ -327,6 +327,47 @@ Give each app's users a role whose policies restrict them to their own rows (Dir
 permissions with `$CURRENT_USER` filters) — that is the Supabase row-level-security
 equivalent here.
 
+### 5.8 Twenty CRM at `crm.xgold.tech` (several people)
+
+[Twenty](https://twenty.com) is the self-hosted CRM. It rides on the same platform: its own
+database + role `crm` in the one PostgreSQL (16 ≥ the 15 Twenty requires), its own Redis, two
+containers from one image (`twenty-server`, `twenty-worker`), uploads under
+`APPS_DATA_DIR/crm`, published by the tunnel as `https://crm.xgold.tech` →
+`http://127.0.0.1:3020`. Everything is in `docker-compose.yml` already.
+
+**Access model for several people** (decided 2026-10-21): Twenty's own accounts are the primary
+login — one shared workspace, invite-only (signups close by themselves after the first workspace),
+2FA enforced in Settings → Security if the installed version offers it — and a Cloudflare Access
+application "Twenty CRM" sits in front with a policy that allows a **list of e-mails** (One-time
+PIN + GitHub as login methods, 1-month sessions). Adding a person = one e-mail in that list plus
+an invite inside Twenty. Access blocks bots and credential stuffing before they reach Twenty and
+logs every login; it can be removed later without touching Twenty.
+
+1. **Env** (`.env`, § 5.1): `APPS=fam,ai,crm`, `APP_CRM_DB_PASSWORD` (hex only — it is pasted
+   into a URL unencoded), `APP_CRM_ENCRYPTION_KEY` (`openssl rand -base64 32`, generated once and
+   kept in the password manager — losing it loses every secret Twenty stored), `TWENTY_TAG` pinned
+   to a release. Optional SMTP (`TWENTY_EMAIL_*`) so invites and password resets go out by e-mail;
+   without it, copy invite links from the UI.
+2. **Database**: on a fresh cluster `01-apps.sh` creates `crm` from `APPS`; on an existing one run
+   `scripts/add-app.sh crm --kind twenty`. Twenty creates its `core`, `metadata` and
+   `workspace_*` schemas itself on first start. If the log complains about an extension it may
+   not create, run it once as the superuser: `docker exec -it homelab-postgres psql -U homelab -d crm -c 'CREATE EXTENSION IF NOT EXISTS "<name>";'`.
+3. **RAM**: Twenty wants ≥ 2 GB for itself — check `free -h` before `docker compose up -d`.
+4. **Tunnel route** `crm` → `http://127.0.0.1:3020` (Zero Trust → Networking → Tunnels → homelab →
+   Routes → Add route → Published application) and the **Access
+   application** "Twenty CRM": destination `crm.xgold.tech`, no path; policy "CRM users" = Allow,
+   Emails = the people's addresses; login methods One-time PIN + GitHub; session 1 month.
+5. **First start**: `docker compose up -d`, wait for `homelab-twenty` to be healthy, open
+   `https://crm.xgold.tech`, pass the Access login, create the first (and only) workspace — that
+   account is the Twenty admin. Then Settings → Members → invite the others; Settings →
+   Security → enforce 2FA if present.
+6. **Dashboard env**: `APPS=fam,ai,crm`, `APP_CRM_KIND=twenty` → the Database tab shows a Twenty
+   card (health `/healthz`, database size, workspace tables, users), the Service status page a
+   "Twenty CRM · crm" row, and the hostnames card the `crm` host.
+7. **Backups**: `scripts/pg-backup.sh` dumps `crm` like every database; the uploads folder
+   `APPS_DATA_DIR/crm/local-storage` must be in the file backup. **Upgrades**: change
+   `TWENTY_TAG`, `docker compose up -d` — Twenty migrates on start; dump first.
+
 ## 6. Configure and start the dashboard
 
 ```bash
@@ -787,6 +828,7 @@ Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions
 - [ ] **World backups** panel lists the existing `mcworld_…` folders (marked "existing") before any dashboard-made backup
 - [ ] Every mirrored timer **and cron line** shows "Output tracking connected"; `npm run discover` proposes nothing new
 - [ ] Assistant panel: runner shows as available; a one-off task produces messages in the panel and a report on the Dashboard; a restart attempt by the agent shows up as an approval request instead of restarting
+- [ ] (§ 5.8) `https://crm.xgold.tech` asks for the Access e-mail login, then shows Twenty; the Database tab has a healthy Twenty card
 - [ ] (§ 7b) `https://dash.xgold.tech` asks for the GitHub login; `curl -sI https://dash.xgold.tech/api/config` is never 200; the header says "via Cloudflare Access" after login
 - [ ] `npm run audit:install` ends with **FULLY CONNECTED**
 

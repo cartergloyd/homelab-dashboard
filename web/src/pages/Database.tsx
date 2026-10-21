@@ -20,15 +20,15 @@ function AppCard({ a }: { a: AppStatus }) {
       }
       actions={
         a.publicUrl ? (
-          <a className="btn sm" href={`${a.publicUrl}/admin`} target="_blank" rel="noreferrer">
-            <Icons.external width={13} height={13} /> Open admin
+          <a className="btn sm" href={a.kind === "twenty" ? a.publicUrl : `${a.publicUrl}/admin`} target="_blank" rel="noreferrer">
+            <Icons.external width={13} height={13} /> {a.kind === "twenty" ? "Open Twenty" : "Open admin"}
           </a>
         ) : undefined
       }
     >
       <div className="kv">
         <div>
-          <span className="kv-k">API (Directus)</span>
+          <span className="kv-k">{a.kind === "twenty" ? "URL" : "API (Directus)"}</span>
           <span className="kv-v">
             {a.publicUrl ? (
               <a href={a.publicUrl} target="_blank" rel="noreferrer" className="mono">
@@ -54,7 +54,7 @@ function AppCard({ a }: { a: AppStatus }) {
           </div>
         )}
         <div>
-          <span className="kv-k">Directus</span>
+          <span className="kv-k">{a.kind === "twenty" ? "Twenty CRM" : "Directus"}</span>
           <span className="kv-v">
             <StatusPill state={a.local.ok ? "ok" : a.container?.state === "running" ? "degraded" : "down"} label={a.local.ok ? `healthy · ${a.local.latencyMs} ms` : (a.local.error ?? "not healthy")} />
             <span className="muted small"> · {a.containerName}{a.container ? ` ${a.container.state}` : " (no container)"}</span>
@@ -66,7 +66,7 @@ function AppCard({ a }: { a: AppStatus }) {
             {a.database.exists ? (
               <>
                 <span className="mono">{a.db}</span> · {fmtBytes(a.database.sizeBytes)} · {a.database.collections ?? 0} collection{a.database.collections === 1 ? "" : "s"}
-                <span className="muted small"> ({a.database.tables ?? 0} tables incl. Directus)</span>
+                <span className="muted small"> ({a.database.tables ?? 0} tables incl. {a.kind === "twenty" ? "Twenty's own" : "Directus"})</span>
               </>
             ) : (
               <span style={{ color: "var(--critical)" }}>{a.database.error ?? "missing"}</span>
@@ -75,7 +75,7 @@ function AppCard({ a }: { a: AppStatus }) {
         </div>
         <div>
           <span className="kv-k">Users</span>
-          <span className="kv-v">{a.database.users === null ? <span className="muted">Directus not bootstrapped yet</span> : <>{a.database.users} · last login {a.database.lastLogin ? fmtRelative(a.database.lastLogin) : "never"}</>}</span>
+          <span className="kv-v">{a.database.users === null ? <span className="muted">{a.kind === "twenty" ? "Twenty" : "Directus"} not bootstrapped yet</span> : <>{a.database.users} · last login {a.database.lastLogin ? fmtRelative(a.database.lastLogin) : "never"}</>}</span>
         </div>
         <div>
           <span className="kv-k">Backup</span>

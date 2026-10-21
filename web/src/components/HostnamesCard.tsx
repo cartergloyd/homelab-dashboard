@@ -6,7 +6,7 @@ import { fmtRelative } from "../format";
 import type { HostRole, HostnamesPayload } from "../types";
 import { Card, StatusPill } from "./ui";
 
-const ROLE: Record<HostRole, string> = { site: "Site", api: "API (Directus)", dashboard: "Dashboard", game: "Minecraft", stream: "Streaming", other: "Other" };
+const ROLE: Record<HostRole, string> = { site: "Site", api: "API (Directus)", app: "Web app", dashboard: "Dashboard", game: "Minecraft", stream: "Streaming", other: "Other" };
 
 export function HostnamesCard() {
   const qc = useQueryClient();
