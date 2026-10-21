@@ -33,6 +33,7 @@
 # APP_<NAME>_CONTAINER, APP_<NAME>_URL, APP_<NAME>_ADMIN_EMAIL / _ADMIN_PASSWORD; or DIRECTUS_TOKEN
 # (a static token of an admin user) when the admin password was changed after install.
 set -euo pipefail
+umask 077
 
 app="${1:-}"; shift || true
 table="kv"; url=""; key=""; from_file=""; print_sql=0; skip_directus=0; directus_only=0; public_access=0
@@ -79,10 +80,10 @@ dx_token="${DIRECTUS_TOKEN:-}"
 outdir="${MIGRATION_DIR:-$here/data/migrations}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 supabase_total="*"; supabase_note="not queried"
-tmpfiles=()
-cleanup() { rm -f ${tmpfiles[@]+"${tmpfiles[@]}"}; }
+workdir="$(mktemp -d)"
+cleanup() { rm -rf -- "$workdir"; }
 trap cleanup EXIT
-mktmp() { local t; t="$(mktemp)"; tmpfiles+=("$t"); echo "$t"; }
+mktmp() { mktemp "$workdir/part.XXXXXX"; }
 
 # json <js-expression over `d` (parsed stdin)> — prints the expression's value (string) or nothing
 json() { node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{let d;try{d=JSON.parse(s)}catch{return}const v=(function(d){return eval(process.argv[1])})(d);if(v!==undefined&&v!==null)console.log(typeof v==="string"?v:JSON.stringify(v))})' "$1"; }
@@ -112,7 +113,7 @@ if [ "$directus_only" = 0 ] && [ "$print_sql" = 0 ] && [ -z "$from_file" ]; then
     supabase_total="${range#*/}"; [ -n "$supabase_total" ] || supabase_total="*"
     n="$(json 'Array.isArray(d)?d.length:undefined' < "$body" || true)"
     [ -n "$n" ] || die "export: unexpected body from Supabase: $(head -c 300 "$body")"
-    cat "$body" >> "$pages"; echo >> "$pages"
+    node -e 'const fs=require("fs");let rows;try{rows=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))}catch{throw Error("Invalid Supabase export page")};process.stdout.write(JSON.stringify(rows)+"\n")' "$body" >> "$pages"
     from=$((from + n))
     [ "$n" -eq 0 ] && break
     if [ "$supabase_total" != "*" ] && [ "$from" -ge "$supabase_total" ]; then break; fi
@@ -201,7 +202,8 @@ dx() {  # method path [json-body] → body on stdout, HTTP status in $dx_status
   else
     dx_status="$(curl -sS -o "$dx_tmp" -w '%{http_code}' -X "$m" "$dx_url$p" -H "Authorization: Bearer $dx_token" || echo 000)"
   fi
-  cat "$dx_tmp"
+  dx_out="$(cat "$dx_tmp")"
+  printf '%s' "$dx_out"
 }
 
 dx_count=""
@@ -212,7 +214,7 @@ if [ "$skip_directus" = 0 ]; then
     dx_url="http://${port/0.0.0.0/127.0.0.1}"
   fi
   dx_url="${dx_url%/}"
-  curl -sSf -o /dev/null "$dx_url/server/health" || die "Directus at $dx_url does not answer /server/health"
+  curl -sSf -o /dev/null "$dx_url/server/ping" || die "Directus at $dx_url does not answer /server/ping"
   if [ -z "$dx_token" ]; then
     [ -n "$dx_email" ] && [ -n "$dx_pass" ] || die "no Directus credentials: set APP_${upper}_ADMIN_EMAIL/_ADMIN_PASSWORD in $envfile or DIRECTUS_TOKEN"
     login_body="$(DX_EMAIL="$dx_email" DX_PASS="$dx_pass" node -e 'console.log(JSON.stringify({email:process.env.DX_EMAIL,password:process.env.DX_PASS}))')"
@@ -229,15 +231,16 @@ if [ "$skip_directus" = 0 ]; then
     colls_json="$(docker exec "$pg_container" psql -At -U "$app" -d "$app" -c "select coalesce(json_agg(c order by c), '[]') from (select distinct coll as c from public.$table) s" 2>/dev/null || true)"
   fi
   [ -n "$colls_json" ] || colls_json='[]'
+  if [ "$app" = fam ]; then colls_json='["plans","bedrooms","flights","members","progress","meals","groceries"]'; fi
   meta="$(TABLE="$table" APP="$app" node -e 'console.log(JSON.stringify({meta:{icon:"inventory_2",note:`Documents of the ${process.env.APP} site, moved from Supabase: one row per document, key = coll/id`,display_template:"{{key}}",collapse:"open"}}))')"
-  out="$(dx PATCH "/collections/$table" "$meta")"
+  dx PATCH "/collections/$table" "$meta" >/dev/null; out="$dx_out"
   if [ "$dx_status" = 200 ] || [ "$dx_status" = 204 ]; then
     log "Directus: collection '$table' registered"
   else
     log "WARN Directus did not accept the collection (HTTP $dx_status): $(printf '%s' "$out" | head -c 300)"
     log "     restart $dx_container (its schema cache predates the table) and run again with --directus-only"
   fi
-  fld() { local f="$1" m="$2" o; o="$(dx PATCH "/fields/$table/$f" "$m")"; if [ "$dx_status" = 200 ] || [ "$dx_status" = 204 ]; then log "Directus: field '$f' configured"; else log "WARN field '$f' (HTTP $dx_status): $(printf '%s' "$o" | head -c 200)"; fi; }
+  fld() { local f="$1" m="$2" o; dx PATCH "/fields/$table/$f" "$m" >/dev/null; o="$dx_out"; if [ "$dx_status" = 200 ] || [ "$dx_status" = 204 ]; then log "Directus: field '$f' configured"; else log "WARN field '$f' (HTTP $dx_status): $(printf '%s' "$o" | head -c 200)"; fi; }
   fld key  '{"meta":{"interface":"input","width":"full","note":"coll/id — the document path; must match the two fields below"}}'
   fld coll "$(COLLS="$colls_json" node -e 'const c=JSON.parse(process.env.COLLS);console.log(JSON.stringify({meta:{interface:"select-dropdown",options:{choices:c.map(x=>({text:x,value:x})),allowOther:true},width:"half"}}))')"
   fld id   '{"meta":{"interface":"input","width":"half"}}'
@@ -254,9 +257,9 @@ if [ "$skip_directus" = 0 ]; then
         case ",$have," in *",$action,"*) log "public access: $action already granted"; continue ;; esac
         perm="$(POL="$pol" TABLE="$table" ACTION="$action" COLLS="$colls_json" node -e '
           const f = { coll: { _in: JSON.parse(process.env.COLLS) } }, a = process.env.ACTION;
-          const p = { policy: process.env.POL, collection: process.env.TABLE, action: a, fields: ["*"], permissions: a === "create" ? null : f, validation: (a === "create" || a === "update") ? f : null };
+          const p = { policy: process.env.POL, collection: process.env.TABLE, action: a, fields: a === "update" ? ["data"] : ["key","coll","id","data"], permissions: a === "create" ? null : f, validation: a === "create" ? f : null };
           console.log(JSON.stringify(p));')"
-        o="$(dx POST "/permissions" "$perm")"
+        dx POST "/permissions" "$perm" >/dev/null; o="$dx_out"
         if [ "$dx_status" = 200 ]; then log "public access: $action granted"; else log "WARN public $action (HTTP $dx_status): $(printf '%s' "$o" | head -c 200)"; fi
       done
     fi
@@ -276,7 +279,7 @@ echo
 status=0
 if [ "$supabase_total" != "*" ] && [ "$pg_total" != "$supabase_total" ]; then log "MISMATCH: PostgreSQL has $pg_total rows, Supabase reported $supabase_total"; status=1; fi
 if [ "$skip_directus" = 0 ] && [ -n "$dx_count" ] && [ "$dx_count" != "$pg_total" ]; then log "MISMATCH: Directus counts $dx_count, PostgreSQL $pg_total (is the collection registered?)"; status=1; fi
-if [ "$skip_directus" = 0 ] && [ -z "$dx_count" ]; then log "WARN Directus count unavailable — open $dx_url/admin → Content → $table"; fi
+if [ "$skip_directus" = 0 ] && [ -z "$dx_count" ]; then log "ERROR Directus count unavailable — verification incomplete; open $dx_url/admin → Content → $table"; status=1; fi
 agree="PostgreSQL"; [ "$skip_directus" = 0 ] && agree="PostgreSQL and Directus"
 if [ "$status" = 0 ]; then log "done — $agree agree. Next: SERVER_SETUP § 5.9 (switch the front-end, then pause the Supabase project)."; fi
 exit "$status"
