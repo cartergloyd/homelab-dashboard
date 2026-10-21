@@ -19,6 +19,7 @@ import { cancelScan, dirView, overview as scanOverview, startScan, topFiles } fr
 import { stagedUpdates } from "./services/updates.js";
 import { appsStatus } from "./services/apps.js";
 import { hostnamesStatus } from "./services/hostnames.js";
+import { TorrentInput, addTorrents, torrentStatus } from "./services/qbittorrent.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -53,6 +54,7 @@ api.get("/config", (_req, res) => {
   const u = user(res);
   const payload: AppConfigPayload = {
     demo: cfg.demo,
+    torrentAdd: cfg.demo || !!cfg.qbittorrent.url,
     user: { login: u.login, name: u.name, via: u.via },
     links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
@@ -70,6 +72,18 @@ api.get("/config", (_req, res) => {
 
 api.get("/status", async (_req, res) => {
   res.json(await getStatus());
+});
+
+api.get("/qbittorrent/status", async (_req, res) => {
+  res.json(await torrentStatus());
+});
+
+api.post("/qbittorrent/torrents", async (req, res) => {
+  const input = TorrentInput.parse(req.body);
+  const result = await addTorrents(input);
+  // Private tracker URLs can contain passkeys; record only the count.
+  logAction(res, `sent ${result.submitted} torrent link(s) to qBittorrent${input.paused ? " (paused)" : ""}`);
+  res.json(result);
 });
 
 api.get("/overview", async (_req, res) => {

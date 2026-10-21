@@ -52,6 +52,8 @@ scripts/pg-backup.sh                                             # dump every Po
 
 ## Development
 
+The Dashboard and Media pages can submit magnet links and HTTP/HTTPS torrent download URLs directly to qBittorrent using **Add Torrent Link**. Set `QBITTORRENT_URL` to its server-side WebUI address; set `QBITTORRENT_USERNAME` and `QBITTORRENT_PASSWORD` if that connection requires login. The form uses the dashboard's existing authentication, supports adding paused, preserves qBittorrent's download destination, and records only the number of submitted links in the activity feed. The full qBittorrent WebUI shortcut remains a separate link.
+
 ```bash
 npm run dev:server   # API on :3000 with tsx watch (demo + auth disabled)
 npm run dev:web      # Vite on :5173, proxies /api and /ws to :3000
