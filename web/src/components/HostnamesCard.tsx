@@ -62,6 +62,11 @@ export function HostnamesCard() {
                   <td>
                     <StatusPill state={r.state} label={r.probe.detail} />
                     {r.probe.latencyMs !== null && <span className="muted small"> {r.probe.latencyMs} ms</span>}
+                    {r.probe.cert && (
+                      <div className="muted small" title={`${r.probe.cert.issuer} · expires ${r.probe.cert.expiresAt.slice(0, 10)}`}>
+                        cert {r.probe.cert.daysLeft} d{r.proxied ? "" : ` · ${r.probe.cert.issuer}`}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

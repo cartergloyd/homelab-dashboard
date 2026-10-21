@@ -240,6 +240,16 @@ if (cfg.publicDomain) {
       const ips = await lookup(host, "A");
       const pv = proxiedVerdict(ips ?? [], false);
       add("dns", `minecraft: ${host}`, ips?.length ? pv.status : "warn", ips?.length ? pv.detail : "no A record for MC_PUBLIC_ADDRESS", !!ips?.length);
+      // the house's address is dynamic (AT&T): the DNS-only records must still point here
+      const myIp = await (async () => {
+        try {
+          const t = await (await fetch("https://cloudflare.com/cdn-cgi/trace", { signal: AbortSignal.timeout(6000) })).text();
+          return t.match(/^ip=(.+)$/m)?.[1]?.trim() ?? null;
+        } catch {
+          return null;
+        }
+      })();
+      if (myIp && ips?.length) add("dns", "home IP matches DNS", ips.includes(myIp) ? "pass" : "fail", ips.includes(myIp) ? `${host} → ${myIp}, which is this connection's public address` : `this connection's public address is ${myIp} but ${host} points at ${ips.join(", ")} — the home IP changed; run scripts/cloudflare-ddns.sh (SERVER_SETUP § 8c)`, true);
     }
   }
 } else add("dns", "dns", "skip", "PUBLIC_DOMAIN not set — no public hostnames to check");

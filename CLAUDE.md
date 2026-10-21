@@ -219,6 +219,10 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       database via the postgres container and registers it in fam's Directus (SERVER_SETUP § 5.9).
       Written and syntax-checked on the dev Mac only — **the first real run is on the server**, after
       the compose stack is up. Then: switch the front-end (`fam.xgold.tech` repo) and pause the project.
+- [x] Hostnames card shows each https host's certificate issuer and days left (amber under 14);
+      audit `[dns] home IP matches DNS`; `scripts/cloudflare-ddns.sh` (SERVER_SETUP § 8c) keeps the
+      `mc`/`streaming` A records on the house's current address; § 9b documents the existing
+      nginx + Let's Encrypt + Jellyfin setup and how to keep it healthy.
 - [ ] Issue #10 part A, server side: pull main, build, add `CF_ACCESS_*` + `PUBLIC_DASHBOARD_URL`
       to the dashboard env, restart; confirm `PORT`/`HOST` (route assumes 8088 on loopback)
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
@@ -266,6 +270,15 @@ override the placeholders wherever they conflict:
   SPF/DMARC/DKIM TXTs saying no mail is sent. Hence the convention **`<app>-api` = that app's
   Directus, `<app>` = its front-end** (single level: Universal SSL covers `*.xgold.tech` only; the
   legacy `api.fam` A record stays until nothing uses it). The first apps are `fam` and `ai`.
+- **Router**: AT&T gateway at `192.168.1.254` (Firewall → NAT/Gaming). Forwards to `gold-server` on
+  2026-10-21: UDP 19132 (Bedrock), TCP/UDP 8123 (DynMap), TCP 25565 (Java), UDP 19133 (Geyser),
+  TCP 80 + 443 (labelled "fam.xgold.tech"). No forward for 8096/8088/3000/5432 — correct.
+- **`streaming.xgold.tech` already works directly**: nginx 1.28.3 on the server terminates TLS with a
+  Let's Encrypt cert (renewed over port 80) and proxies to Jellyfin 10.11.8 (`/health` → Healthy from
+  the internet). Keep it direct; the tunnel is wrong for video (Cloudflare terms + the apps cannot do
+  Access logins). The home IP is dynamic → `scripts/cloudflare-ddns.sh` (SERVER_SETUP § 8c).
+- The dashboard on the server listens on `192.168.1.148:8088` (seen in the owner's browser; was down
+  on 2026-10-21 while checking).
 - A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
   failures are a known "needs a human" incident, not a server fault.
 - **The fam site's backend is Supabase project `radwvuaaaxxblsnrkpqd`** (as of 2026-10-21): one table
@@ -404,6 +417,10 @@ override the placeholders wherever they conflict:
   family member onto GitHub, so the "Twenty CRM" Access app allows listed e-mails with One-time PIN
   (plus GitHub for the owner), long sessions, and Twenty handles accounts, roles and 2FA inside.
   Adding a person = one e-mail in the policy + an invite in Twenty. Access stays removable.
+- 2026-10-21 **One script may write DNS: `scripts/cloudflare-ddns.sh`, owner-installed, root-only
+  token scoped to DNS:Edit on this zone, only the hosts it is told, never proxied records.** The
+  dashboard itself still never writes DNS. Reason: AT&T's address is dynamic and `mc`/`streaming`
+  are plain A records to it; without an updater the game and Jellyfin silently vanish on a change.
 - 2026-10-14 Facts from the server-side agent's commits on `main`: the dashboard source is
   at `/home/gold/server-platform/homelab-dashboard-src`, its env at
   `/home/gold/server-platform/homelab-dashboard.env` (pass `--env` to the CLI tools, or

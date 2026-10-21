@@ -565,7 +565,8 @@ export function apps(): AppsPayload {
 // ---- domain & hostnames ---------------------------------------------------
 
 export function hostnames(): HostnamesPayload {
-  const https = (status: number, latencyMs: number, detail?: string): HostnameProbe => ({ kind: "https", ok: status < 400, httpStatus: status, latencyMs, detail: detail ?? `HTTPS ${status}` });
+  const cert = (issuer: string, daysLeft: number) => ({ issuer, expiresAt: new Date(Date.now() + daysLeft * 86_400_000).toISOString(), daysLeft });
+  const https = (status: number, latencyMs: number, detail?: string, c: HostnameProbe["cert"] = cert("Google Trust Services", 61)): HostnameProbe => ({ kind: "https", ok: status < 400, httpStatus: status, latencyMs, detail: detail ?? `HTTPS ${status}`, cert: c });
   const none = (detail: string): HostnameProbe => ({ kind: "none", ok: null, httpStatus: null, latencyMs: null, detail });
   const cf = ["104.21.4.224", "172.67.132.141"];
   const gh = ["185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153"];
@@ -582,7 +583,7 @@ export function hostnames(): HostnamesPayload {
       { host: "fam-api.xgold.tech", role: "api", records: ["CNAME 0ef75471-0031-489c-ab42-368e17546fe0.cfargotunnel.com"], source: "cloudflare", target: "Cloudflare Tunnel", proxied: true, resolved: cf, probe: https(200, 148), state: "ok" },
       { host: "ai-api.xgold.tech", role: "api", records: ["CNAME 0ef75471-0031-489c-ab42-368e17546fe0.cfargotunnel.com"], source: "cloudflare", target: "Cloudflare Tunnel", proxied: true, resolved: cf, probe: https(530, 140, "Cloudflare 530 — origin not reachable (tunnel down?)"), state: "down" },
       { host: "mc.xgold.tech", role: "game", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "minecraft", ok: true, httpStatus: null, latencyMs: 23, detail: "3/20 players · Paper 1.21.8" }, state: "ok", note: "SRV → port 25565" },
-      { host: "streaming.xgold.tech", role: "stream", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: https(200, 210, "Jellyfin answers on 8096"), state: "ok" },
+      { host: "streaming.xgold.tech", role: "stream", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: https(302, 48, "redirects to streaming.xgold.tech/web/", cert("Let's Encrypt", 38)), state: "ok" },
       { host: "api.fam.xgold.tech", role: "api", records: ["A 99.116.141.110"], source: "cloudflare", target: "home IP 99.116.141.110", proxied: false, resolved: ["99.116.141.110"], probe: { kind: "https", ok: false, httpStatus: null, latencyMs: null, detail: "connect ETIMEDOUT" }, state: "down", note: "legacy pre-tunnel API host — delete once nothing uses it" },
       { host: "crm.xgold.tech", role: "app", records: [], source: "config", target: null, proxied: null, resolved: [], probe: none("no record yet"), state: "unavailable", note: "Twenty CRM — tunnel route not added yet" },
     ],

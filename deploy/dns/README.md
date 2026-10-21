@@ -13,7 +13,8 @@ the invariants it protects are:
 | `api.fam` (A → home IP) | legacy, DNS only | the pre-tunnel API host; delete once nothing uses it |
 | `_minecraft._tcp.mc` SRV, the TXTs | unchanged | |
 
-`npm run audit:install` → `[dns]` verifies the nameservers are Cloudflare's, DNSSEC is
+`scripts/cloudflare-ddns.sh` (SERVER_SETUP § 8c) is the only writer: it moves the `mc` / `streaming`
+A records when the house's public address changes. `npm run audit:install` → `[dns]` verifies the nameservers are Cloudflare's, DNSSEC is
 consistent, each `<app>-api` resolves to Cloudflare (proxied) and the Minecraft host does
 **not**.
 

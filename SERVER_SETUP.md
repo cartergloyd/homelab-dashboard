@@ -856,6 +856,35 @@ HTTPS connections to Cloudflare. Recommended home-router settings:
 The server-side VPN (split tunnel) is unaffected: cloudflared's outbound connections and
 Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions (VPN tab).
 
+## 8c. Dynamic DNS for the home-IP records (`mc`, `streaming`)
+
+AT&T hands out a dynamic address. `mc.xgold.tech` and `streaming.xgold.tech` are plain A records
+to that address, so when it changes, players and the Jellyfin app lose the server until the records
+follow. `scripts/cloudflare-ddns.sh` is the **one** thing that writes DNS (the dashboard only
+reads): every 5 minutes it asks two independent services for the public IPv4, and when both agree
+and differ from a record in `DDNS_HOSTS`, it PATCHes that record. Proxied records and hosts not
+listed are never touched; each decision is one log line for the feed.
+
+1. Cloudflare → profile → API Tokens → Create Custom Token: `homelab ddns`, permissions **Zone ·
+   DNS · Edit** and **Zone · Zone · Read**, zone resources *Include · Specific zone · xgold.tech*.
+   This token can change records in this zone and nothing else — it belongs in a root-only file,
+   never in the dashboard env or the repo.
+2. On the server:
+   ```bash
+   sudo install -m 0600 /dev/null /etc/homelab-ddns.env
+   sudo tee /etc/homelab-ddns.env >/dev/null <<'EOF2'
+   CLOUDFLARE_DDNS_TOKEN=<the token>
+   DDNS_ZONE=xgold.tech
+   DDNS_HOSTS=mc.xgold.tech,streaming.xgold.tech
+   EOF2
+   sudo /opt/homelab-dashboard/scripts/cloudflare-ddns.sh        # expect "unchanged" lines
+   echo '*/5 * * * * root /usr/local/bin/hl-run cloudflare-ddns /opt/homelab-dashboard/scripts/cloudflare-ddns.sh' | sudo tee /etc/cron.d/homelab-ddns
+   ```
+   (`hl-run` is optional — without it drop that prefix; with it, updates show up in Live server
+   alerts and `npm run discover` mirrors the cron line.)
+3. `npm run audit:install` → `[dns] home IP matches DNS` compares this connection's public address
+   with the `mc` record and fails when they drift.
+
 ## 9. Final checklist
 
 - [ ] `https://<server>.ts.net` loads; every service on the **Service status** page is OK
@@ -878,6 +907,33 @@ Tailscale work through it, and Minecraft/Jellyfin keep their existing exceptions
 - [ ] (§ 5.8) `https://crm.xgold.tech` asks for the Access e-mail login, then shows Twenty; the Database tab has a healthy Twenty card
 - [ ] (§ 7b) `https://dash.xgold.tech` asks for the GitHub login; `curl -sI https://dash.xgold.tech/api/config` is never 200; the header says "via Cloudflare Access" after login
 - [ ] `npm run audit:install` ends with **FULLY CONNECTED**
+
+## 9b. `streaming.xgold.tech` — Jellyfin, direct (as found on 2026-10-21)
+
+Already working, and worth keeping as it is. The AT&T gateway (`192.168.1.254`, Firewall → NAT/Gaming)
+forwards **TCP 80 and 443** to `gold-server` (entries still labelled "fam.xgold.tech"), nginx
+1.28.3 on the server answers for the `streaming.xgold.tech` name with a **Let's Encrypt**
+certificate (ECDSA, 90-day, renewed over port 80) and proxies to Jellyfin 10.11.8 on 8096;
+`https://streaming.xgold.tech/health` returns Jellyfin's `Healthy` from the whole internet. 8096
+itself is not forwarded, which is right. The VPN's split-tunnel exception for Jellyfin is what lets
+the replies leave through the ISP.
+
+Why not the tunnel: Cloudflare's self-serve terms require Stream/R2 for serving video through the
+CDN, and every stream would hair-pin through Cloudflare; the Jellyfin apps also cannot pass an
+Access login. Direct with a real certificate is the right shape for this one.
+
+Keep it healthy:
+
+- Certificate renewal: `sudo certbot renew --dry-run` must succeed; the hostnames card shows the
+  days left and turns amber under 14. Port 80 must stay forwarded for HTTP-01 renewals.
+- Dynamic IP: § 8c.
+- Brute force: Jellyfin → Dashboard → Users → each user: strong password, "Allow remote connections"
+  only for people who need it; nginx `limit_req` on `/Users/AuthenticateByName`; `fail2ban` with the
+  Jellyfin filter reading `/var/log/jellyfin/*.log`. Keep Jellyfin updated (the Media tab shows the
+  version).
+- Jellyfin → Networking → **Known proxies**: `127.0.0.1` so client IPs in its logs are real.
+- The dashboard: `JELLYFIN_PUBLIC_URL=https://streaming.xgold.tech` in the dashboard env makes the
+  Media tab link out correctly; the hostnames card then treats it as the streaming host.
 
 ## Troubleshooting
 

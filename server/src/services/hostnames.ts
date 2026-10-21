@@ -8,6 +8,7 @@
 //   2. the zone file (deploy/dns/<domain>.zone — the owner's DNS as data),
 //   3. what the config implies (APPS, PUBLIC_DASHBOARD_URL, MC_PUBLIC_ADDRESS, HOSTNAMES_EXTRA).
 import fsp from "node:fs/promises";
+import tls from "node:tls";
 import { cfg } from "../config.js";
 import * as demo from "../demo.js";
 import { hostOf, isCloudflareIp, parseZoneFile } from "../tools/dns-lib.js";
@@ -96,6 +97,22 @@ function describeTarget(recs: Rec[], homeIp: string | null): string | null {
   return a.join(", ");
 }
 
+/** The certificate a host presents (what browsers will judge), without trusting it ourselves. */
+async function certOf(host: string, port = 443): Promise<HostnameProbe["cert"]> {
+  return new Promise((resolve) => {
+    const sock = tls.connect({ host, port, servername: host, rejectUnauthorized: false, timeout: 5000 }, () => {
+      const c = sock.getPeerCertificate();
+      sock.end();
+      if (!c || !c.valid_to) return resolve(null);
+      const expiresAt = new Date(c.valid_to);
+      const issuer = (c.issuer && (c.issuer.O || c.issuer.CN)) || "unknown issuer";
+      resolve({ issuer: String(issuer), expiresAt: expiresAt.toISOString(), daysLeft: Math.floor((expiresAt.getTime() - Date.now()) / 86_400_000) });
+    });
+    sock.on("error", () => resolve(null));
+    sock.on("timeout", () => (sock.destroy(), resolve(null)));
+  });
+}
+
 async function httpsProbe(url: string, timeoutMs = 8000): Promise<HostnameProbe> {
   const t = Date.now();
   try {
@@ -103,7 +120,9 @@ async function httpsProbe(url: string, timeoutMs = 8000): Promise<HostnameProbe>
       headers: { "user-agent": "Mozilla/5.0 (compatible; homelab-dashboard/0.2; +https://github.com/cartergloyd/homelab-dashboard)", accept: "text/html,application/json;q=0.9,*/*;q=0.8" } });
     const latencyMs = Date.now() - t;
     const loc = res.headers.get("location") ?? "";
-    const base = { kind: "https" as const, httpStatus: res.status, latencyMs };
+    const u = new URL(url);
+    const cert = u.protocol === "https:" ? await certOf(u.hostname, Number(u.port || 443)) : null;
+    const base = { kind: "https" as const, httpStatus: res.status, latencyMs, cert };
     if (res.status >= 200 && res.status < 300) return { ...base, ok: true, detail: `HTTPS ${res.status}` };
     if (res.status >= 300 && res.status < 400) return { ...base, ok: true, detail: /cloudflareaccess\.com/i.test(loc) ? "login wall (Cloudflare Access)" : `redirects to ${loc.replace(/^https?:\/\//, "").slice(0, 50)}` };
     if (res.status === 401) return { ...base, ok: true, detail: "HTTPS 401 (needs a login)" };
@@ -141,6 +160,7 @@ async function probe(host: string, role: HostRole, port: number | null): Promise
 function stateOf(p: HostnameProbe, resolved: string[], planned: boolean): ServiceState {
   if (planned && !resolved.length) return "unavailable";
   if (!resolved.length) return "down";
+  if (p.ok && p.cert && p.cert.daysLeft < 14) return "degraded"; // renewal is late — the card says so
   if (p.ok) return "ok";
   if (p.httpStatus === 404) return "degraded";
   return "down";
@@ -201,7 +221,8 @@ export async function hostnamesStatus(force = false): Promise<HostnamesPayload> 
       const proxied = recs.find((r) => r.proxied !== null)?.proxied ?? proxiedLive;
       const planned = source === "extra" || source === "config";
       const p = resolved.length ? await probe(host, role, srvPorts.get(host) ?? null) : { kind: "none" as const, ok: null, httpStatus: null, latencyMs: null, detail: planned ? "no record yet" : "does not resolve" };
-      const note = role === "game" && srvPorts.has(host) ? `SRV → port ${srvPorts.get(host)}` : proxied && (role === "game" || role === "stream") ? "proxied — this cannot work for a non-HTTP service; set the record to DNS only" : undefined;
+      const certNote = p.cert && p.cert.daysLeft < 14 ? `certificate expires in ${p.cert.daysLeft} day(s) — renewal is late` : undefined;
+      const note = role === "game" && srvPorts.has(host) ? `SRV → port ${srvPorts.get(host)}` : proxied && (role === "game" || role === "stream") ? "proxied — this cannot work for a non-HTTP service; set the record to DNS only" : certNote;
       return { host, role, records: recs.map((r) => `${r.type} ${r.data}`), source, target: describeTarget(recs, homeIp) ?? (resolved.length ? resolved.join(", ") : null), proxied, resolved, probe: p, state: note?.startsWith("proxied") ? "down" : stateOf(p, resolved, planned), note };
     }),
   );

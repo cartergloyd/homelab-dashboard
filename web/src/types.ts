@@ -592,6 +592,8 @@ export interface HostnameProbe {
   httpStatus: number | null;
   latencyMs: number | null;
   detail: string;
+  /** TLS certificate seen on the https probe (issuer + days until expiry); null when not https or unknown */
+  cert?: { issuer: string; expiresAt: string; daysLeft: number } | null;
 }
 
 export interface HostnameRow {
