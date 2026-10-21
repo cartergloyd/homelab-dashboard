@@ -369,6 +369,52 @@ logs every login; it can be removed later without touching Twenty.
    `APPS_DATA_DIR/crm/local-storage` must be in the file backup. **Upgrades**: change
    `TWENTY_TAG`, `docker compose up -d` — Twenty migrates on start; dump first.
 
+### 5.9 Moving the fam site's data in from Supabase
+
+What the site has today (read from the `fam.xgold.tech` repo and the live project on 2026-10-21):
+Supabase project `radwvuaaaxxblsnrkpqd`, **one table** `public.kv (coll text, id text, data jsonb,
+primary key (coll, id))` — a document store with the colls `plans`, `bedrooms`, `flights`,
+`members`, `progress`, `meals`, `groceries` (19 rows that day), realtime on the table, and RLS
+policies that let the site's **publishable key** read and write exactly those colls. No Supabase
+Auth users (the page keeps a per-browser id in `localStorage`), no Storage buckets, no functions.
+So the migration is one table, and the tool is `scripts/migrate-supabase-kv.sh`. It runs **on the
+server** with the compose stack up (§ 5.3) — nothing is installed on or copied to the laptop:
+
+```bash
+cd /opt/homelab-dashboard     # or the real checkout
+scripts/migrate-supabase-kv.sh fam --url https://radwvuaaaxxblsnrkpqd.supabase.co --key sb_publishable_iRnckqOLBIR7pt_ZYdFLeg_gAztE1e_
+```
+
+(The key is the public one from the site's HTML, so the copy contains what the site can read —
+all seven colls. A **secret** key from Supabase → Settings → API keys copies the table unfiltered,
+in case other colls were ever written; pass it the same way and don't paste it anywhere else.)
+
+1. **Export** — pages through the REST API and keeps the rows under `data/migrations/` (mode 600).
+2. **Load** — `psql` inside `homelab-postgres` as role `fam` into database `fam`, in one
+   transaction, upsert by key, so re-running is harmless. The table at home is the Supabase one
+   plus a single-column primary key `key = '<coll>/<id>'` (Directus cannot manage a two-column
+   key; `(coll, id)` stays unique and a check constraint keeps the two in step).
+3. **Directus** — registers `kv` as a collection in fam's Directus (collection + field metadata:
+   `data` as a JSON editor, `coll` as a dropdown) using `APP_FAM_ADMIN_EMAIL/_PASSWORD` from
+   `.env`, or `DIRECTUS_TOKEN=<static token>` if the admin password was changed after install.
+4. **Verify** — prints Supabase's row count, PostgreSQL's and Directus's; exit 1 on disagreement.
+   The Database tab then shows one collection on the fam card; `https://fam-api.xgold.tech/admin`
+   → Content → kv lists the documents. Run it through `scripts/hl-run.sh` to land the whole
+   transcript in Live server alerts.
+
+**What stays open after the data is across** (not done by the script):
+
+- The **front-end still talks to Supabase**: the `window.claude.use('db')` shim at the top of
+  `fam.xgold.tech/index.html` (load / upsert / delete on `kv`, realtime channel) has to be rewritten
+  against Directus (`/items/kv?filter[coll][_eq]=…`, `PATCH|DELETE /items/kv/<coll>/<id>` — the key
+  URL-encoded — and the WebSocket subscription). That is a change in the `fam.xgold.tech` repo.
+- **Access**: Supabase let anyone holding the public key read and write those colls. The script
+  grants nothing public by default; `--public-access` reproduces exactly that on Directus's Public
+  policy (filtered to the exported colls) when the front-end moves. The alternative is a role +
+  static token for the site, which is no safer for a key embedded in a public page — decide then.
+- Keep the Supabase project until the switched front-end has been used for a few days, then
+  pause or delete it. Re-run the script before the switch to pick up rows written in between.
+
 ## 6. Configure and start the dashboard
 
 ```bash

@@ -61,7 +61,8 @@ web/      Vite + React 18 + TS, react-router, TanStack Query, plain CSS tokens
                       LogViewer, AlertsFeed, AssistantWidget, ContextModal, icons
   src/types.ts        MIRROR of server/src/types.ts — keep both in sync by hand
 deploy/   systemd units, sudoers rule, env template      SERVER_SETUP.md = install handoff
-scripts/  hl-run.sh — tee a terminal script's output into the alerts feed
+scripts/  hl-run.sh — tee a terminal script's output into the alerts feed; add-app.sh; pg-backup.sh;
+          migrate-supabase-kv.sh — the fam site's Supabase table into the fam database + Directus (§ 5.9)
 docker-compose.yml   PostgreSQL (127.0.0.1 only) + personal Directus (Tailscale) + one Directus per
                      public app (fam, ai → 127.0.0.1:805x, published as <app>-api.xgold.tech) +
                      cloudflared (Cloudflare Tunnel, host network → 127.0.0.1:<port>)
@@ -213,6 +214,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       role `app`, SERVER_SETUP § 5.8 with the multi-user access model. Cloudflare side done 2026-10-21:
       tunnel route `crm` → 127.0.0.1:3020, Access app "Twenty CRM" (policy "CRM users" = e-mail
       allow-list starting with the owner, One-time PIN + GitHub, 1-month sessions). Server side: #12.
+- [ ] **fam data off Supabase** (Carter, 2026-10-21): `scripts/migrate-supabase-kv.sh fam …` copies the
+      site's one table (`public.kv`, 7 colls, 19 rows that day) through the REST API into the `fam`
+      database via the postgres container and registers it in fam's Directus (SERVER_SETUP § 5.9).
+      Written and syntax-checked on the dev Mac only — **the first real run is on the server**, after
+      the compose stack is up. Then: switch the front-end (`fam.xgold.tech` repo) and pause the project.
 - [ ] Issue #10 part A, server side: pull main, build, add `CF_ACCESS_*` + `PUBLIC_DASHBOARD_URL`
       to the dashboard env, restart; confirm `PORT`/`HOST` (route assumes 8088 on loopback)
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA
@@ -262,6 +268,18 @@ override the placeholders wherever they conflict:
   legacy `api.fam` A record stays until nothing uses it). The first apps are `fam` and `ai`.
 - A Geyser (Bedrock) plugin with MCXboxBroadcast runs on the Paper server — its token-refresh
   failures are a known "needs a human" incident, not a server fault.
+- **The fam site's backend is Supabase project `radwvuaaaxxblsnrkpqd`** (as of 2026-10-21): one table
+  `public.kv (coll, id, data jsonb)` used as a Firestore-style document store by the shim at the top of
+  `fam.xgold.tech/index.html` (colls plans, bedrooms, flights, members, progress, meals, groceries;
+  ids are either generated or paths like `members/claim-<name>`, so the same id can recur across
+  colls). RLS gives the site's publishable key (`sb_publishable_iRnckqOLBIR7pt_ZYdFLeg_gAztE1e_`, public
+  in the HTML) full CRUD on those colls; no Auth users, no Storage. The earlier FastAPI login API at
+  `api.fam.xgold.tech` (`gold_linux_server/fam.xgold.tech/`, CSV accounts) is defunct.
+- **The dev Mac is Carter's company laptop and must stay clean**: nothing runs or is stored on it
+  (no Docker Desktop — it is sign-in-locked by the company anyway — no data exports, no local dry
+  runs). It edits and pushes; the server runs. From the office network it cannot reach the server
+  (no Tailscale client, the LAN address only works at home) and `gh` fails TLS behind the corporate
+  proxy while `curl` and git-over-SSH work.
 
 ## Decisions log
 
@@ -395,6 +413,13 @@ override the placeholders wherever they conflict:
   (`QBITTORRENT_PUBLIC_URL`) exists; a dashboard-launched agent runner
   (`services/agentRunner.ts`, `codex exec` / `claude -p` with cwd `/home/gold/Minecraft
   Server`) was added as an interim step toward issue #5.
+- 2026-10-21 **fam's Supabase table lands at home with a single-column key.** Directus cannot manage a
+  table whose primary key spans two columns, so `kv` gets `key text primary key = '<coll>/<id>'` next
+  to the unchanged `coll`, `id`, `data` (unique `(coll, id)`, check constraint). The migration goes
+  through Supabase's REST API with the site's own public key (no database password exists on the Mac
+  or in the repos) and `psql` inside the postgres container — no new dependency. Public write access
+  is **not** granted at home by default (`--public-access` mirrors the Supabase anon policy when the
+  front-end moves). The script runs on the server only; see the known-facts note on the dev Mac.
 
 ## How to run & verify
 
