@@ -32,6 +32,8 @@ export interface AppConfig {
   siteUrl: string | null;
   container: string;
   db: string;
+  /** Private token for authenticated health checks (Directus 12+). Never returned by the API. */
+  healthToken?: string;
   /** GET path that answers 200 when the app is healthy */
   healthPath: string;
 }
@@ -68,6 +70,7 @@ export function appsFromEnv(names: string[], env: Record<string, string | undefi
       siteUrl: clean(env[`APP_${k}_SITE_URL`]?.trim() || (defaults.siteHost ? `https://${defaults.siteHost}` : null)),
       container: env[`APP_${k}_CONTAINER`]?.trim() || defaults.container,
       db: env[`APP_${k}_DB`]?.trim() || name,
+      ...(env[`APP_${k}_HEALTH_TOKEN`]?.trim() ? { healthToken: env[`APP_${k}_HEALTH_TOKEN`]!.trim() } : {}),
       healthPath: defaults.healthPath,
     });
   }
