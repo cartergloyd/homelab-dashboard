@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { Icons } from "../components/icons";
+import { AddTorrentButton } from "../components/AddTorrentButton";
 import { Card, ErrorNotice, PageHead, useDialog, useToast } from "../components/ui";
 import { fmtBytes, fmtDateTime } from "../format";
 import type { FileEntry, FileListing } from "../types";
@@ -118,6 +119,7 @@ export function Files() {
             <button className="btn primary" disabled={!root || upload.isPending} onClick={() => fileInput.current?.click()}>
               <Icons.upload width={14} height={14} /> {upload.isPending ? "Uploading…" : "Upload"}
             </button>
+            <AddTorrentButton />
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => e.target.files?.length && upload.mutate(e.target.files)} />
           </>
         }

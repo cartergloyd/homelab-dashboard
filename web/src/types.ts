@@ -732,6 +732,7 @@ export type IdentityVia = "tailscale" | "cloudflare" | "key" | "dev";
 
 export interface AppConfigPayload {
   demo: boolean;
+  torrentAdd: boolean;
   user: { login: string; name: string; via: IdentityVia };
   links: { jellyfin: string; directus: string; qbittorrent: string | null };
   mediaRoots: string[];

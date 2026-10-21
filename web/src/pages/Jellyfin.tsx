@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { Icons } from "../components/icons";
+import { AddTorrentButton } from "../components/AddTorrentButton";
 import { Card, ErrorNotice, PageHead, StatTile, StatusPill, useDialog, useToast } from "../components/ui";
 import { fmtRelative, fmtUptime } from "../format";
 import type { JellyfinPayload } from "../types";
@@ -38,6 +39,7 @@ export function Jellyfin() {
             <a className="btn primary" href={d?.url} target="_blank" rel="noreferrer">
               <Icons.external width={14} height={14} /> Open Jellyfin
             </a>
+            <AddTorrentButton />
             <Link className="btn" to="/media#files">
               <Icons.folder width={14} height={14} /> Media files
             </Link>
