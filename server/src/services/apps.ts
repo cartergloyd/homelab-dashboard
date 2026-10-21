@@ -34,10 +34,10 @@ async function container(name: string): Promise<AppContainer | null> {
   return c ? { state: c.state, startedAt: c.startedAt, image: c.image } : null;
 }
 
-async function health(url: string, timeoutMs: number, path = "/server/health"): Promise<{ ok: boolean | null; status: string | null; httpStatus: number | null; latencyMs: number | null; note?: string }> {
+async function health(url: string, timeoutMs: number, healthPath = "/server/health", token?: string): Promise<{ ok: boolean | null; status: string | null; httpStatus: number | null; latencyMs: number | null; note?: string }> {
   const t = Date.now();
   try {
-    const res = await fetch(`${url}${path}`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { Accept: "application/json" } });
+    const res = await fetch(`${url}${healthPath}`, { signal: AbortSignal.timeout(timeoutMs), redirect: "manual", headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
     const latencyMs = Date.now() - t;
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location") ?? "";
@@ -91,6 +91,21 @@ async function dbStats(db: string, kind: AppKind = "directus"): Promise<AppDbSta
 }
 
 async function latestBackup(db: string): Promise<AppStatus["backup"]> {
+  // The verified encrypted offsite pipeline supersedes legacy plaintext dumps.
+  if (process.env.OFFSITE_BACKUP_RECEIPT) {
+    try {
+      const receiptFile = process.env.OFFSITE_BACKUP_RECEIPT;
+      const receipt = JSON.parse(await fsp.readFile(receiptFile, "utf8")) as { remote: string; databases: string[]; verifiedAt: string; downloadVerified: boolean; files: string[] };
+      const name = `${db}.dump.gpg`;
+      if (receipt.downloadVerified && receipt.databases.includes(db) && receipt.files.includes(name)) {
+        const root = path.dirname(receiptFile);
+        const folder = path.basename(receipt.remote);
+        const file = path.join(root, folder, name);
+        const st = await fsp.stat(file);
+        return { latest: receipt.verifiedAt, file, bytes: st.size, count: 1 };
+      }
+    } catch { /* Fall back to the legacy dump location when a receipt is unavailable. */ }
+  }
   try {
     const names = (await fsp.readdir(cfg.pgBackupDir)).filter((n) => new RegExp(`^${db.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}-\\d{6}\\.sql\\.gz$`).test(n)).sort();
     if (!names.length) return { latest: null, file: null, bytes: null, count: 0 };
@@ -134,7 +149,7 @@ async function tunnelStatus(): Promise<TunnelStatus> {
 }
 
 async function appStatus(a: (typeof cfg.apps)[number]): Promise<AppStatus> {
-  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000, a.healthPath), a.publicUrl ? health(a.publicUrl, 8000, a.healthPath) : Promise.resolve(null), dbStats(a.db, a.kind), latestBackup(a.db)]);
+  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000, a.healthPath, a.healthToken), a.publicUrl ? health(a.publicUrl, 8000, a.healthPath, a.healthToken) : Promise.resolve(null), dbStats(a.db, a.kind), latestBackup(a.db)]);
   let state: ServiceState = "ok";
   if (!local.ok || !database.exists) state = c?.state === "running" || database.exists ? "degraded" : c ? "down" : "unavailable";
   if (local.ok && pub && pub.ok === false) state = "degraded";
