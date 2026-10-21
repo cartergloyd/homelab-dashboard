@@ -210,8 +210,9 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       `apps-config.ts` (site = the app, `/healthz`, container `homelab-twenty`, 127.0.0.1:3020),
       compose services `redis` + `twenty-server` + `twenty-worker` on the shared Postgres (database +
       role `crm`), `add-app.sh --kind twenty`, kind-aware Database card / status row / audit / hostnames
-      role `app`, SERVER_SETUP § 5.8 with the multi-user access model. Still to do in Cloudflare: the
-      tunnel route `crm` → 127.0.0.1:3020 and the "Twenty CRM" Access app (needs the e-mail list).
+      role `app`, SERVER_SETUP § 5.8 with the multi-user access model. Cloudflare side done 2026-10-21:
+      tunnel route `crm` → 127.0.0.1:3020, Access app "Twenty CRM" (policy "CRM users" = e-mail
+      allow-list starting with the owner, One-time PIN + GitHub, 1-month sessions). Server side: #12.
 - [ ] Issue #10 part A, server side: pull main, build, add `CF_ACCESS_*` + `PUBLIC_DASHBOARD_URL`
       to the dashboard env, restart; confirm `PORT`/`HOST` (route assumes 8088 on loopback)
 - [ ] Issue #10 parts B–E: TOTP step-up, encrypted off-site dumps + restore test, Directus 2FA

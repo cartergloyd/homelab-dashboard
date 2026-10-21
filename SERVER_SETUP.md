@@ -353,10 +353,11 @@ logs every login; it can be removed later without touching Twenty.
    `workspace_*` schemas itself on first start. If the log complains about an extension it may
    not create, run it once as the superuser: `docker exec -it homelab-postgres psql -U homelab -d crm -c 'CREATE EXTENSION IF NOT EXISTS "<name>";'`.
 3. **RAM**: Twenty wants ≥ 2 GB for itself — check `free -h` before `docker compose up -d`.
-4. **Tunnel route** `crm` → `http://127.0.0.1:3020` (Zero Trust → Networking → Tunnels → homelab →
-   Routes → Add route → Published application) and the **Access
-   application** "Twenty CRM": destination `crm.xgold.tech`, no path; policy "CRM users" = Allow,
-   Emails = the people's addresses; login methods One-time PIN + GitHub; session 1 month.
+4. **Tunnel route** `crm` → `http://127.0.0.1:3020` and the **Access application** "Twenty CRM":
+   destination `crm.xgold.tech`, no path; policy "CRM users" = Allow, Emails = the people's
+   addresses; login methods One-time PIN + GitHub; session 1 month. **Both done 2026-10-21**, the
+   list starting with the owner's e-mail. To add a person: Zero Trust → Access → Policies → "CRM
+   users" → add the e-mail → Save, then invite them inside Twenty.
 5. **First start**: `docker compose up -d`, wait for `homelab-twenty` to be healthy, open
    `https://crm.xgold.tech`, pass the Access login, create the first (and only) workspace — that
    account is the Twenty admin. Then Settings → Members → invite the others; Settings →
