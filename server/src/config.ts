@@ -51,6 +51,9 @@ const Env = z.object({
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_CONTAINER: z.string().default("jellyfin"),
   QBITTORRENT_PUBLIC_URL: z.string().optional(),
+  QBITTORRENT_URL: z.string().url().optional(),
+  QBITTORRENT_USERNAME: z.string().optional(),
+  QBITTORRENT_PASSWORD: z.string().optional(),
   // "Movies=/srv/media/movies,Shows=/srv/media/shows"
   MEDIA_ROOTS: csv,
 
@@ -186,6 +189,9 @@ export const cfg = {
   },
   qbittorrent: {
     publicUrl: env.QBITTORRENT_PUBLIC_URL?.replace(/\/$/, "") ?? null,
+    url: env.QBITTORRENT_URL?.replace(/\/$/, "") ?? null,
+    username: env.QBITTORRENT_USERNAME,
+    password: env.QBITTORRENT_PASSWORD,
   },
   mediaRoots: parseRoots(env.MEDIA_ROOTS),
   minecraft: {

@@ -23,6 +23,8 @@ Conventions:
 
 ## 1. The switch and the fixtures
 
+`server/src/services/qbittorrent.ts` simulates connection status and acknowledges submissions in demo mode, without contacting qBittorrent. A real install sets `QBITTORRENT_URL` and submits links through the authenticated dashboard.
+
 | Where | What is fake | Real install |
 |---|---|---|
 | `package.json` → `"demo": "DEMO=1 AUTH_DISABLED=1 node server/dist/index.js"` | the only way demo mode is turned on | run `npm start` / the systemd unit; never set `DEMO` or `AUTH_DISABLED` in the env file |

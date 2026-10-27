@@ -5,6 +5,7 @@ import { useAppConfig } from "../App";
 import { Icons } from "../components/icons";
 import { ReportsCard } from "../components/ReportsCard";
 import { HostnamesCard } from "../components/HostnamesCard";
+import { AddTorrentButton } from "../components/AddTorrentButton";
 import { Card, ErrorNotice, Meter, PageHead, StatTile, StatusPill, useDialog, useToast } from "../components/ui";
 import { ReclaimHint } from "./Storage";
 import { fmtRelative } from "../format";
@@ -50,6 +51,7 @@ export function Dashboard() {
                 <Icons.external width={14} height={14} /> qBittorrent
               </a>
             )}
+            <AddTorrentButton />
             <a className="btn" href={config.data?.links.directus} target="_blank" rel="noreferrer">
               <Icons.external width={14} height={14} /> Directus
             </a>
