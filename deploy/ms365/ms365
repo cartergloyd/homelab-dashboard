@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+export MS365_MCP_TENANT_ID=consumers
+export MS365_MCP_USE_KEYTAR=0
+exec /home/gold/.local/node/bin/node /home/gold/server-platform/connectors/ms365/node_modules/@softeria/ms-365-mcp-server/dist/index.js --preset mail --read-only "$@"

@@ -1,0 +1,78 @@
+# Personal Outlook connector for Claude web and mobile
+
+Recovered from the October 19 installation. This directory versions the existing
+private-key gateway; it does not deploy changes to the running installation.
+See [the investigation and connection report](../../docs/MICROSOFT_365_CONNECTOR.md)
+for the remaining public-route and Claude setup steps.
+
+The installed path on Gold is `/home/gold/server-platform/connectors/ms365`.
+The two user services run the Microsoft server on loopback port 3002 and the
+key-checking gateway on loopback port 3001. Publish only the gateway. The
+Microsoft server uses `--trust-proxy-auth` and a shared cached mailbox identity.
+All key holders can read that mailbox. This is a single-owner connector.
+
+## Verify the recovered source
+
+With Node.js 20 or later:
+
+```bash
+cd deploy/ms365
+npm ci
+node --test gateway.test.mjs
+```
+
+The tests use ephemeral local ports and a fake upstream. They do not read mail.
+The live checker reads the adjacent private `connector-key` file, initializes
+MCP, checks tool restrictions, and fetches one message ID without printing it:
+
+```bash
+node /home/gold/server-platform/connectors/ms365/check-gateway.mjs
+```
+
+Use only a trusted endpoint when supplying a URL argument: the checker sends the
+mailbox-access key to that URL. Once the Cloudflare route exists:
+
+```bash
+node /home/gold/server-platform/connectors/ms365/check-gateway.mjs https://ms365.xgold.tech/mcp
+```
+
+## Recover an installation on Gold
+
+The current installation is healthy locally; do not replace its key, environment
+or Microsoft cache to fix a Claude configuration or routing problem.
+
+For recovery, copy `package.json`, `package-lock.json`, `gateway.mjs`,
+`gateway.test.mjs`, `check-gateway.mjs`, and `ms365` to the installed path and run
+`npm ci` there. Make `ms365` executable. Copy `remote.env.example` to `remote.env`
+and replace the account placeholder. Keep both `remote.env` and `connector-key`
+owner-readable only (mode 0600). Restore the existing key where possible. For a
+new installation, generate at least 48 random characters and configure the same
+key in Claude's `X-Connector-Key` request header.
+
+The service units and launcher use Gold's existing paths and Node binary. For a
+different host, update those paths before installing the units. They are user
+units, installed under `~/.config/systemd/user/`.
+
+When a new Microsoft login is actually needed, run in the installation folder:
+
+```bash
+set -a
+. ./remote.env
+set +a
+./ms365 --login
+```
+
+Complete the displayed Microsoft device sign-in and consent before starting the
+services. The `consumers` tenant supports the personal account; disabling keytar
+selects the headless cache. `MS365_MCP_EXPECTED_USERNAME` pins the local sign-in.
+The HTTP server shares the cached account behind the authenticated gateway.
+
+After installing the units:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now ms365-mcp.service ms365-gateway.service
+```
+
+Never commit `connector-key`, `remote.env`, or Microsoft token caches. This
+directory ignores the first two, and the upstream stores caches outside it.
