@@ -1,188 +1,141 @@
-# Issue #6: personal Outlook in Claude on iOS
+# Issue #6: personal Outlook in Claude web and iOS
 
-Installation report, October 19, 2026. Rechecked October 27, 2026 (America/Chicago). [Issue #6](https://github.com/cartergloyd/homelab-dashboard/issues/6).
+Installation recovered from October 19, 2026; updated October 27, 2026
+(America/Chicago). [Issue #6](https://github.com/cartergloyd/homelab-dashboard/issues/6).
 
-## Current configuration
+## Current status
 
-The connector is installed. On October 27, all three gateway tests, the local
-MCP handshake, and a fresh authenticated mailbox read passed (18 read-only tools).
-The owner has now created the Cloudflare Tunnel route for `ms365.xgold.tech`.
-The public HTTPS check passed: missing and wrong keys returned 401, the MCP
-handshake exposed 18 read-only tools, and a fresh mailbox read returned one
-message without printing its content. **An actual Claude web/iOS query still
-needs owner verification.**
+The public connector at **https://ms365.xgold.tech/mcp** now supports OAuth
+sign-in to the gateway. The owner approves access using the existing connector
+key on the gateway's own page. Microsoft remains signed in on Gold; there is no
+Microsoft OAuth callback or Entra app-registration step in this flow.
 
-Gold's local resolver initially retained the earlier negative DNS answer. Google
-and Cloudflare DNS-over-HTTPS both resolved the hostname. The successful check
-used a process-local DNS lookup override to the published Cloudflare address,
-preserving the hostname, TLS SNI, and certificate verification. No persistent
-DNS setting was changed. The legacy URL timed out from Gold; the tunnel replaces
-that route.
+The owner's screenshots revealed that **Request headers is unavailable in their
+Claude account**. Anthropic documents this as a limited beta. The previous
+No sign-in / X-Connector-Key instructions could not work with that interface.
+Those instructions are superseded by the OAuth setup below. See [Anthropic's
+request-header availability documentation](https://claude.com/docs/connectors/custom/add-unlisted#authenticate-with-request-headers).
 
-The October 19 conversation continued beyond the original installation report:
-Claude reached the gateway but omitted `X-Connector-Key`, receiving 401. The owner
-reported “Couldn't start sign in.” A later conversation proposed a Cloudflare
-Tunnel route and stopped awaiting its creation. The tunnel endpoint is now
-verified; the remaining step is configuring and verifying Claude itself.
+Passed on October 27:
 
-The source, pinned dependency lockfile, service units, and checks are now in
-[`deploy/ms365`](../deploy/ms365/README.md). Previously they lived only in the
-installation directory outside the repository.
+- Seven tests covering the existing proxy boundary and new OAuth flow.
+- Public discovery, registration, owner approval, S256 PKCE code exchange,
+  bearer-authenticated MCP handshake, 18 read-only tools, and a fresh mailbox
+  read (one message ID selected without printing the ID or mailbox content).
+- Smoke-check grant revocation; its token is rejected afterward.
+- Existing private-header authentication and local mailbox checks still pass.
 
-The working route uses **Microsoft device sign-in on Gold**, then a **private
-connector key sent by Claude**. The owner does not need access to the Microsoft
-Entra app-registration portal for this route. Softeria's default application
-rejected Claude's OAuth callback; the owner's personal account also could not
-access the Entra portal's Microsoft Services tenant. Those OAuth setup
-instructions are superseded by the header-key configuration below.
-
-## Verified public route
-
-The owner added this published application route to the existing Cloudflare Tunnel:
-
-| Setting | Value |
-| --- | --- |
-| Hostname | `ms365.xgold.tech` |
-| Path | Leave blank |
-| Service type | `HTTP` |
-| Service URL | `127.0.0.1:3001` |
-
-The current `homelab-cloudflared` container uses host networking, so its loopback
-can reach the gateway. Route to port **3001**, where the key is checked. Port 3002
-trusts its proxy and must remain private. Do not add a browser-interactive Access
-login to this endpoint; the private key protects every mailbox request. Existing
-dashboard Access policies are separate. See [Cloudflare published application
-routes](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/).
-
-To repeat the public check once the local DNS cache refreshes:
-
-```bash
-node /home/gold/server-platform/connectors/ms365/check-gateway.mjs https://ms365.xgold.tech/mcp
-```
-
-Success must include rejected missing/wrong keys, an MCP handshake, 18 read-only
-tools, and a mailbox read. All passed on October 27 through the tunnel.
+**An actual Claude web/iOS query remains pending owner verification.** Protocol
+checks do not prove that Claude has completed its own configuration.
 
 ## Configure Claude
 
-In Claude's custom connector settings, use:
+Remove the old Outlook connector before adding the new configuration:
 
 | Setting | Value |
 | --- | --- |
 | Name | Personal Outlook |
 | URL | `https://ms365.xgold.tech/mcp` |
-| Authentication | **No sign in** |
-| Request header name | `X-Connector-Key` |
-| Request header value | Contents of the private key file on Gold |
+| Authentication | **Sign in now** |
+| OAuth client, if offered | **Register automatically** |
+| Transport | **Streamable HTTP** |
 
-Display the key locally on Gold, then paste its output into Claude's header
-value:
+No OAuth client ID, client secret, or custom header is required. The gateway
+supports dynamic client registration; it does not advertise Claude published
+identity support.
+
+During sign-in, the approval page must be on **https://ms365.xgold.tech**. It
+explains that Claude will have read-only access to the mailbox signed in on Gold.
+Get the existing connector key locally:
 
 ```bash
 cat /home/gold/server-platform/connectors/ms365/connector-key
 ```
 
-The key is a credential; it is not included in this report or Git. Claude's
-**No sign in** setting skips OAuth: the request header authenticates every MCP
-request to the server. No OAuth client ID or client secret is needed in Claude.
-See [Claude's request-header configuration](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+Paste the key into that approval page and click **Allow read-only access**.
+The key is not a Microsoft password. It is submitted in the approval form body,
+never in the URL, report, repository, or application logs. The page returns to
+Claude, which exchanges a short-lived code plus PKCE proof for gateway tokens.
 
-Remove the old OAuth connector before adding this configuration. In Claude web,
-open **Customize → Connectors → Add custom connector**, choose **No sign in**,
-and configure **Request headers**. If that field is absent, inspect the actual
-setup form before assuming the key has been configured.
-
-Save the connector, enable it in a new chat in the Claude iOS app, and ask:
+Enable Personal Outlook in a fresh Claude web/iOS chat and ask:
 
 > Use Personal Outlook to list my three newest emails with sender, subject and date.
 
-## Server installation
+If Claude offers only its published identity, switch to Register automatically.
+If sign-in fails, record the exact error and check gateway logs without sharing
+the key, authorization codes, or tokens.
 
-`@softeria/ms-365-mcp-server` is pinned to **0.170.2** in the independent
-`/home/gold/server-platform/connectors/ms365` installation, with a lockfile.
+## Server implementation
+
+Source and locked dependencies: [`deploy/ms365`](../deploy/ms365/README.md).
+Installed at `/home/gold/server-platform/connectors/ms365`.
 
 ```text
-Claude cloud → HTTPS ms365.xgold.tech/mcp → Cloudflare Tunnel
-             → 127.0.0.1:3001 private-key gateway
-             → 127.0.0.1:3002 Microsoft MCP server
-             → Microsoft Graph using the owner's cached sign-in
+Claude → HTTPS ms365.xgold.tech → Cloudflare Tunnel (host network)
+       → 127.0.0.1:3001 OAuth/key gateway
+       → 127.0.0.1:3002 Softeria Microsoft MCP server
+       → Microsoft Graph using the owner's cached sign-in
 ```
 
-- `ms365-mcp.service` runs the upstream with `--preset mail --read-only`, an
-  explicit `User.Read Mail.Read MailboxSettings.Read` scope allowlist, and the
-  documented `--trust-proxy-auth` mode. Its HTTP auth tools and local file tools
-  are disabled. Dynamic OAuth client registration is disabled.
-- `ms365-gateway.service` authenticates `X-Connector-Key` using constant-time
-  comparison, forwards only `/mcp`, and strips credentials before forwarding.
-  OAuth endpoints return 404. It limits request bodies to 1 MiB and upstream
-  requests to 30 seconds. Neither service listens on a public interface.
-- Cloudflare Tunnel provides the verified HTTPS endpoint and forwards to the gateway. The
-  gateway checks the private key before allowing access to the shared cached
-  Microsoft identity. Key holders have read-only access to that mailbox.
-- The key file has mode 0600. Microsoft authentication uses the `consumers`
-  authority and the headless encrypted file cache (`MS365_MCP_USE_KEYTAR=0`),
-  with an expected Microsoft username configured. The earlier default
-  credential-store login did not complete; a fresh headless login succeeded.
-- Claude Code on Gold also has a user-scoped `ms365` stdio registration. That is
-  separate from the remote connector used by iOS.
+- `ms365-mcp.service`: Softeria 0.170.2 with mail preset, read-only mode, explicit
+  `User.Read Mail.Read MailboxSettings.Read` scopes, consumers tenant, headless
+  cache, and trust-proxy authentication. Microsoft auth and local file tools are
+  absent from the remote tool list. This upstream must stay private.
+- `ms365-gateway.service`: MCP SDK OAuth router, Claude callback allowlist,
+  owner approval, exact-origin check, rate limits, S256 PKCE, one-use codes,
+  resource/client-bound opaque tokens, refresh rotation and reuse detection,
+  expiry, and grant revocation. Credentials are stripped before upstream calls.
+- Access tokens last one hour; refresh tokens last 30 days and rotate on use.
+  Codes last two minutes and approval transactions last ten minutes.
+- `oauth-state.json` persists registrations and hashed gateway tokens at mode
+  0600. Authorization codes and pending approvals stay in memory and expire on
+  restart. Rotating the owner key invalidates existing gateway tokens on restart.
+- This is a single-owner connector. Anyone approved with the owner key receives
+  read access to the cached mailbox. It is not a multi-user Microsoft sign-in.
+- The original X-Connector-Key route remains available for local checks and
+  clients that can supply headers; Claude does not need that feature now.
 
-The upstream documents [trust-proxy authentication](https://github.com/Softeria/ms-365-mcp-server#cli-options)
-for an authenticated reverse proxy. The gateway provides that authentication;
-this mode must not be exposed directly without it.
+The existing tunnel route is `ms365.xgold.tech`, blank path, HTTP service
+`127.0.0.1:3001`. The owner created its DNS record. No browser-interactive Access
+policy fronts the route; gateway authentication protects every mailbox request.
 
-## Verification
+Gold retained a negative DNS answer after the route was created. Google and
+Cloudflare DNS-over-HTTPS resolved the hostname. Public checks used a
+process-local DNS override to that published Cloudflare address with hostname,
+TLS SNI, and certificate verification preserved; no persistent DNS changes were
+made. The old direct-IP endpoint timed out from Gold.
 
-October 19 installation checks (historical, not proof of current public access):
-
-- Gateway tests: missing/wrong credentials rejected, OAuth routes closed,
-  request content preserved, credentials stripped, oversized requests blocked.
-- Remote MCP handshake and tool listing: **18 read-only tools**; email mutation,
-  local file writing and account-management tools absent.
-- Authenticated Graph query selecting one message ID: successful, without
-  printing its ID or email content.
-- Active HTTPS virtual host: missing/wrong keys return 401; correct key permits
-  MCP initialization; OAuth routes return 404.
-- The owner confirmed public reachability from Safari on cellular data before
-  the authentication change. nginx routing and the public URL remain the same.
-
-Re-run local checks:
+## Verify and operate
 
 ```bash
-node /home/gold/server-platform/connectors/ms365/gateway.test.mjs
-node /home/gold/server-platform/connectors/ms365/check-gateway.mjs
-```
-
-To check the full public route (server-to-own-public-IP connections can be slow):
-
-```bash
-node /home/gold/server-platform/connectors/ms365/check-gateway.mjs https://api.fam.xgold.tech/ms365/mcp
-```
-
-The older `check-http.py` checks the superseded OAuth mode and is not the correct
-validator for the current header-key mode.
-
-## Operations
-
-```bash
+cd /home/gold/server-platform/connectors/ms365
+node gateway.test.mjs
+node check-gateway.mjs
+node check-oauth.mjs
 systemctl --user status ms365-mcp.service ms365-gateway.service
-systemctl --user restart ms365-mcp.service ms365-gateway.service
-/home/gold/server-platform/connectors/ms365/ms365 --verify-login
+journalctl --user -u ms365-gateway.service -n 30 --no-pager
 ```
 
-If Microsoft consent expires or is revoked, obtain a fresh device code:
+Run all seven source tests from `deploy/ms365` with
+`node --test gateway.test.mjs oauth-gateway.test.mjs`. `check-oauth.mjs` uses only
+the fixed trusted public hostname, performs an automated owner approval and
+mailbox check, then revokes its own grant. It is a protocol validator, not proof
+of a successful Claude UI query. The older `check-http.py` validates the
+superseded Microsoft OAuth proxy and must not be used for this gateway.
 
-```bash
-/home/gold/server-platform/connectors/ms365/ms365 --login
-systemctl --user restart ms365-mcp.service ms365-gateway.service
-```
+For an actually expired Microsoft login, run `./ms365 --login`, complete device
+consent, and restart both services. This is separate from Claude gateway sign-in.
+Microsoft caches live under `~/.config/ms-365-mcp-server`; keep them out of Git.
 
-To rotate the connector key, replace `connector-key` with a new random secret,
-retain mode 0600, restart `ms365-gateway.service`, and update Claude's request
-header. To disconnect remote access, stop and disable `ms365-gateway.service`.
-Use the local `ms365 --logout` command to revoke the server's cached session.
+To revoke gateway sessions, stop the gateway, remove its private
+`oauth-state.json`, and restart it. To rotate the owner key, replace the private
+key file (retain mode 0600) and restart the gateway; the changed key fingerprint
+invalidates saved gateway tokens. Disconnecting Claude alone does not revoke
+Microsoft's cached session. Use `./ms365 --logout` to end that session.
 
-Microsoft's cache is under `~/.config/ms-365-mcp-server`; logs are under
-`~/.ms-365-mcp-server/logs`. Keep caches, keys and credentials out of Git.
+Only the gateway service was changed and restarted for the OAuth deployment.
+Its previous unit and dependency manifests were backed up under
+`/home/gold/server-platform/backup-private/ms365-oauth-20261027-171723`.
 
 ## Why previous attempts failed
 
@@ -196,43 +149,25 @@ Microsoft's cache is under `~/.config/ms-365-mcp-server`; logs are under
 | Private-key gateway | Gateway logged `key_missing`; Claude could not start sign-in | Required header was absent; local success did not establish Claude success |
 | Tunnel follow-up | Conversation stopped awaiting `ms365.xgold.tech` route | Owner created the route on October 27; public MCP and mailbox checks now pass |
 
-Current mailbox authentication and the tunnel route work. Finish Claude's header
-setup, then verify an actual query before closing issue #6.
+Mailbox authentication, the tunnel route, and the new OAuth flow work. Verify an
+actual Claude web/iOS query before closing issue #6.
 
-## Historical network repair
 
-The existing dashboard was already installed and healthy at port 8088, in
-real-server mode. Existing dashboard code changes were preserved.
+## Efficient parsing and related connectors
 
-HTTPS originally failed from cellular data and the server's public-IP probe.
-The router returned ICMP host-unreachable, while Minecraft TCP 25565 connected.
-Both Linux firewall implementations had ACCEPT policies. Router screenshots
-confirmed the correct TCP 443 service, host port 443, server IP and MAC, with the
-visible packet-filter rules disabled. Removing and re-adding only the HTTPS
-Hosted Applications assignment restored public access. Minecraft settings were
-preserved. nginx's activation backup is:
-`/var/backups/ms365-nginx-20261019-150424-779866`.
-
-## Efficient parsing and other connections
-
-Filter or search the mailbox first, select only needed fields, use modest page
-sizes, and fetch bodies or attachments only for relevant results. Follow returned
-pagination links. No performance or cost benchmark was run. See [Microsoft's
-messages API](https://learn.microsoft.com/graph/api/user-list-messages).
+Filter/search first, select needed fields, use modest page sizes, and retrieve
+bodies or attachments only for relevant messages. Follow pagination links. No
+performance or cost benchmark was run. See [Microsoft's messages API](https://learn.microsoft.com/graph/api/user-list-messages).
 
 | Connection | Useful task | Additional setup |
 | --- | --- | --- |
-| Outlook Calendar | Relate messages to appointments | Softeria calendar preset and new consent |
-| OneDrive / Excel | Find files and analyze spreadsheets | Files/excel presets and additional scopes |
-| Contacts | Resolve people mentioned in email | Contacts preset and additional consent |
-| Microsoft To Do | Track follow-up work | Tasks preset; writes need explicit configuration |
-| GitHub | Bring issues and pull requests into technical work | Separate Claude connector |
-| Google Drive | Find related documents outside Microsoft | Separate Claude connector |
+| Outlook Calendar | Relate messages to appointments | Calendar preset and consent |
+| OneDrive / Excel | Find files and analyze sheets | Files/excel presets and consent |
+| Contacts | Resolve senders and people | Contacts preset and consent |
+| Microsoft To Do | Track follow-up work | Tasks preset; writes require configuration |
+| GitHub | Bring issues and PRs into technical work | Separate Claude connector |
+| Google Drive | Find related documents | Separate Claude connector |
 
-These are suggestions, not enabled integrations. Personal-account support varies
-by service; Teams and SharePoint require organization capabilities. Inspect
-`--list-presets` and `--list-permissions` before broadening access. Use [Claude's
-connector guidance](https://support.claude.com/en/articles/11725091-when-to-use-desktop-and-web-connectors)
-to choose a local or remote route.
-
-Keep issue #6 open until the owner verifies the header-key connector in Claude iOS.
+These are suggestions, not enabled integrations. Personal-account capabilities
+vary; organization services such as Teams and SharePoint need separate review.
+Keep issue #6 open until an actual Claude web/iOS query succeeds.

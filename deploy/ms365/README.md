@@ -1,7 +1,7 @@
 # Personal Outlook connector for Claude web and mobile
 
 Recovered from the October 19 installation. This directory versions the existing
-private-key gateway; it does not deploy changes to the running installation.
+OAuth and private-key gateway; it does not deploy changes to the running installation.
 See [the investigation and connection report](../../docs/MICROSOFT_365_CONNECTOR.md)
 for the verified public route and remaining Claude setup steps.
 
@@ -18,10 +18,13 @@ With Node.js 20 or later:
 ```bash
 cd deploy/ms365
 npm ci
-node --test gateway.test.mjs
+node --test gateway.test.mjs oauth-gateway.test.mjs
 ```
 
 The tests use ephemeral local ports and a fake upstream. They do not read mail.
+The OAuth tests cover owner approval, callback/client/resource binding, PKCE,
+one-use codes, token expiry, refresh rotation/reuse detection, revocation, and
+private persistent state.
 The live checker reads the adjacent private `connector-key` file, initializes
 MCP, checks tool restrictions, and fetches one message ID without printing it:
 
@@ -42,7 +45,8 @@ The current installation is healthy locally; do not replace its key, environment
 or Microsoft cache to fix a Claude configuration or routing problem.
 
 For recovery, copy `package.json`, `package-lock.json`, `gateway.mjs`,
-`gateway.test.mjs`, `check-gateway.mjs`, and `ms365` to the installed path and run
+`gateway.test.mjs`, `check-gateway.mjs`, `oauth-provider.mjs`,
+`oauth-gateway.mjs`, `oauth-gateway.test.mjs`, `check-oauth.mjs`, and `ms365` to the installed path and run
 `npm ci` there. Make `ms365` executable. Copy `remote.env.example` to `remote.env`
 and replace the account placeholder. Keep both `remote.env` and `connector-key`
 owner-readable only (mode 0600). Restore the existing key where possible. For a
@@ -75,4 +79,22 @@ systemctl --user enable --now ms365-mcp.service ms365-gateway.service
 ```
 
 Never commit `connector-key`, `remote.env`, or Microsoft token caches. This
-directory ignores the first two, and the upstream stores caches outside it.
+directory ignores those files and `oauth-state.json`; the upstream stores its
+Microsoft caches outside it.
+
+## Claude accounts without request headers
+
+Use **Sign in now** and **Register automatically** with the same public MCP URL.
+The gateway presents its own approval form, where the owner enters the existing
+connector key. This does not require a Microsoft app registration. See the report
+for the complete owner flow and gateway-token revocation instructions.
+
+`oauth-state.json` contains registered client credentials and hashed gateway
+tokens; keep it mode 0600 and outside version control. It is written atomically.
+Pending approvals and authorization codes are memory-only; a gateway restart
+requires beginning any unfinished approval again. Issued tokens survive restart.
+
+After deployment, run `node check-oauth.mjs` from the installation directory to
+exercise the fixed public URL and revoke the test grant afterward. This makes an
+authenticated mailbox read without printing mailbox content. Never share the
+private key, codes, tokens, or state file.
