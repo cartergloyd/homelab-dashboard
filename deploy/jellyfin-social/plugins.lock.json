@@ -1,0 +1,27 @@
+{
+  "jellyfinImage": "jellyfin/jellyfin:10.11.9@sha256:bc9fa8e1462fffe3d8d4255fc62af478602641f4c0e5f4875fea8563d1189837",
+  "plugins": [
+    {
+      "name": "Jellyscribe",
+      "guid": "c7a3e1b9-5d42-4f8a-9c06-2b7d8e4f1a35",
+      "owner": "builtbyproxy",
+      "version": "2.13.2.0",
+      "targetAbi": "10.11.9.0",
+      "url": "https://github.com/builtbyproxy/Jellyscribe/releases/download/v2.13.2/jellyfin-plugin-letterboxd-v2.13.2.zip",
+      "sha256": "36fce20cc6175c834d7b1a7e569ea8b164cfcc7945d01c729c568e635fb65ad3",
+      "md5": "383406805ccb73a522d1be77f260cd1d",
+      "repository": "https://raw.githubusercontent.com/builtbyproxy/Jellyscribe/main/manifest.json"
+    },
+    {
+      "name": "StarTrack",
+      "guid": "a8b5e2f3-4c1d-4e8a-b2f9-6d3c7e1a5b2f",
+      "owner": "ZL154",
+      "version": "1.8.1.0",
+      "targetAbi": "10.11.0.0",
+      "url": "https://github.com/ZL154/jellyfin-plugin-startrack/releases/download/v1.8.1/Jellyfin.Plugin.InternalRating_1.8.1.0.zip",
+      "sha256": "18ea38b5cda5769e3e386514d603bf45dca920a05fa15890ea047358a992eff5",
+      "md5": "379ae965cd1b08d7f0bb2db28edb59c1",
+      "repository": "https://raw.githubusercontent.com/ZL154/jellyfin-plugin-startrack/main/manifest.json"
+    }
+  ]
+}

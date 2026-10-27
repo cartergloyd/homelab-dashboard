@@ -454,3 +454,20 @@ MCP smoke test (once Step 6 lands): `node server/test-mcp.mjs`.
 Follow `SERVER_SETUP.md`. The repo is `git@github.com:cartergloyd/homelab-dashboard.git`
 (private); on the server it lives at `/opt/homelab-dashboard` and runs as user
 `homelab` under `homelab-dashboard.service`.
+
+
+### 2026-10-25 — Issue #16 Jellyfin social plugins
+
+Jellyfin is pinned to the 10.11.9 image/digest in deploy/jellyfin-social/plugins.lock.json
+so Jellyscribe 2.13.2.0 can run. StarTrack 1.8.1.0 is the 10.11/.NET 9 build.
+Jellyscribe owns external Letterboxd/Serializd sync; family members opt in privately
+through Jellyfin Web → Jellyscribe → My accounts, with the recent-only filter off
+for historical catch-up. StarTrack supplies local social ratings/reviews and mirrors
+stars to native Jellyfin ratings. Its competing external-sync buttons are hidden.
+No external accounts were linked or histories synced automatically. Seerr remains
+unconfigured; telemetry is off. Installation/verification/rollback are documented in
+deploy/jellyfin-social/README.md. Preserve plugin keys/config with the Jellyfin DB.
+StarTrack 1.8.1.0 also collides with Jellyfin’s RecommendationDto Swagger schema;
+/api-docs/openapi.json returns 500. Normal APIs and playback work. This upstream
+limitation and the remaining per-member external-account validation are documented
+in the installation guide; do not report full end-to-end sync verified yet.
