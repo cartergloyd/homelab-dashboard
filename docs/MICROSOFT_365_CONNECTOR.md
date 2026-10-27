@@ -19,11 +19,14 @@ request-header availability documentation](https://claude.com/docs/connectors/cu
 
 Passed on October 27:
 
-- Seven tests covering the existing proxy boundary and new OAuth flow.
+- Eight tests covering the existing proxy boundary and new OAuth flow.
 - Public discovery, registration, owner approval, S256 PKCE code exchange,
   bearer-authenticated MCP handshake, 190 management tools, and a fresh mailbox
   read (one message ID selected without printing the ID or mailbox content).
 - Smoke-check grant revocation; its token is rejected afterward.
+- A real Chromium form-submission regression test reaches an isolated local
+  callback on a second origin. Missing, null, and foreign approval origins are
+  still rejected.
 - Existing private-header authentication and local mailbox checks still pass.
 - Live Graph writes: created, edited, read back, and deleted a temporary disabled
   Outlook rule and a calendar appointment with no attendees. Both creations
@@ -131,8 +134,9 @@ systemctl --user status ms365-mcp.service ms365-gateway.service
 journalctl --user -u ms365-gateway.service -n 30 --no-pager
 ```
 
-Run all seven source tests from `deploy/ms365` with
-`node --test gateway.test.mjs oauth-gateway.test.mjs`. `check-oauth.mjs` uses only
+Run all eight source tests from `deploy/ms365` with
+`node --test gateway.test.mjs oauth-gateway.test.mjs oauth-browser.test.mjs`
+(after installing the Playwright Chromium browser). `check-oauth.mjs` uses only
 the fixed trusted public hostname, performs an automated owner approval and
 mailbox check, then revokes its own grant. It is a protocol validator, not proof
 of a successful Claude UI query. The older `check-http.py` validates the
@@ -170,6 +174,27 @@ Microsoft consent. Its backup is
 Mailbox authentication, the tunnel route, and the new OAuth flow work. Verify an
 actual Claude web/iOS query before closing issue #6.
 
+
+## Browser approval correction
+
+The owner encountered `Invalid approval origin` when submitting the real form.
+The gateway's original `Referrer-Policy: no-referrer` made native browser form
+POSTs send `Origin: null`, conflicting with the exact-origin approval check.
+Earlier protocol smoke checks manually supplied an Origin header and missed the
+browser behavior. A Chromium regression test reproduced the failure.
+
+The policy is now `strict-origin`, preserving the form Origin while disclosing
+only the site origin in Referer headers, never authorization URL parameters.
+Chromium also enforces form-action across the approval redirect chain, so the
+CSP now permits the exact configured Claude callback in addition to self. The
+server still validates callbacks against its exact allowlist and requires the
+owner key, pending transaction, and PKCE exchange. Null/missing/foreign origins
+remain rejected. The complete browser form and cross-origin callback test now
+passes. See [MDN's explanation of referrer policy and Origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy#effect_on_the_origin_header).
+
+Only the gateway was restarted for these fixes. Previously issued gateway tokens
+remain valid; unfinished approval forms must be restarted from Claude's Connect
+button to obtain a fresh transaction and the corrected page headers.
 
 ## Capabilities and persistence
 

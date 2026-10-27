@@ -93,6 +93,8 @@ test('owner approval, PKCE, client, callback, resource and one-use code are enfo
   const other = await (await f.register()).json();
   const { proof, transaction } = await f.begin(client);
   assert.equal((await f.post('/approve', { transaction, key }, { origin: 'https://attacker.example' })).status, 403);
+  assert.equal((await f.post('/approve', { transaction, key }, { origin: 'null' })).status, 403);
+  assert.equal((await f.post('/approve', { transaction, key })).status, 403);
   assert.equal((await f.post('/approve', { transaction, key: 'wrong' }, { origin: issuer })).status, 403);
   const code = await f.approve(transaction);
   assert.equal((await f.post('/approve', { transaction, key }, { origin: issuer })).status, 403);

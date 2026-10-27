@@ -107,3 +107,20 @@ then perform a mailbox read. They do not create account data. The live rule and
 calendar CRUD verification described in the report was run separately, with all
 temporary items removed. All 13 tool-derived Graph scopes were consented by the
 owner. API/account support still determines which individual actions succeed.
+
+## Browser form regression
+
+The protocol tests manually construct HTTP headers. A separate Chromium test
+checks the actual native form submission and a redirect to a second local origin,
+including browser-generated Origin/Referer and CSP enforcement. It uses only
+synthetic credentials and local servers.
+
+```bash
+npx playwright install chromium
+node --test gateway.test.mjs oauth-gateway.test.mjs oauth-browser.test.mjs
+```
+
+The approval page uses `strict-origin` to preserve a same-origin form's Origin
+header without leaking authorization query parameters. Its CSP allows form
+submission to self and the exact registered Claude callback. The server continues
+to reject missing, null, or foreign approval origins.

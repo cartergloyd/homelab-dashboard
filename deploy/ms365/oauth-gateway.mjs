@@ -15,9 +15,12 @@ export function createOAuthGateway({ key, stateFile, issuer = 'https://ms365.xgo
   app.enable('strict routing');
   app.use((_req, res, next) => {
     res.set({
-      'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+      // no-referrer makes native form POSTs send Origin: null. strict-origin
+      // preserves the approval origin without leaking authorization URL params.
+      'Cache-Control': 'no-store', 'Referrer-Policy': 'strict-origin',
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      // Chromium also applies form-action to the approval's redirect chain.
+      'Content-Security-Policy': `default-src 'none'; form-action 'self' ${provider.callbacks.join(' ')}; frame-ancestors 'none'; base-uri 'none'`,
     });
     next();
   });
