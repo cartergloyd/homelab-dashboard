@@ -6,15 +6,24 @@ Installation report, October 19, 2026. Rechecked October 27, 2026 (America/Chica
 
 The connector is installed. On October 27, all three gateway tests, the local
 MCP handshake, and a fresh authenticated mailbox read passed (18 read-only tools).
-**Web/mobile access is still incomplete.** The old public endpoint timed out from
-Gold, and the proposed replacement `ms365.xgold.tech` has no DNS record. A timeout
-from Gold alone does not establish reachability from every outside network.
+The owner has now created the Cloudflare Tunnel route for `ms365.xgold.tech`.
+The public HTTPS check passed: missing and wrong keys returned 401, the MCP
+handshake exposed 18 read-only tools, and a fresh mailbox read returned one
+message without printing its content. **An actual Claude web/iOS query still
+needs owner verification.**
+
+Gold's local resolver initially retained the earlier negative DNS answer. Google
+and Cloudflare DNS-over-HTTPS both resolved the hostname. The successful check
+used a process-local DNS lookup override to the published Cloudflare address,
+preserving the hostname, TLS SNI, and certificate verification. No persistent
+DNS setting was changed. The legacy URL timed out from Gold; the tunnel replaces
+that route.
 
 The October 19 conversation continued beyond the original installation report:
 Claude reached the gateway but omitted `X-Connector-Key`, receiving 401. The owner
 reported “Couldn't start sign in.” A later conversation proposed a Cloudflare
-Tunnel route and stopped awaiting its creation. Neither a working tunnel endpoint
-nor a successful Claude web/iOS query is verified.
+Tunnel route and stopped awaiting its creation. The tunnel endpoint is now
+verified; the remaining step is configuring and verifying Claude itself.
 
 The source, pinned dependency lockfile, service units, and checks are now in
 [`deploy/ms365`](../deploy/ms365/README.md). Previously they lived only in the
@@ -27,9 +36,9 @@ rejected Claude's OAuth callback; the owner's personal account also could not
 access the Entra portal's Microsoft Services tenant. Those OAuth setup
 instructions are superseded by the header-key configuration below.
 
-## Restore public access first
+## Verified public route
 
-In the existing Cloudflare Tunnel, add a published application route:
+The owner added this published application route to the existing Cloudflare Tunnel:
 
 | Setting | Value |
 | --- | --- |
@@ -45,14 +54,14 @@ login to this endpoint; the private key protects every mailbox request. Existing
 dashboard Access policies are separate. See [Cloudflare published application
 routes](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/).
 
-After creating the route, verify it:
+To repeat the public check once the local DNS cache refreshes:
 
 ```bash
 node /home/gold/server-platform/connectors/ms365/check-gateway.mjs https://ms365.xgold.tech/mcp
 ```
 
 Success must include rejected missing/wrong keys, an MCP handshake, 18 read-only
-tools, and a mailbox read. Until then this hostname is a proposed replacement.
+tools, and a mailbox read. All passed on October 27 through the tunnel.
 
 ## Configure Claude
 
@@ -61,7 +70,7 @@ In Claude's custom connector settings, use:
 | Setting | Value |
 | --- | --- |
 | Name | Personal Outlook |
-| URL | `https://ms365.xgold.tech/mcp` **after the public check passes** |
+| URL | `https://ms365.xgold.tech/mcp` |
 | Authentication | **No sign in** |
 | Request header name | `X-Connector-Key` |
 | Request header value | Contents of the private key file on Gold |
@@ -93,7 +102,7 @@ Save the connector, enable it in a new chat in the Claude iOS app, and ask:
 `/home/gold/server-platform/connectors/ms365` installation, with a lockfile.
 
 ```text
-Claude cloud → HTTPS nginx /ms365/mcp
+Claude cloud → HTTPS ms365.xgold.tech/mcp → Cloudflare Tunnel
              → 127.0.0.1:3001 private-key gateway
              → 127.0.0.1:3002 Microsoft MCP server
              → Microsoft Graph using the owner's cached sign-in
@@ -107,7 +116,7 @@ Claude cloud → HTTPS nginx /ms365/mcp
   comparison, forwards only `/mcp`, and strips credentials before forwarding.
   OAuth endpoints return 404. It limits request bodies to 1 MiB and upstream
   requests to 30 seconds. Neither service listens on a public interface.
-- nginx provides the existing HTTPS endpoint and forwards to the gateway. The
+- Cloudflare Tunnel provides the verified HTTPS endpoint and forwards to the gateway. The
   gateway checks the private key before allowing access to the shared cached
   Microsoft identity. Key holders have read-only access to that mailbox.
 - The key file has mode 0600. Microsoft authentication uses the `consumers`
@@ -185,9 +194,9 @@ Microsoft's cache is under `~/.config/ms-365-mcp-server`; logs are under
 | OAuth with default Microsoft app | Microsoft rejected the redirect URL | Softeria's default app did not accept Claude's callback |
 | Custom Entra app | Account was rejected by the Microsoft Services tenant | Owner could not create the proposed app in that portal |
 | Private-key gateway | Gateway logged `key_missing`; Claude could not start sign-in | Required header was absent; local success did not establish Claude success |
-| Tunnel follow-up | Conversation stopped awaiting `ms365.xgold.tech` route | No DNS record exists on October 27; route remains unverified |
+| Tunnel follow-up | Conversation stopped awaiting `ms365.xgold.tech` route | Owner created the route on October 27; public MCP and mailbox checks now pass |
 
-Current mailbox authentication works. Finish public routing and Claude's header
+Current mailbox authentication and the tunnel route work. Finish Claude's header
 setup, then verify an actual query before closing issue #6.
 
 ## Historical network repair

@@ -3,7 +3,7 @@
 Recovered from the October 19 installation. This directory versions the existing
 private-key gateway; it does not deploy changes to the running installation.
 See [the investigation and connection report](../../docs/MICROSOFT_365_CONNECTOR.md)
-for the remaining public-route and Claude setup steps.
+for the verified public route and remaining Claude setup steps.
 
 The installed path on Gold is `/home/gold/server-platform/connectors/ms365`.
 The two user services run the Microsoft server on loopback port 3002 and the
@@ -30,7 +30,7 @@ node /home/gold/server-platform/connectors/ms365/check-gateway.mjs
 ```
 
 Use only a trusted endpoint when supplying a URL argument: the checker sends the
-mailbox-access key to that URL. Once the Cloudflare route exists:
+mailbox-access key to that URL. The Cloudflare route has been verified; repeat the check with:
 
 ```bash
 node /home/gold/server-platform/connectors/ms365/check-gateway.mjs https://ms365.xgold.tech/mcp
