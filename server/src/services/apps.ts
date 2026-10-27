@@ -43,9 +43,9 @@ async function health(url: string, timeoutMs: number, healthPath = "/server/heal
       const loc = res.headers.get("location") ?? "";
       return { ok: true, status: "login-wall", httpStatus: res.status, latencyMs, note: /cloudflareaccess/i.test(loc) ? "behind Cloudflare Access (login required)" : `redirects to ${loc}` };
     }
-    const body = (await res.json().catch(() => ({}))) as { status?: string };
+    const body = (await res.json().catch(() => ({}))) as { status?: string; ok?: boolean };
     // Directus answers {"status":"ok"}; Twenty's /healthz is a plain 200
-    return { ok: res.ok && (body.status ?? "ok") === "ok", status: body.status ?? (res.ok ? "ok" : "error"), httpStatus: res.status, latencyMs };
+    return { ok: res.ok && body.ok !== false && (body.status ?? "ok") === "ok", status: body.status ?? (res.ok ? "ok" : "error"), httpStatus: res.status, latencyMs };
   } catch (e) {
     return { ok: false, status: null, httpStatus: null, latencyMs: null, note: (e as Error).message };
   }
@@ -68,7 +68,9 @@ async function dbStats(db: string, kind: AppKind = "directus"): Promise<AppDbSta
     const [size, tables, coll] = await Promise.all([
       p.query<{ size: string }>("select pg_database_size(current_database())::bigint as size"),
       p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema not in ('pg_catalog', 'information_schema') and table_type = 'BASE TABLE'"),
-      kind === "twenty"
+      kind === "umami"
+        ? p.query<{ n: number }>('select count(*)::int as n from public.website')
+        : kind === "twenty"
         ? p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema like 'workspace\\_%' and table_type = 'BASE TABLE'")
         : p.query<{ n: number }>("select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name not like 'directus\\_%'"),
     ]);
@@ -76,7 +78,9 @@ async function dbStats(db: string, kind: AppKind = "directus"): Promise<AppDbSta
     let lastLogin: string | null = null;
     try {
       const u =
-        kind === "twenty"
+        kind === "umami"
+          ? await p.query<{ n: number; last: Date | null }>('select count(*)::int as n, null::timestamptz as last from public."user"')
+          : kind === "twenty"
           ? await p.query<{ n: number; last: Date | null }>('select count(*)::int as n, max("updatedAt") as last from core."user"')
           : await p.query<{ n: number; last: Date | null }>("select count(*)::int as n, max(last_access) as last from directus_users");
       users = u.rows[0]?.n ?? 0;
@@ -137,7 +141,7 @@ export async function portBinds(port: number): Promise<string[] | null> {
 const loopbackOnly = (binds: string[] | null): boolean | null => (binds === null ? null : binds.length > 0 && binds.every((b) => b === "127.0.0.1" || b === "::1" || b.startsWith("127.")));
 
 async function tunnelStatus(): Promise<TunnelStatus> {
-  const hostnames = cfg.apps.map((a) => a.publicUrl).filter((u): u is string => !!u).map((u) => new URL(u).host);
+  const hostnames = [...new Set(cfg.apps.map((a) => a.publicUrl).filter((u): u is string => !!u).map((u) => new URL(u).host))];
   const c = await container(cfg.cloudflared.container);
   try {
     const res = await fetch(`${cfg.cloudflared.metricsUrl}/ready`, { signal: AbortSignal.timeout(3000) });
@@ -149,7 +153,7 @@ async function tunnelStatus(): Promise<TunnelStatus> {
 }
 
 async function appStatus(a: (typeof cfg.apps)[number]): Promise<AppStatus> {
-  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000, a.healthPath, a.healthToken), a.publicUrl ? health(a.publicUrl, 8000, a.healthPath, a.healthToken) : Promise.resolve(null), dbStats(a.db, a.kind), latestBackup(a.db)]);
+  const [c, local, pub, database, backup] = await Promise.all([container(a.container), health(a.url, 4000, a.healthPath, a.healthToken), a.publicUrl ? health(a.kind === "umami" ? new URL(a.publicUrl).origin : a.publicUrl, 8000, a.healthPath, a.healthToken) : Promise.resolve(null), dbStats(a.db, a.kind), latestBackup(a.db)]);
   let state: ServiceState = "ok";
   if (!local.ok || !database.exists) state = c?.state === "running" || database.exists ? "degraded" : c ? "down" : "unavailable";
   if (local.ok && pub && pub.ok === false) state = "degraded";
