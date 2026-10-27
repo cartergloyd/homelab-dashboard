@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { once } from 'node:events';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, statSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createOAuthGateway } from './oauth-gateway.mjs';
@@ -48,7 +48,7 @@ async function fixture(t) {
   const begin = async (client, proof = verifier()) => {
     const q = new URLSearchParams({ client_id: client.client_id, redirect_uri: callback,
       response_type: 'code', code_challenge: challenge(proof), code_challenge_method: 'S256',
-      scope: 'mail.read', state: 'client-state', resource });
+      scope: 'microsoft.manage', state: 'client-state', resource });
     const response = await fetch(base + '/authorize?' + q, { redirect: 'manual' });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
@@ -113,6 +113,11 @@ test('owner approval, PKCE, client, callback, resource and one-use code are enfo
   assert.equal((await restarted.verifyAccessToken(tokens.access_token)).clientId, client.client_id);
   const rotated = new OutlookOAuthProvider({ key: 'new-owner-key-'.repeat(5), stateFile: f.stateFile });
   await assert.rejects(rotated.verifyAccessToken(tokens.access_token));
+  const previousReadOnlyState = JSON.parse(saved);
+  previousReadOnlyState.keyHash = createHash('sha256').update(key).digest('hex');
+  writeFileSync(f.stateFile, JSON.stringify(previousReadOnlyState));
+  const upgraded = new OutlookOAuthProvider({ key, stateFile: f.stateFile });
+  await assert.rejects(upgraded.verifyAccessToken(tokens.access_token));
 });
 
 test('refresh rotates credentials, prevents client/resource/scope misuse, and revokes grants', async t => {

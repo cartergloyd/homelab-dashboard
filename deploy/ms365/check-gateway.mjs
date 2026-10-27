@@ -18,10 +18,11 @@ try {
   const { tools } = await client.listTools();
   const names = tools.map(t => t.name);
   assert(names.includes('list-mail-messages'));
-  for (const name of ['login', 'logout', 'verify-login', 'select-account', 'remove-account', 'send-mail', 'delete-mail-message', 'graph-batch', 'download-bytes-to-file']) {
+  for (const name of ['login', 'logout', 'verify-login', 'select-account', 'remove-account', 'download-bytes-to-file', 'upload-attachment-from-file']) {
     assert(!names.includes(name), `Unexpected remote tool: ${name}`);
   }
-  console.log(JSON.stringify({ handshake: 'passed', readOnlyTools: names.length }));
+  for (const name of ['send-mail', 'delete-mail-message', 'create-mail-rule', 'update-mail-rule', 'delete-mail-rule', 'create-calendar-event', 'update-calendar-event', 'delete-calendar-event', 'graph-batch']) assert(names.includes(name), `Missing management tool: ${name}`);
+  console.log(JSON.stringify({ handshake: 'passed', managementTools: names.length }));
   const result = await client.callTool({ name: 'list-mail-messages', arguments: { top: 1, select: ['id'] } });
   assert(!result.isError, 'Authenticated mailbox request failed');
   const data = JSON.parse(result.content.find(c => c.type === 'text').text);

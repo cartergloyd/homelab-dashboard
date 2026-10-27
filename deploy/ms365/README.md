@@ -86,7 +86,9 @@ Microsoft caches outside it.
 
 Use **Sign in now** and **Register automatically** with the same public MCP URL.
 The gateway presents its own approval form, where the owner enters the existing
-connector key. This does not require a Microsoft app registration. See the report
+connector key and approves Microsoft account management. The upstream runs the
+all preset in personal mode with write operations enabled. Changes from the
+earlier read-only policy invalidate old gateway sessions and registrations. This does not require a Microsoft app registration. See the report
 for the complete owner flow and gateway-token revocation instructions.
 
 `oauth-state.json` contains registered client credentials and hashed gateway
@@ -98,3 +100,10 @@ After deployment, run `node check-oauth.mjs` from the installation directory to
 exercise the fixed public URL and revoke the test grant afterward. This makes an
 authenticated mailbox read without printing mailbox content. Never share the
 private key, codes, tokens, or state file.
+
+The current configuration exposes 190 management tools. `check-gateway.mjs` and
+`check-oauth.mjs` require rule/calendar write tools and graph-batch to be present,
+then perform a mailbox read. They do not create account data. The live rule and
+calendar CRUD verification described in the report was run separately, with all
+temporary items removed. All 13 tool-derived Graph scopes were consented by the
+owner. API/account support still determines which individual actions succeed.

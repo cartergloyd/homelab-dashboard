@@ -28,12 +28,12 @@ export class OutlookOAuthProvider {
     this.callbacks = callbacks;
     this.pending = new Map();
     this.codes = new Map();
-    this.state = { keyHash: hash(key), clients: {}, access: {}, refresh: {}, usedRefresh: {} };
+    this.state = { keyHash: hash(key + ':microsoft.manage:v1'), clients: {}, access: {}, refresh: {}, usedRefresh: {} };
     if (this.stateFile && existsSync(this.stateFile)) {
       if (statSync(this.stateFile).mode & 0o077) throw new Error('OAuth state must have owner-only permissions');
       const saved = JSON.parse(readFileSync(this.stateFile, 'utf8'));
       // Rotating the owner key invalidates every registration and token.
-      if (saved.keyHash === hash(key)) this.state = { ...saved, usedRefresh: saved.usedRefresh ?? {} };
+      if (saved.keyHash === hash(key + ':microsoft.manage:v1')) this.state = { ...saved, usedRefresh: saved.usedRefresh ?? {} };
     }
     this.clientsStore = {
       getClient: id => Object.hasOwn(this.state.clients, id) ? this.state.clients[id] : undefined,
@@ -70,7 +70,7 @@ export class OutlookOAuthProvider {
   }
 
   validateScopes(scopes = []) {
-    if (scopes.some(scope => scope !== 'mail.read')) throw new InvalidScopeError('Only mail.read is supported');
+    if (scopes.some(scope => scope !== 'microsoft.manage')) throw new InvalidScopeError('Only microsoft.manage is supported');
   }
 
   async authorize(client, params, res) {
@@ -83,15 +83,17 @@ export class OutlookOAuthProvider {
     const transaction = random();
     this.pending.set(transaction, { clientId: client.client_id, ...params, expiresAt: now() + 600 });
     res.type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect Personal Outlook</title>
-<body><main><h1>Connect Personal Outlook to Claude</h1>
-<p>Allow Claude to read and search the personal Outlook mailbox connected to Gold.
-This connector cannot send, change, or delete email.</p>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect Microsoft 365</title>
+<body><main><h1>Connect Microsoft 365 to Claude</h1>
+<p>Allow Claude to manage the Microsoft account connected to Gold: read, send,
+create, edit, move, share, and delete supported email, mailbox rules/settings,
+calendar events, contacts, files, notes, tasks, and profile data. Available
+actions depend on Microsoft Graph and the services your personal account supports.</p>
 <p>Enter your connector key from Gold to approve this connection. This is not your Microsoft password.</p>
 <form method="post" action="/approve">
 <input type="hidden" name="transaction" value="${transaction}">
 <label>Connector key <input type="password" name="key" required autocomplete="off" maxlength="256"></label>
-<button type="submit">Allow read-only access</button></form>
+<button type="submit">Allow Microsoft account management</button></form>
 <p>Close this page to cancel.</p></main></body></html>`);
   }
 
@@ -130,11 +132,11 @@ This connector cannot send, change, or delete email.</p>
     this.save();
     if (Object.keys(this.state.refresh).length >= 1000) throw new InvalidGrantError('Token limit reached');
     const access = random(), refresh = random();
-    const common = { clientId, grantId, scopes: ['mail.read'], resource: this.resource };
+    const common = { clientId, grantId, scopes: ['microsoft.manage'], resource: this.resource };
     this.state.access[hash(access)] = { ...common, expiresAt: now() + 3600 };
     this.state.refresh[hash(refresh)] = { ...common, expiresAt: now() + 30 * 86400 };
     this.save();
-    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, scope: 'mail.read' };
+    return { access_token: access, refresh_token: refresh, token_type: 'Bearer', expires_in: 3600, scope: 'microsoft.manage' };
   }
 
   async exchangeRefreshToken(client, token, scopes, resource) {

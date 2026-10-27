@@ -5,9 +5,10 @@ Installation recovered from October 19, 2026; updated October 27, 2026
 
 ## Current status
 
-The public connector at **https://ms365.xgold.tech/mcp** now supports OAuth
-sign-in to the gateway. The owner approves access using the existing connector
-key on the gateway's own page. Microsoft remains signed in on Gold; there is no
+The public connector at **https://ms365.xgold.tech/mcp** now exposes all **190
+personal-mode management tools**, with OAuth sign-in to the gateway. The owner approves access using the existing connector
+key on the gateway's own page. The owner explicitly requested maximum supported read/write access and completed
+fresh Microsoft consent on October 27. Microsoft remains signed in on Gold; there is no
 Microsoft OAuth callback or Entra app-registration step in this flow.
 
 The owner's screenshots revealed that **Request headers is unavailable in their
@@ -20,10 +21,16 @@ Passed on October 27:
 
 - Seven tests covering the existing proxy boundary and new OAuth flow.
 - Public discovery, registration, owner approval, S256 PKCE code exchange,
-  bearer-authenticated MCP handshake, 18 read-only tools, and a fresh mailbox
+  bearer-authenticated MCP handshake, 190 management tools, and a fresh mailbox
   read (one message ID selected without printing the ID or mailbox content).
 - Smoke-check grant revocation; its token is rejected afterward.
 - Existing private-header authentication and local mailbox checks still pass.
+- Live Graph writes: created, edited, read back, and deleted a temporary disabled
+  Outlook rule and a calendar appointment with no attendees. Both creations
+  returned 201; both deletions returned 204. The rule was never enabled.
+- All 13 requested Graph permissions were granted, including Mail.ReadWrite,
+  Mail.Send, MailboxSettings.ReadWrite, Calendars.ReadWrite, Contacts.ReadWrite,
+  Files.ReadWrite, Notes.ReadWrite, Tasks.ReadWrite, and User.ReadWrite.
 
 **An actual Claude web/iOS query remains pending owner verification.** Protocol
 checks do not prove that Claude has completed its own configuration.
@@ -45,19 +52,25 @@ supports dynamic client registration; it does not advertise Claude published
 identity support.
 
 During sign-in, the approval page must be on **https://ms365.xgold.tech**. It
-explains that Claude will have read-only access to the mailbox signed in on Gold.
+explains that Claude can read, send, create, edit, move, share, and delete
+supported data in the Microsoft account signed in on Gold.
 Get the existing connector key locally:
 
 ```bash
 cat /home/gold/server-platform/connectors/ms365/connector-key
 ```
 
-Paste the key into that approval page and click **Allow read-only access**.
+Paste the key into that approval page and click **Allow Microsoft account management**.
 The key is not a Microsoft password. It is submitted in the approval form body,
 never in the URL, report, repository, or application logs. The page returns to
 Claude, which exchanges a short-lived code plus PKCE proof for gateway tokens.
 
-Enable Personal Outlook in a fresh Claude web/iOS chat and ask:
+Old read-only gateway tokens and registrations were invalidated when access
+expanded. Remove and re-add the connector if Claude retains its old registration.
+The URL, Sign in now, Register automatically, and Streamable HTTP settings stay
+the same. You may name it Microsoft 365 to reflect the expanded scope.
+
+Enable the connector in a fresh Claude web/iOS chat and ask:
 
 > Use Personal Outlook to list my three newest emails with sender, subject and date.
 
@@ -77,8 +90,8 @@ Claude → HTTPS ms365.xgold.tech → Cloudflare Tunnel (host network)
        → Microsoft Graph using the owner's cached sign-in
 ```
 
-- `ms365-mcp.service`: Softeria 0.170.2 with mail preset, read-only mode, explicit
-  `User.Read Mail.Read MailboxSettings.Read` scopes, consumers tenant, headless
+- `ms365-mcp.service`: Softeria 0.170.2 with the all preset in personal mode,
+  read/write access (no read-only flag or narrow scope allowlist), consumers tenant, headless
   cache, and trust-proxy authentication. Microsoft auth and local file tools are
   absent from the remote tool list. This upstream must stay private.
 - `ms365-gateway.service`: MCP SDK OAuth router, Claude callback allowlist,
@@ -91,8 +104,10 @@ Claude → HTTPS ms365.xgold.tech → Cloudflare Tunnel (host network)
   0600. Authorization codes and pending approvals stay in memory and expire on
   restart. Rotating the owner key invalidates existing gateway tokens on restart.
 - This is a single-owner connector. Anyone approved with the owner key receives
-  read access to the cached mailbox. It is not a multi-user Microsoft sign-in.
-- The original X-Connector-Key route remains available for local checks and
+  management access to the signed-in account. It is not a multi-user Microsoft sign-in.
+- The gateway OAuth scope is `microsoft.manage`. Its policy fingerprint prevents
+  old read-only sessions from gaining write access. The original X-Connector-Key
+  route remains available for local checks and
   clients that can supply headers; Claude does not need that feature now.
 
 The existing tunnel route is `ms365.xgold.tech`, blank path, HTTP service
@@ -133,9 +148,12 @@ key file (retain mode 0600) and restart the gateway; the changed key fingerprint
 invalidates saved gateway tokens. Disconnecting Claude alone does not revoke
 Microsoft's cached session. Use `./ms365 --logout` to end that session.
 
-Only the gateway service was changed and restarted for the OAuth deployment.
-Its previous unit and dependency manifests were backed up under
-`/home/gold/server-platform/backup-private/ms365-oauth-20261027-171723`.
+The initial OAuth deployment changed the gateway service, backed up under
+`/home/gold/server-platform/backup-private/ms365-oauth-20261027-171723`. The
+management-access upgrade changed the upstream unit, launcher, consent page,
+gateway scope, policy fingerprint, and checks. Both services were restarted after
+Microsoft consent. Its backup is
+`/home/gold/server-platform/backup-private/ms365-management-20261027-173103`.
 
 ## Why previous attempts failed
 
@@ -153,21 +171,37 @@ Mailbox authentication, the tunnel route, and the new OAuth flow work. Verify an
 actual Claude web/iOS query before closing issue #6.
 
 
-## Efficient parsing and related connectors
+## Capabilities and persistence
 
-Filter/search first, select needed fields, use modest page sizes, and retrieve
-bodies or attachments only for relevant messages. Follow pagination links. No
-performance or cost benchmark was run. See [Microsoft's messages API](https://learn.microsoft.com/graph/api/user-list-messages).
+Enabled tools include mail sending/replying/forwarding/drafts, folders and
+message changes, Outlook rules and mailbox settings, appointment creation and
+editing, meeting responses, contacts, OneDrive file changes and sharing, Excel,
+OneNote, To Do, profile updates, and `graph-batch` for supported Graph operations
+beyond named tools. All tool-derived personal-mode scopes were granted. No
+organization-mode scopes were requested. The upstream's server-filesystem and
+Microsoft account-management tools remain outside the remote interface; they
+are separate from managing Microsoft data.
 
-| Connection | Useful task | Additional setup |
-| --- | --- | --- |
-| Outlook Calendar | Relate messages to appointments | Calendar preset and consent |
-| OneDrive / Excel | Find files and analyze sheets | Files/excel presets and consent |
-| Contacts | Resolve senders and people | Contacts preset and consent |
-| Microsoft To Do | Track follow-up work | Tasks preset; writes require configuration |
-| GitHub | Bring issues and PRs into technical work | Separate Claude connector |
-| Google Drive | Find related documents | Separate Claude connector |
+Microsoft API and account limitations still apply: exposing a tool is not proof
+that every service or endpoint supports a personal subscription. In particular,
+organization services such as Teams and SharePoint require organization accounts,
+and some individual endpoints have narrower support. Outlook inbox-rule writes
+and appointment writes were verified against this account. See [Microsoft's rule
+API](https://learn.microsoft.com/en-us/graph/api/mailfolder-post-messagerules?view=graph-rest-1.0)
+and [calendar API](https://learn.microsoft.com/en-us/graph/api/user-post-events?view=graph-rest-1.0).
 
-These are suggestions, not enabled integrations. Personal-account capabilities
-vary; organization services such as Teams and SharePoint need separate review.
-Keep issue #6 open until an actual Claude web/iOS query succeeds.
+For persistent execution, the owner can use these Claude project instructions:
+
+> Use my Microsoft 365 connector to carry out requested work through completion.
+> Inspect tools and schemas, resolve real item IDs, and prefer direct API actions.
+> If a named tool cannot accomplish the task, use graph-batch with a supported
+> Graph endpoint and the permissions already granted. Recover from transient
+> failures, follow pagination, and try other supported approaches when needed.
+> Verify the resulting state and report what changed. Ask for missing details
+> when they affect the intended result; do not invent recipients or appointments,
+> or claim that an unsupported action succeeded.
+
+Connector permissions provide capability; Claude's own tool-approval settings and
+instructions still govern its behavior. Filter/search first, select needed
+fields, and fetch bodies/attachments only when needed. No performance or cost
+benchmark was run. Keep issue #6 open until an actual Claude web/iOS query succeeds.

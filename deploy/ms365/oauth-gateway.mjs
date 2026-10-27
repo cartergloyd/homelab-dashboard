@@ -23,7 +23,7 @@ export function createOAuthGateway({ key, stateFile, issuer = 'https://ms365.xgo
   });
   // Cloudflared reaches this loopback listener. Keep a global limit for owner
   // approvals rather than trusting arbitrary forwarded client IP headers.
-  app.post('/approve', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }),
+  app.post('/approve', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, keyGenerator: () => 'owner' }),
     express.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
       if (req.headers.origin !== provider.issuer) return res.status(403).send('Invalid approval origin');
       const callback = typeof req.body.transaction === 'string' && provider.approve(req.body.transaction, req.body.key);
@@ -33,11 +33,14 @@ export function createOAuthGateway({ key, stateFile, issuer = 'https://ms365.xgo
     });
   app.use(mcpAuthRouter({
     provider, issuerUrl: new URL(provider.issuer), resourceServerUrl: new URL(provider.resource),
-    scopesSupported: ['mail.read'], resourceName: 'Personal Outlook (read-only)',
-    clientRegistrationOptions: { clientSecretExpirySeconds: 0 },
+    scopesSupported: ['microsoft.manage'], resourceName: 'Microsoft 365 (read and write)',
+    clientRegistrationOptions: { clientSecretExpirySeconds: 0, rateLimit: { keyGenerator: () => 'owner' } },
+    authorizationOptions: { rateLimit: { keyGenerator: () => 'owner' } },
+    tokenOptions: { rateLimit: { keyGenerator: () => 'owner' } },
+    revocationOptions: { rateLimit: { keyGenerator: () => 'owner' } },
   }));
   const bearer = requireBearerAuth({
-    verifier: provider, requiredScopes: ['mail.read'], expectedResource: new URL(provider.resource),
+    verifier: provider, requiredScopes: ['microsoft.manage'], expectedResource: new URL(provider.resource),
     resourceMetadataUrl: `${provider.issuer}/.well-known/oauth-protected-resource/mcp`,
   });
   const gateway = createGateway({ key, upstreamPort });

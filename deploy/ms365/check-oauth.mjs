@@ -29,7 +29,7 @@ const { client_id } = await registered.json();
 const proof = randomBytes(32).toString('base64url');
 const params = new URLSearchParams({ client_id, redirect_uri: callback, response_type: 'code',
   code_challenge: createHash('sha256').update(proof).digest('base64url'), code_challenge_method: 'S256',
-  scope: 'mail.read', resource, state: 'gold-smoke-check' });
+  scope: 'microsoft.manage', resource, state: 'gold-smoke-check' });
 const page = await request(metadata.authorization_endpoint + '?' + params);
 assert.equal(page.status, 200);
 const transaction = (await page.text()).match(/name="transaction" value="([\w-]+)"/)[1];
@@ -48,13 +48,14 @@ try {
     requestInit: { headers: { authorization: 'Bearer ' + tokens.access_token } },
   }));
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 18);
+  const names = tools.map(tool => tool.name);
+  for (const name of ['send-mail', 'create-mail-rule', 'update-mail-rule', 'delete-mail-rule', 'create-calendar-event', 'update-calendar-event', 'delete-calendar-event', 'upload-file-content', 'create-todo-task', 'graph-batch']) assert(names.includes(name), `Missing tool: ${name}`);
   const result = await client.callTool({ name: 'list-mail-messages', arguments: { top: 1, select: ['id'] } });
   assert(!result.isError);
   const data = JSON.parse(result.content.find(c => c.type === 'text').text);
   assert(Array.isArray(data.value));
   console.log(JSON.stringify({ oauthDiscovery: 'passed', ownerApproval: 'passed', pkceExchange: 'passed',
-    mcpHandshake: 'passed', readOnlyTools: tools.length, mailboxRead: 'passed', messagesReturned: data.value.length }));
+    mcpHandshake: 'passed', managementTools: tools.length, mailboxRead: 'passed', messagesReturned: data.value.length }));
 } finally {
   await client.close();
   const revoke = await post('/revoke', { client_id, token: tokens.refresh_token });
