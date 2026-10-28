@@ -530,7 +530,7 @@ export interface AppDbStats {
   error?: string;
 }
 
-export type AppKind = "directus" | "twenty";
+export type AppKind = "directus" | "twenty" | "umami";
 
 export interface AppStatus {
   name: string;
