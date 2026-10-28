@@ -473,7 +473,7 @@ export function NetworkDesign() {
                 <td className="muted">{h.target ?? h.role}</td>
                 <td>
                   <Status
-                    label={h.state === "ok" ? "Answering" : h.state}
+                    label={h.probe.ok === null && h.resolved.length > 0 ? "Unverified" : h.state === "ok" ? "Answering" : h.state}
                     state={h.state}
                   />
                 </td>

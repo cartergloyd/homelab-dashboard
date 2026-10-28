@@ -657,7 +657,7 @@ export type HostRole = "site" | "api" | "app" | "dashboard" | "game" | "stream" 
 
 export interface HostnameProbe {
   kind: "https" | "minecraft" | "none";
-  /** null = not probed (no record) */
+  /** null = not probed, or public reachability could not be verified */
   ok: boolean | null;
   httpStatus: number | null;
   latencyMs: number | null;
