@@ -192,9 +192,9 @@ export async function installedPaper(dir = cfg.minecraft.dir): Promise<UpdateVer
   return null;
 }
 
-async function stagingDirs(): Promise<{ path: string; exists: boolean; files: number }[]> {
+export async function stagingDirs(): Promise<{ path: string; exists: boolean; files: number }[]> {
   const mc = cfg.minecraft.dir;
-  const candidates = cfg.updates.stagingDir ? [cfg.updates.stagingDir] : [path.join(mc, "plugins", "update"), path.join(mc, "updates"), path.join(mc, "staged"), path.join(mc, "staging"), path.join(mc, "update")];
+  const candidates = cfg.updates.stagingDir ? [cfg.updates.stagingDir, path.join(cfg.updates.stagingDir, "paper"), path.join(cfg.updates.stagingDir, "plugins")] : [path.join(mc, "plugins", "update"), path.join(mc, "updates"), path.join(mc, "staged"), path.join(mc, "staging"), path.join(mc, "update")];
   const out: { path: string; exists: boolean; files: number }[] = [];
   for (const c of candidates) {
     const jars = await listJars(c);

@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { compareVersions, latestPaper, latestPlugin, installedPaper, parsePluginYml, readPaperMeta, readPluginMeta } from "./dist/services/updates.js";
+import { compareVersions, latestPaper, latestPlugin, installedPaper, parsePluginYml, readPaperMeta, readPluginMeta, stagingDirs } from "./dist/services/updates.js";
 
 let n = 0;
 const eq = (a, b, what) => (assert.deepEqual(a, b, what), n++);
@@ -163,6 +163,20 @@ await fs.writeFile(path.join(vanilla, "server.jar"), zip([["META-INF/MANIFEST.MF
 eq(await installedPaper(vanilla), null, "generic vanilla jar is not mislabeled as Paper");
 await fs.unlink(path.join(tracked, "paper.jar"));
 eq(await installedPaper(tracked), null, "tracking/history files alone do not prove Paper is still installed");
+
+// The maintenance scripts stage into separate paper/ and plugins/ subfolders.
+const { cfg: stagingCfg } = await import("./dist/config.js");
+const previousStaging = stagingCfg.updates.stagingDir;
+const stageRoot = path.join(tmp, "updates");
+await fs.mkdir(path.join(stageRoot, "paper"), { recursive: true });
+await fs.mkdir(path.join(stageRoot, "plugins"));
+await fs.writeFile(path.join(stageRoot, "paper", "paper-26.3-227.jar"), zip([]));
+await fs.writeFile(path.join(stageRoot, "plugins", "Geyser-Spigot.jar"), zip([]));
+stagingCfg.updates.stagingDir = stageRoot;
+try {
+  const dirs = await stagingDirs();
+  eq(dirs.map(d => [path.relative(stageRoot, d.path), d.files]), [["", 0], ["paper", 1], ["plugins", 1]], "maintenance staging subfolders are scanned without traversing archives");
+} finally { stagingCfg.updates.stagingDir = previousStaging; }
 
 // Exercise the real provider selection with in-memory responses, never network or live data.
 const realFetch = globalThis.fetch;
