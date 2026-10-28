@@ -256,6 +256,45 @@ try {
   assert.equal(writes.at(-1).path, "/api/terminal/execute");
   assert.equal(writes.at(-1).body.command, "pwd");
   await fixture.close();
+  // Upload files opens a chooser directly; Files opens the library without one.
+  const uploadPage = await browser.newPage();
+  let uploadRequest = null;
+  await uploadPage.route("**/api/database/files/**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.endsWith("/targets")) {
+      await route.fulfill({ json: [
+        { id: "personal", label: "Personal database", enabled: true },
+        { id: "ai", label: "ai", enabled: true },
+      ] });
+    } else if (request.method() === "POST") {
+      uploadRequest = { pathname, type: request.headers()["content-type"], body: request.postData() };
+      await route.fulfill({ status: 201, json: { id: "isolated-upload" } });
+    } else {
+      await route.fulfill({ json: [] });
+    }
+  });
+  await uploadPage.goto(base + "/business/files");
+  const directusPanel = uploadPage.locator(".panel").filter({
+    has: uploadPage.locator(".panel-title", { hasText: /^Directus$/ }),
+  });
+  const chooserReady = uploadPage.waitForEvent("filechooser");
+  await directusPanel.getByRole("button", { name: "Upload files", exact: true }).click();
+  const chooser = await chooserReady;
+  await chooser.setFiles({ name: "isolated-upload.txt", mimeType: "text/plain", buffer: Buffer.from("upload-check") });
+  await uploadPage.getByText("Uploaded 1 files", { exact: true }).waitFor();
+  assert.equal(uploadRequest.pathname, "/api/database/files/ai");
+  assert.match(uploadRequest.type, /^multipart\/form-data;/);
+  assert.match(uploadRequest.body, /isolated-upload.txt/);
+  assert.match(uploadRequest.body, /upload-check/);
+  await uploadPage.getByRole("button", { name: "Close", exact: true }).click();
+  let unexpectedPicker = false;
+  uploadPage.on("filechooser", () => { unexpectedPicker = true; });
+  await directusPanel.getByRole("button", { name: "Files", exact: true }).click();
+  await uploadPage.getByRole("dialog").waitFor();
+  await uploadPage.waitForTimeout(100);
+  assert.equal(unexpectedPicker, false, "Browsing files must not open an upload chooser");
+  await uploadPage.close();
   assert.deepEqual(errors, []);
   console.log(
     "Design browser QA: all 16 layouts match the approved panel order; no old page cards; desktop, 850px and 390px layouts, workspace switching, search, reports, connection/file/job/repository dialogs, business database default, dark theme, exact command payloads and cancellation passed. No production API writes performed.",

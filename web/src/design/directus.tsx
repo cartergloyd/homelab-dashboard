@@ -22,7 +22,7 @@ export function DirectusDesign({
   workspace?: "personal" | "business";
 }) {
   const [connecting, setConnecting] = useState(false),
-    [files, setFiles] = useState(false);
+    [files, setFiles] = useState<"upload" | "browse" | null>(null);
   const qc = useQueryClient(),
     toast = useToast(),
     { confirm, prompt } = useDialog();
@@ -196,7 +196,7 @@ export function DirectusDesign({
         </Button>
       </div>
       <div className="panel-body file-grid">
-        <Button icon="upload" primary onClick={() => setFiles(true)}>
+        <Button icon="upload" primary onClick={() => setFiles("upload")}>
           Upload files
         </Button>
         <Button
@@ -228,7 +228,7 @@ export function DirectusDesign({
         >
           New collection
         </Button>
-        <Button icon="folder" onClick={() => setFiles(true)}>
+        <Button icon="folder" onClick={() => setFiles("browse")}>
           Files
         </Button>
       </div>
@@ -493,8 +493,8 @@ export function DirectusDesign({
         </Drawer>
       )}
       {files && (
-        <Drawer title="Private files & uploads" onClose={() => setFiles(false)}>
-          <FileStore initialTarget={target} />
+        <Drawer title="Private files & uploads" onClose={() => setFiles(null)}>
+          <FileStore initialTarget={target} autoPick={files === "upload"} />
         </Drawer>
       )}
       {editor && (
