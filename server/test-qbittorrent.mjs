@@ -12,6 +12,7 @@ for (const urls of ["", "file:///etc/passwd", "javascript:alert(1)", "magnet:?dn
 let mode = "ok";
 let requireLogin = false;
 let logins = 0;
+let controls = [];
 const adds = [];
 const server = http.createServer(async (req, res) => {
   const chunks = [];
@@ -28,6 +29,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (requireLogin && req.headers.cookie !== "SID=test-session") { res.writeHead(403).end(); return; }
   if (req.url === "/api/v2/app/version") { res.end("v5.2.4"); return; }
+  if (req.url === "/api/v2/torrents/info") { res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify([{hash:"a".repeat(40), name:"Actual title", progress:0.5, tracker:"private-passkey", magnet_uri:"secret"}])); return; }
+  if (["stop", "start", "pause", "resume", "delete"].some(action => req.url === `/api/v2/torrents/${action}`)) {
+    controls.push({path:req.url,body});
+    if (mode === "old-api" && /\/(stop|start)$/.test(req.url)) { res.writeHead(404).end(); return; }
+    res.end(); return;
+  }
   assert.equal(req.url, "/api/v2/torrents/add");
   assert.equal(req.method, "POST");
   adds.push(body);
@@ -70,6 +77,12 @@ try {
     await assert.rejects(auth.add(input), message);
     assert.equal(adds.length, before + 1, "uncertain submissions are never replayed");
   }
+  mode="ok";
+  const queue = await auth.queue(); assert.equal(queue[0].name,"Actual title"); assert.equal(queue[0].progress,0.5);
+  assert.equal("tracker" in queue[0],false);assert.equal("magnet_uri" in queue[0],false);
+  await auth.control("a".repeat(40),"pause");assert.ok(controls.at(-1).path.endsWith("/stop"));
+  mode="old-api";await auth.control("a".repeat(40),"resume");assert.ok(controls.at(-1).path.endsWith("/resume"));
+  await auth.control("a".repeat(40),"remove");assert.equal(controls.at(-1).body.get("deleteFiles"),"false");
   requireLogin = false;
   const disabled = new QbittorrentClient({ url: null });
   assert.equal((await disabled.status()).reachable, false);

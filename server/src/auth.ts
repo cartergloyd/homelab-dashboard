@@ -13,6 +13,8 @@ export interface Identity {
   via: IdentityVia;
   /** true when authenticated with DASHBOARD_KEY (scripts, MCP connector, agents) */
   viaKey?: boolean;
+  /** Stable binding to the signed Access login, without retaining its JWT. */
+  sessionId?: string;
 }
 
 type Resolved = { ok: true; user: Identity } | { ok: false; status: number; message: string };
@@ -78,7 +80,7 @@ function noteLogin(key: string, who: string, country: string | undefined): void 
  * Requests that arrived through Cloudflare's proxy (the tunnel). Tailscale headers are NEVER read
  * here — anyone on the internet could type them — the identity comes only from the Access token
  * Cloudflare attached, which we verify ourselves. The bearer key is accepted over the tunnel only
- * together with a valid Access token (a person's or a service token's): two locks, always.
+ * together with a valid service-token Access JWT: human logins cannot authorize automation.
  */
 async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved> {
   if (!cfg.cfAccess || !accessVerifier) {
@@ -94,6 +96,7 @@ async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved
 
   const bearer = bearerOf(headers);
   if (bearer !== null) {
+    if (!who.service) return { ok: false, status: 403, message: "Remote automation requires a Cloudflare Access service token in addition to the dashboard key." };
     if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
     noteLogin(sessionKeyOf(r.claims), `${who.name} + dashboard key`, r.claims.country);
     return { ok: true, user: keyIdentity(headers) };
@@ -105,7 +108,7 @@ async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved
     return { ok: false, status: 403, message: `${who.login} is not in ALLOWED_LOGINS` };
   }
   noteLogin(sessionKeyOf(r.claims), who.login, r.claims.country);
-  return { ok: true, user: { login: who.login, name: who.name, via: "cloudflare" } };
+  return { ok: true, user: { login: who.login, name: who.name, via: "cloudflare", sessionId: crypto.createHash("sha256").update(sessionKeyOf(r.claims)).digest("hex") } };
 }
 
 /**
@@ -122,6 +125,7 @@ export async function resolveIdentity(headers: IncomingHttpHeaders, remoteAddres
 
   const bearer = bearerOf(headers);
   if (bearer !== null) {
+    if (!isLoopback(remoteAddress)) return { ok: false, status: 403, message: "Dashboard keys require a private loopback proxy or a Cloudflare Access service token." };
     if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
     return { ok: true, user: keyIdentity(headers) };
   }

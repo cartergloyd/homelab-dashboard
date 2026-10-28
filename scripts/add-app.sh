@@ -46,6 +46,8 @@ SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app', :'pw') WHERE NOT EXIST
 SELECT format('ALTER ROLE %I PASSWORD %L', :'app', :'pw') \gexec
 SELECT format('CREATE DATABASE %I OWNER %I', :'app', :'app') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'app') \gexec
 SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', :'app') \gexec
+SELECT format('ALTER ROLE %I SET statement_timeout = %L', :'app', '60s') \gexec
+SELECT format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', :'app', '60s') \gexec
 SQL
 echo "done."
 
@@ -105,7 +107,11 @@ APP_${upper}_ADMIN_PASSWORD=$admin_pw
       ADMIN_EMAIL: \${APP_${upper}_ADMIN_EMAIL}
       ADMIN_PASSWORD: \${APP_${upper}_ADMIN_PASSWORD}
       PUBLIC_URL: https://$name-api.\${PUBLIC_DOMAIN}
-      IP_TRUST_PROXY: "true"
+      IP_TRUST_PROXY: "loopback,linklocal,uniquelocal"
+      ACCESS_TOKEN_TTL: "15m"
+      REFRESH_TOKEN_TTL: "7d"
+      SESSION_COOKIE_TTL: "1d"
+      HSTS_ENABLED: "true"
       RATE_LIMITER_ENABLED: "true"
       RATE_LIMITER_POINTS: "50"
       RATE_LIMITER_DURATION: "1"

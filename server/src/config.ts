@@ -45,6 +45,7 @@ const Env = z.object({
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   SYSTEMD_USER: flag,
+  CODEX_MODEL: z.string().trim().min(1).optional(),
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
   JELLYFIN_PUBLIC_URL: z.string().optional(),
@@ -54,6 +55,15 @@ const Env = z.object({
   QBITTORRENT_URL: z.string().url().optional(),
   QBITTORRENT_USERNAME: z.string().optional(),
   QBITTORRENT_PASSWORD: z.string().optional(),
+  ROUTER_URL: z.preprocess(
+    (value) => typeof value === "string" && !value.trim() ? undefined : value,
+    z.string().trim().url().refine((value) => {
+      try {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+      } catch { return false; }
+    }, "ROUTER_URL must use HTTP or HTTPS without embedded credentials").optional(),
+  ),
   // "Movies=/srv/media/movies,Shows=/srv/media/shows"
   MEDIA_ROOTS: csv,
 
@@ -180,7 +190,9 @@ export const cfg = {
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
   systemdUser: env.SYSTEMD_USER,
+  codexModel: env.CODEX_MODEL ?? null,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  routerUrl: env.ROUTER_URL ?? null,
   jellyfin: {
     url: env.JELLYFIN_URL.replace(/\/$/, ""),
     publicUrl: (env.JELLYFIN_PUBLIC_URL ?? env.JELLYFIN_URL).replace(/\/$/, ""),

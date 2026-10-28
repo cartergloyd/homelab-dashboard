@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { compareVersions, parsePluginYml, readPluginMeta } from "./dist/services/updates.js";
+import { compareVersions, installedPaper, parsePluginYml, readPaperMeta, readPluginMeta } from "./dist/services/updates.js";
 
 let n = 0;
 const eq = (a, b, what) => (assert.deepEqual(a, b, what), n++);
@@ -105,6 +105,64 @@ eq(compareVersions("5.4.141", "5.4.141"), 0, "equal");
 eq(compareVersions("1.7.3-b131", "1.7.3"), 1, "extra numeric field counts as newer");
 eq(compareVersions("abc", "1.0"), null, "no digits → unknown");
 eq(compareVersions(null, "1.0"), null, "missing → unknown");
+
+const paperclip = "Manifest-Version: 1.0\r\nMain-Class: io.papermc.paperclip.Main\r\n\r\n";
+const serverZip = zip([
+  ["META-INF/MANIFEST.MF", paperclip, true],
+  ["version.json", JSON.stringify({ id: "26.3" }), true],
+  ["META-INF/libraries.list", "hash\tio.papermc.paper:paper-api:26.3.build.190-stable\tio/papermc/paper/paper-api/26.3.build.190-stable/paper-api-26.3.build.190-stable.jar\n", true],
+]);
+const install = path.join(tmp, "Minecraft Server");
+await fs.mkdir(install);
+await fs.writeFile(path.join(install, "paper-server.jar"), serverZip);
+await fs.symlink("paper-server.jar", path.join(install, "server.jar"));
+// Distractors must not override the actual launcher or the metadata in its jar.
+await fs.writeFile(path.join(install, "paper-99.9-999.jar"), zip([]));
+await fs.writeFile(path.join(install, "paper-version.txt"), "1.21.4\n");
+await fs.writeFile(path.join(install, "paper-build.txt"), "42\n");
+const active = await installedPaper(install);
+eq(active?.version, "26.3", "renamed Paper launcher gets version from its jar");
+eq(active?.build, 190, "Paperclip library metadata supplies the actual build, not stale tracking files");
+eq(active?.file, path.join(install, "server.jar"), "server.jar symlink takes priority over archived versioned jars");
+eq(active?.mcVersion, "26.3", "Minecraft version is available for update comparisons");
+eq(active?.date, (await fs.stat(path.join(install, "paper-server.jar"))).mtime.toISOString(), "installation date comes from the jar");
+for (const name of ["paper.jar", "paper-server.jar", "server.jar"]) {
+  const dir = path.join(tmp, name.replace(".jar", "-install"));
+  await fs.mkdir(dir);
+  await fs.writeFile(path.join(dir, name), serverZip);
+  const found = await installedPaper(dir);
+  eq([found?.version, found?.build], ["26.3", 190], `${name} works without plugins or version_history.json`);
+}
+
+const manifestJar = path.join(tmp, "manifest.jar");
+await fs.writeFile(manifestJar, zip([["META-INF/MANIFEST.MF", "Implementation-Title: Paper\r\nSpecification-Version: 1.21.4\r\nImplementation-Version: 1.21.4-\r\n 232-abcdef\r\n\r\n", true]]));
+eq(await readPaperMeta(manifestJar), { version: "1.21.4", build: 232 }, "unfolded manifest implementation supplies build when specification has none");
+
+const tracked = path.join(tmp, "tracked-install");
+await fs.mkdir(tracked);
+await fs.writeFile(path.join(tracked, "paper.jar"), zip([["META-INF/MANIFEST.MF", paperclip, false], ["version.json", JSON.stringify({ id: "1.21.4" }), false]]));
+await fs.writeFile(path.join(tracked, "paper-version.txt"), "1.21.4\n");
+await fs.writeFile(path.join(tracked, "paper-build.txt"), "232\n");
+eq((await installedPaper(tracked))?.build, 232, "matching tracking files supply build when the jar has only Minecraft version");
+await fs.writeFile(path.join(tracked, "paper-version.txt"), "1.20.6\n");
+eq((await installedPaper(tracked))?.build, null, "tracking from another Minecraft version is ignored");
+await fs.writeFile(path.join(tracked, "version_history.json"), JSON.stringify({ currentVersion: "git-Paper-233 (MC: 1.21.4)" }));
+eq((await installedPaper(tracked))?.build, 233, "legacy version_history remains a fallback");
+
+const numbered = path.join(tmp, "numbered-install");
+await fs.mkdir(numbered);
+await fs.writeFile(path.join(numbered, "paper-1.21.4-232.jar"), zip([]));
+eq([(await installedPaper(numbered))?.version, (await installedPaper(numbered))?.build], ["1.21.4", 232], "versioned filenames still work");
+const unknown = path.join(tmp, "unknown-install");
+await fs.mkdir(unknown);
+await fs.writeFile(path.join(unknown, "paper.jar"), zip([]));
+eq((await installedPaper(unknown))?.file, path.join(unknown, "paper.jar"), "existing Paper jar with unknown version is not reported missing");
+const vanilla = path.join(tmp, "vanilla-install");
+await fs.mkdir(vanilla);
+await fs.writeFile(path.join(vanilla, "server.jar"), zip([["META-INF/MANIFEST.MF", "Main-Class: net.minecraft.bundler.Main\n", false], ["version.json", '{"id":"26.3"}', false]]));
+eq(await installedPaper(vanilla), null, "generic vanilla jar is not mislabeled as Paper");
+await fs.unlink(path.join(tracked, "paper.jar"));
+eq(await installedPaper(tracked), null, "tracking/history files alone do not prove Paper is still installed");
 
 await fs.rm(tmp, { recursive: true, force: true });
 console.log(`updates: ${n} checks passed`);

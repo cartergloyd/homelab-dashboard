@@ -2,10 +2,25 @@
 // fallback parser, and the demo fixture. Run after `npm run build`:
 //   node server/test-diskscan.mjs
 import assert from "node:assert/strict";
-import { DuLineParser, NcduStreamParser, extOf } from "./dist/services/diskscan.js";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { canScanPath, DuLineParser, NcduStreamParser, extOf } from "./dist/services/diskscan.js";
 
 let n = 0;
 const eq = (a, b, what) => (assert.deepEqual(a, b, what), n++);
+
+const removable = [{ filesystem: "/dev/sda1", mount: "/run/media/owner/Carter HDD" }];
+for (const root of ["/", "/mnt/media", "/media/owner/USB", "/run/media/owner/Carter HDD", "/run/media/owner/Carter HDD/backups"]) {
+  eq(canScanPath(root, removable), true, `ordinary storage is scannable: ${root}`);
+}
+for (const root of ["relative", "/proc", "/proc/self", "/sys", "/sys/kernel", "/dev", "/dev/shm", "/run", "/run/media", "/run/media/owner", "/run/user/1000", "/run/media/owner/Carter HDD-copy", "/run/media/owner/Carter HDD/../../secrets"]) {
+  eq(canScanPath(root, removable), false, `virtual or unmounted paths stay blocked: ${root}`);
+}
+eq(canScanPath("/run/media/owner/Carter HDD", []), false, "unmounted drives cannot bypass the runtime-path guard");
+eq(canScanPath("/run/media/owner/Carter HDD", [{ ...removable[0], filesystem: "tmpfs" }]), false, "virtual mounts cannot bypass the guard");
+eq(canScanPath("/run/credentials/secret", [{ filesystem: "/dev/sda1", mount: "/run/credentials" }]), false, "other runtime mounts remain blocked");
 
 // TreeBuilder is internal; reach it the way the engine does — through a parser.
 // Build a small export by hand (format: https://dev.yorhel.nl/ncdu/jsonfmt).
@@ -103,6 +118,25 @@ eq(extOf("world.tar.gz"), "tar.gz", "compound ext");
 eq(extOf("README"), "(none)", "no ext");
 eq(extOf(".bashrc"), "bashrc", "dotfile ext");
 
+{
+  const root = "/data/drive with spaces";
+  const b = new TreeBuilder(NOW);
+  const p = new DuLineParser(b, root);
+  for (const line of [
+    `4\t${root}/first.zip`,
+    `8\t${root}/backups/second.zip`,
+    `12\t${root}/backups/older/third.zip`,
+    `12\t${root}/backups/older`,
+    `20\t${root}/backups`,
+    `24\t${root}`,
+  ]) p.line(line);
+  p.end();
+  eq(b.root.dsize, 24 * 1024, "du does not add the last directory twice after the root total");
+  eq(b.root.children[0].dsize, 20 * 1024, "nested cumulative totals do not double-count their last child");
+  eq(b.root.files, 3, "finishing descendants retains file counts");
+  eq(b.root.top.length, 3, "finishing descendants retains largest-file results");
+}
+
 // demo fixture parses with the same engine and matches the fake disk totals
 const demo = await import("./dist/demo.js");
 if (typeof demo.ncduExport === "function") {
@@ -118,6 +152,44 @@ if (typeof demo.ncduExport === "function") {
   const media = parseChunked(demo.ncduExport("/srv/media"), 4096).b.root;
   assert.ok(media.children.map((c) => c.name).includes("movies"), "scan of /srv/media descends into movies");
   n++;
+}
+
+// A fresh process exercises first-ever scans and queueing without touching live data.
+const fixture = await fs.mkdtemp(path.join(os.tmpdir(), "homelab-scan-"));
+try {
+  const roots = [path.join(fixture, "first drive"), path.join(fixture, "second drive")];
+  for (const root of roots) {
+    await fs.mkdir(root);
+    await fs.writeFile(path.join(root, "fixture.txt"), "scan fixture");
+  }
+  const source = `
+    import assert from "node:assert/strict";
+    import * as engine from ${JSON.stringify(new URL("./dist/services/diskscan.js", import.meta.url).href)};
+    const roots = ${JSON.stringify(roots)};
+    const started = await Promise.all(roots.map(root => engine.startScan(root)));
+    assert.ok(started.every(scan => scan.id && scan.status === "running"));
+    assert.equal(started.filter(scan => scan.id === "queued").length, 1);
+    let finished = false;
+    for (let i = 0; i < 200; i++) {
+      const overview = await engine.overview();
+      const scans = roots.map(root => overview.scans.find(scan => scan.root === root));
+      if (!overview.running && scans.every(scan => scan?.status === "done")) {
+        assert.ok(scans.every(scan => scan.totals.files === 1 && !scan.error));
+        finished = true;
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.ok(finished, "both queued scans finish");
+  `;
+  const run = spawnSync(process.execPath, ["--input-type=module", "-e", source], {
+    env: { ...process.env, DEMO: "0", DATA_DIR: path.join(fixture, "data"), DISK_SCANNER: "du", DISK_SCAN_ROOTS: roots.join(","), DISK_SCAN_INTERVAL_HOURS: "0" },
+    encoding: "utf8",
+    timeout: 20000,
+  });
+  eq(run.status, 0, `first-ever concurrent scans return valid summaries, queue, and complete: ${run.stderr}`);
+} finally {
+  await fs.rm(fixture, { recursive: true, force: true });
 }
 
 console.log(`diskscan: ${n} checks passed`);

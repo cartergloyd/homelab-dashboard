@@ -210,7 +210,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   );
 }
 
-export function Maintenance() {
+export function Maintenance({ title = "Minecraft maintenance" }: { title?: string } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm } = useDialog();
@@ -253,8 +253,8 @@ export function Maintenance() {
   return (
     <>
       <PageHead
-        title="Minecraft maintenance"
-        sub="Scheduled restarts with in-game countdowns, world backups with retention, and recurring console commands."
+        title={title}
+        sub="Scheduled jobs, recurring commands and world backups."
         actions={
           <>
             <button

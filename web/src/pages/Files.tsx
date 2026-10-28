@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { useAppConfig } from "../App";
 import { Icons } from "../components/icons";
 import { AddTorrentButton } from "../components/AddTorrentButton";
 import { Card, ErrorNotice, PageHead, useDialog, useToast } from "../components/ui";
@@ -11,6 +12,7 @@ export function Files() {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm, prompt } = useDialog();
+  const config = useAppConfig();
   const roots = useQuery({ queryKey: ["files", "roots"], queryFn: () => api.get<string[]>("/files/roots"), staleTime: Infinity });
   const [root, setRoot] = useState<string | null>(null);
   const [path, setPath] = useState("");
@@ -119,6 +121,11 @@ export function Files() {
             <button className="btn primary" disabled={!root || upload.isPending} onClick={() => fileInput.current?.click()}>
               <Icons.upload width={14} height={14} /> {upload.isPending ? "Uploading…" : "Upload"}
             </button>
+            {config.data?.links.qbittorrent && (
+              <a className="btn" href={config.data.links.qbittorrent} target="_blank" rel="noreferrer">
+                <Icons.external width={14} height={14} /> Open qBittorrent
+              </a>
+            )}
             <AddTorrentButton />
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => e.target.files?.length && upload.mutate(e.target.files)} />
           </>

@@ -6,14 +6,15 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { fmtDateTime, fmtRelative } from "../format";
 import type { AgentReport } from "../types";
-import { Card, useToast } from "./ui";
+import { Card, ErrorNotice, useToast } from "./ui";
 
-export function ReportsCard() {
+export function ReportsCard({ compact = false }: { compact?: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showReviewed, setShowReviewed] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
-  const q = useQuery({ queryKey: ["reports"], queryFn: () => api.get<AgentReport[]>("/reports?limit=50"), refetchInterval: 10_000 });
+  const q = useQuery({ queryKey: ["reports"], queryFn: () => api.get<AgentReport[]>("/reports?limit=200"), refetchInterval: 10_000 });
   const review = useMutation({
     mutationFn: (v: { id: string; reviewed: boolean }) => api.post(`/reports/${v.id}/review`, { reviewed: v.reviewed }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
@@ -41,9 +42,10 @@ export function ReportsCard() {
       <p className="muted small" style={{ margin: "0 0 10px" }}>
         Agents file a short write-up after they investigate or fix something. Read it, then mark it reviewed.
       </p>
-      {shown.length === 0 && <div className="muted small">{all.length ? "Everything has been reviewed." : "No reports yet. A connected agent files one with the submit_report tool."}</div>}
+      {!q.isPending && !q.isError && shown.length === 0 && <div className="muted small">{all.length ? "Everything has been reviewed." : "No reports yet. A connected agent files one with the submit_report tool."}</div>}
       <div className="stack" style={{ gap: 8 }}>
-        {shown.map((r) => {
+        <ErrorNotice error={q.error} />
+        {(compact && !showAll ? shown.slice(0, 3) : shown).map((r) => {
           const expanded = open === r.id;
           const long = r.body.length > 240;
           return (
@@ -82,6 +84,7 @@ export function ReportsCard() {
           );
         })}
       </div>
+      {compact && shown.length > 3 && <button className="btn sm" style={{ marginTop: 14 }} onClick={() => setShowAll(v => !v)}>{showAll ? "Show fewer reports" : `View all ${shown.length} reports`}</button>}
     </Card>
   );
 }

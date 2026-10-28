@@ -187,8 +187,27 @@ export interface FolderUsage {
   error?: string;
 }
 
+export interface StorageDevice {
+  path: string;
+  type: string;
+  model: string | null;
+  label: string | null;
+  filesystem: string | null;
+  uuid: string | null;
+  sizeBytes: number;
+  mounts: string[];
+  readOnly: boolean;
+  children: StorageDevice[];
+}
+
+export interface DriveInventory {
+  devices: StorageDevice[];
+  error: string | null;
+}
+
 export interface StoragePayload {
   filesystems: Filesystem[];
+  driveInventory: DriveInventory;
   folders: FolderUsage[];
   refreshedAt: string | null;
   refreshing: boolean;
@@ -308,7 +327,7 @@ export interface TailscalePayload {
 export interface OverviewPayload {
   status: StatusPayload;
   minecraft: { players: McPlayers | null; active: string | null };
-  jellyfin: { sessions: number; playing: number };
+  jellyfin: { sessions: number | null; playing: number | null };
   storage: Filesystem[];
   tailscale: { online: number; total: number };
   nextJob: { name: string; at: string } | null;
@@ -359,7 +378,7 @@ export interface AgentPresence {
 }
 
 export type AgentRunner = "codex" | "claude";
-export type AgentRunStatus = "running" | "exited" | "failed";
+export type AgentRunStatus = "running" | "exited" | "failed" | "cancelled";
 
 export type AgentRunKind = "manual" | "incident" | "continuation" | "chat";
 
@@ -376,6 +395,8 @@ export interface AgentRun {
   kind: AgentRunKind;
   incidentId: string | null;
   sessionId: string | null;
+  pid: number | null;
+  error: string | null;
 }
 
 export type SidecarPhase = "off" | "idle" | "queued" | "investigating" | "waiting-approval" | "acting" | "reporting" | "failed";
@@ -394,6 +415,7 @@ export interface SidecarSettings {
 }
 
 export interface Incident {
+  summary?: string;
   id: string;
   fingerprint: string;
   title: string;
@@ -445,6 +467,8 @@ export interface SidecarState {
   lastRun: AgentRun | null;
   runnerAvailable: boolean | null;
   runnerNote: string | null;
+  sessionId: string | null;
+  model: string | null;
 }
 
 export type ReportOutcome = "fixed" | "no-action" | "needs-human";
@@ -630,6 +654,33 @@ export interface SidecarPayload {
   approvals: Approval[];
 }
 
+export interface IncidentFeedback {
+  id: string;
+  incidentId: string;
+  text: string;
+  by: string;
+  ts: string;
+  runId: string | null;
+}
+
+export interface InstructionSuggestion {
+  id: string;
+  incidentId: string;
+  reportId: string;
+  text: string;
+  ts: string;
+  status: "pending" | "applied" | "declined";
+  decidedBy: string | null;
+}
+
+export interface IncidentReviewPayload {
+  incident: Incident;
+  reports: AgentReport[];
+  conversation: ConversationTurn[];
+  feedback: IncidentFeedback[];
+  suggestions: InstructionSuggestion[];
+}
+
 export interface ScriptRun {
   id: string;
   script: string;
@@ -739,7 +790,7 @@ export interface AppConfigPayload {
   demo: boolean;
   torrentAdd: boolean;
   user: { login: string; name: string; via: IdentityVia };
-  links: { jellyfin: string; directus: string; qbittorrent: string | null };
+  links: { jellyfin: string; directus: string; qbittorrent: string | null; router: string | null };
   mediaRoots: string[];
   timezone: string;
   logSources: LogSource[];

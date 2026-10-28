@@ -18,7 +18,7 @@
     "clear-demo-data": "node server/dist/tools/clear-demo-data.js",
     "wrap-service": "node server/dist/tools/wrap-service.js",
     "demo:index": "node server/dist/tools/demo-index.js",
-    "test": "node server/test-discover.mjs && node server/test-diskscan.mjs && node server/test-updates.mjs && node server/test-apps.mjs && node server/test-qbittorrent.mjs && node server/test-dns.mjs && node server/test-cf-access.mjs && node server/dist/tools/demo-index.js --check"
+    "test": "node server/test-discover.mjs && node server/test-diskscan.mjs && node server/test-storage.mjs && node server/test-updates.mjs && node server/test-database-files.mjs && node server/test-apps.mjs && node server/test-qbittorrent.mjs && node server/test-dash-live.mjs && node server/test-dns.mjs && node server/test-cf-access.mjs && node server/test-http-security.mjs && node server/test-step-up.mjs && node server/test-step-up-browser.mjs && node server/test-alerts.mjs && node server/test-minecraft.mjs && node server/test-agent-runner.mjs && node server/dist/tools/demo-index.js --check"
   },
   "engines": {
     "node": ">=20.19"

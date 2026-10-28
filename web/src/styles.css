@@ -22,6 +22,11 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.drive-inventory { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.drive-entry { min-width: 0; padding: 14px; border: 1px solid var(--hairline); border-radius: var(--radius); overflow-wrap: anywhere; }
+.drive-entry .row { flex-wrap: wrap; }
+.drive-volume { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --page: #0d0d0d;
@@ -1272,6 +1277,53 @@ table.table {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+}
+.incident-menu {
+  max-height: 72vh;
+  overflow-y: auto;
+}
+.incident-menu-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.incident-menu-row > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+.incident-menu-row .actions {
+  flex-shrink: 0;
+}
+.incident-sentence {
+  margin: 0 0 6px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.incident-report {
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+.incident-report p, .incident-technical p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.incident-menu h3, .incident-menu p {
+  margin-top: 0;
+}
+.incident-technical pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+@media (max-width: 560px) {
+  .incident-menu-row {
+    flex-direction: column;
+  }
 }
 .phase-dot {
   width: 9px;

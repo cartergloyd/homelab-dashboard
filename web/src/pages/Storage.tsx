@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { Icons } from "../components/icons";
 import { StorageExplorer } from "../components/StorageExplorer";
+import { DriveInventory } from "../components/DriveInventory";
 import { Card, ErrorNotice, Meter, PageHead, useToast } from "../components/ui";
 import { fmtBytes, fmtRelative } from "../format";
 import type { ReclaimPayload, StoragePayload } from "../types";
@@ -104,7 +105,7 @@ export function Storage() {
     <>
       <PageHead
         title="Storage"
-        sub="Capacity per disk, a TreeSize-style explorer built on ncdu/gdu scans, what can be reclaimed, and the folders the dashboard manages."
+        sub="Connected drives, mounted storage, a TreeSize-style explorer, and the folders the dashboard manages."
         actions={
           <button className="btn" disabled={d?.refreshing || refresh.isPending} onClick={() => refresh.mutate()}>
             <Icons.refresh width={14} height={14} /> {d?.refreshing ? "Measuring…" : "Re-measure folders"}
@@ -112,6 +113,8 @@ export function Storage() {
         }
       />
       <ErrorNotice error={q.error} />
+
+      <div style={{ marginBottom: 14 }}><DriveInventory inventory={d?.driveInventory} /></div>
 
       <div className="grid wide" style={{ marginBottom: 14 }}>
         {d?.filesystems.length === 0 && <div className="notice">No filesystems reported by df.</div>}

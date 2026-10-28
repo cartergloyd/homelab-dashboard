@@ -132,23 +132,64 @@ function paperFromName(name: string): { version: string; build: number | null } 
   return m ? { version: m[1], build: m[2] ? Number(m[2]) : null } : null;
 }
 
-async function installedPaper(): Promise<UpdateVersion | null> {
-  const dir = cfg.minecraft.dir;
-  const jars = await listJars(dir);
-  const paper = jars.map((j) => ({ ...j, meta: paperFromName(j.name) })).filter((j) => j.meta).sort((a, b) => b.mtime.getTime() - a.mtime.getTime())[0];
-  if (paper?.meta) return { version: paper.meta.version, build: paper.meta.build, date: paper.mtime.toISOString(), file: paper.file, mcVersion: paper.meta.version };
-  // Paper records what actually ran in version_history.json: "git-Paper-232 (MC: 1.21.4)" or "1.21.4-232-abcdef (MC: 1.21.4)"
+export async function readPaperMeta(file: string): Promise<{ version: string | null; build: number | null } | null> {
   try {
-    const vh = JSON.parse(await fsp.readFile(path.join(dir, "version_history.json"), "utf8")) as { currentVersion?: string };
-    const cur = vh.currentVersion ?? "";
-    const mc = cur.match(/MC:\s*([\d.]+)/)?.[1] ?? null;
-    const build = cur.match(/(?:Paper-|-)(\d+)(?:-|\s|$)/)?.[1];
-    const st = await fsp.stat(path.join(dir, "version_history.json"));
-    const generic = jars.find((j) => /^(server|minecraft_server).*\.jar$/i.test(j.name));
-    return { version: mc, build: build ? Number(build) : null, date: (generic?.mtime ?? st.mtime).toISOString(), file: generic?.file ?? null, mcVersion: mc };
+    const manifest = (await readZipEntry(file, ["META-INF/MANIFEST.MF"]))?.text.replace(/\r?\n /g, "") ?? "";
+    const field = (name: string) => manifest.match(new RegExp(`^${name}:\\s*(.+)$`, "mi"))?.[1].trim() ?? null;
+    const libraries = (await readZipEntry(file, ["META-INF/libraries.list"]))?.text ?? "";
+    const apiVersion = libraries.match(/\bio\.papermc\.paper:paper-api:([^\s]+)/)?.[1] ?? null;
+    if (!apiVersion && !/paper|purpur|folia/i.test(`${field("Implementation-Title")} ${field("Main-Class")}`)) return null;
+    const versionEntry = await readZipEntry(file, ["version.json"]);
+    let mcVersion: string | null = null;
+    try {
+      const data = JSON.parse(versionEntry?.text ?? "null") as { id?: unknown } | null;
+      if (typeof data?.id === "string" && /^\d+(?:\.\d+)+(?:[-+][\w.-]+)?$/.test(data.id)) mcVersion = data.id;
+    } catch { /* Older Paper jars may only have manifest metadata. */ }
+    const implementation = field("Implementation-Version");
+    const versions = [field("Specification-Version"), implementation, apiVersion]
+      .map((text) => text?.match(/^(\d+(?:\.\d+)+)(?:\.build\.(\d+)|-(\d+)(?:-|$))?/))
+      .filter((match): match is RegExpMatchArray => !!match && (!mcVersion || match[1] === mcVersion));
+    const version = versions.find((match) => match[2] || match[3]) ?? versions[0];
+    const explicitBuild = field("Build-Number");
+    const build = explicitBuild && /^\d+$/.test(explicitBuild) ? Number(explicitBuild)
+      : version?.[2] || version?.[3] ? Number(version[2] ?? version[3])
+      : implementation?.match(/git-(?:Paper|Purpur|Folia)-(\d+)/i)?.[1];
+    return { version: mcVersion ?? version?.[1] ?? null, build: build === undefined ? null : Number(build) };
   } catch {
     return null;
   }
+}
+
+export async function installedPaper(dir = cfg.minecraft.dir): Promise<UpdateVersion | null> {
+  const jars = await listJars(dir);
+  const readText = (name: string) => fsp.readFile(path.join(dir, name), "utf8").then((text) => text.trim()).catch(() => "");
+  const [trackedVersion, trackedBuild, historyText] = await Promise.all([readText("paper-version.txt"), readText("paper-build.txt"), readText("version_history.json")]);
+  let history: { version: string | null; build: number | null } | null = null;
+  try {
+    const vh = JSON.parse(historyText) as { currentVersion?: string };
+    const cur = vh.currentVersion ?? "";
+    const build = cur.match(/(?:Paper-|-)(\d+)(?:-|\s|$)/)?.[1] ?? null;
+    history = { version: cur.match(/MC:\s*([\d.]+)/)?.[1] ?? null, build: build ? Number(build) : null };
+  } catch { /* History is optional, not evidence that Paper is missing. */ }
+  const aliases = ["server.jar", "paper.jar", "paper-server.jar", "minecraft_server.jar"];
+  const candidates = jars.filter((jar) => aliases.includes(jar.name.toLowerCase()) || paperFromName(jar.name))
+    .sort((a, b) => {
+      const rank = (name: string) => { const i = aliases.indexOf(name.toLowerCase()); return i < 0 ? aliases.length : i; };
+      return rank(a.name) - rank(b.name) || b.mtime.getTime() - a.mtime.getTime();
+    });
+  for (const jar of candidates) {
+    const embedded = await readPaperMeta(jar.file);
+    const named = paperFromName(jar.name);
+    const tracking = /^\d+(?:\.\d+)+$/.test(trackedVersion) ? trackedVersion : null;
+    if (!embedded && !named && !history && !tracking && !/^paper(?:-server)?\.jar$/i.test(jar.name)) continue;
+    const version = embedded?.version ?? named?.version ?? tracking ?? history?.version ?? null;
+    // Jar metadata wins; only use sidecar build numbers for the matching Minecraft version.
+    const build = embedded?.build ?? named?.build
+      ?? (version === tracking && /^\d+$/.test(trackedBuild) ? Number(trackedBuild) : null)
+      ?? (version === history?.version ? history.build : null);
+    return { version, build, date: jar.mtime.toISOString(), file: jar.file, mcVersion: version };
+  }
+  return null;
 }
 
 async function stagingDirs(): Promise<{ path: string; exists: boolean; files: number }[]> {
@@ -287,7 +328,7 @@ export async function stagedUpdates(force = false): Promise<StagedUpdatePayload>
   const notes: string[] = [];
   const mc = cfg.minecraft.dir;
   const paper = await installedPaper();
-  if (!paper) notes.push(`No paper-*.jar or version_history.json found in ${mc} — is MC_DIR right?`);
+  if (!paper) notes.push(`No Paper server jar found in ${mc} (checked server.jar, paper.jar, paper-server.jar and versioned jars). Check MC_DIR.`);
 
   const plugins = await listJars(path.join(mc, "plugins"));
   const installed = new Map<string, UpdateVersion & { meta: PluginMeta }>();

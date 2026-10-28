@@ -97,7 +97,11 @@ services:
       PUBLIC_URL: https://fam-api.${PUBLIC_DOMAIN}
       # behind Cloudflare: trust the proxy for client IPs, rate-limit, secure cookies. CORS allows the
       # app's SITE origin (its front-end at fam.<domain>); the admin UI is same-origin and needs nothing.
-      IP_TRUST_PROXY: "true"
+      IP_TRUST_PROXY: "loopback,linklocal,uniquelocal"
+      ACCESS_TOKEN_TTL: "15m"
+      REFRESH_TOKEN_TTL: "7d"
+      SESSION_COOKIE_TTL: "1d"
+      HSTS_ENABLED: "true"
       RATE_LIMITER_ENABLED: "true"
       RATE_LIMITER_POINTS: "50"
       RATE_LIMITER_DURATION: "1"
@@ -134,7 +138,11 @@ services:
       ADMIN_EMAIL: ${APP_AI_ADMIN_EMAIL}
       ADMIN_PASSWORD: ${APP_AI_ADMIN_PASSWORD}
       PUBLIC_URL: https://ai-api.${PUBLIC_DOMAIN}
-      IP_TRUST_PROXY: "true"
+      IP_TRUST_PROXY: "loopback,linklocal,uniquelocal"
+      ACCESS_TOKEN_TTL: "15m"
+      REFRESH_TOKEN_TTL: "7d"
+      SESSION_COOKIE_TTL: "1d"
+      HSTS_ENABLED: "true"
       RATE_LIMITER_ENABLED: "true"
       RATE_LIMITER_POINTS: "50"
       RATE_LIMITER_DURATION: "1"
