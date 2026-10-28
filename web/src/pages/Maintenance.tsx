@@ -70,7 +70,7 @@ function fromForm(f: JobForm) {
   return { name: f.name.trim(), type: f.type, cron: f.cron.trim(), enabled: f.enabled, options };
 }
 
-function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
+export function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [f, setF] = useState<JobForm>(toForm(job));

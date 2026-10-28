@@ -3,6 +3,9 @@ import type { SVGProps } from "react";
 const base: SVGProps<SVGSVGElement> = { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
 
 export const Icons = {
+  search: (p: SVGProps<SVGSVGElement>) => <svg {...base} {...p}><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>,
+  menu: (p: SVGProps<SVGSVGElement>) => <svg {...base} {...p}><path d="M4 6h16M4 12h16M4 18h16"/></svg>,
+  bell: (p: SVGProps<SVGSVGElement>) => <svg {...base} {...p}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M9 21h6"/></svg>,
   home: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base} {...p}>
       <path d="M3 11 12 3l9 8" />

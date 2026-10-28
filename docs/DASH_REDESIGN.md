@@ -48,3 +48,34 @@ For this installation, the user unit is `gold-dashboard.service`, the endpoint i
 To roll back code, restore the saved user-unit file to `~/.config/systemd/user/gold-dashboard.service`, run `systemctl --user daemon-reload`, then `systemctl --user restart gold-dashboard.service`. The original source/build remain available. Keep the current data directory in place: restoring a data snapshot would discard subsequent real activity and is not needed for a code rollback.
 
 Verification covers production health (`demo:false`), unchanged saved jobs and security/configuration hashes, preserved report IDs, actual integration reads, desktop/mobile navigation, and live WebSocket feeds. Unit tests create temporary fixtures outside production and delete them afterward. No test records, repositories, torrents or uploads are created in production.
+
+## Version-8 page implementation
+
+The production page layouts live in `web/src/design/`. They use the approved
+preview's scoped stylesheet and icon paths, with locally hosted DM Sans and
+Manrope fonts (licenses in `web/public/fonts`). `App.tsx` mounts these page
+components directly. Do not substitute the old page components and a theme:
+the section order, task placement and panel structure are part of the design.
+
+- Minecraft: console, quick commands, paired mods/update hub, backups, settings.
+- Jellyfin: downloads, folder browser/moves, media settings. Completed torrents
+  remain accessible through the queue's view-all control.
+- Storage: inline Directus, drive cards, workspace files, uploads, connection map.
+  The business workspace defaults to its actual `ai` Directus/file connection.
+- Network: hostname table, tunnel, VPN/Tailscale pair, router.
+- Automation: metrics, schedules, update hub, scripts, activity.
+- Access: users and connections; existing authenticator controls are in a dialog.
+- Terminal: host shell and sessions. Advanced logs, reports, assistant tools,
+  job editing, backups, database details and storage scans remain available in
+  focused dialogs; none of the old page stacks is mounted in a main layout.
+
+`web/test-design-browser.mjs` guards the 16 page layouts against the approved
+section order and rejects old `.card` page content. It also checks desktop,
+850 px and 390 px layouts, navigation, dialogs, workspace database defaults and
+dark mode. Command payload and cancellation checks intercept all writes inside
+an isolated browser context. They never send production write requests. Run it
+against a local read-only preview using `DASH_QA_URL` and an installed Playwright
+module (`PLAYWRIGHT_MODULE` can supply its absolute module path).
+
+Minecraft's settings panel reads a strict allowlist from the real server
+properties. RCON passwords and unrelated configuration never enter the response.

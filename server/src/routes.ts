@@ -10,6 +10,7 @@ import type { Identity } from "./auth.js";
 import * as files from "./services/files.js";
 import * as jellyfin from "./services/jellyfin.js";
 import { databaseFileRoutes } from "./services/databaseFiles.js";
+import { readMinecraftSettings } from "./services/minecraftSettings.js";
 import { directusRecordRoutes } from "./services/directusRecords.js";
 import { hostStatus, executeHostCommand } from "./services/host.js";
 import { repositories, RepositoryInput } from "./services/repositories.js";
@@ -251,6 +252,8 @@ api.get("/database", async (_req, res) => {
 api.get("/minecraft", async (_req, res) => {
   res.json(await minecraftStatus());
 });
+
+api.get("/minecraft/settings", async (_req, res) => res.json(await readMinecraftSettings(cfg.minecraft.dir)));
 
 api.get("/minecraft/players", async (_req, res) => {
   res.json(await getPlayers());
