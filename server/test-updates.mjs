@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { compareVersions, installedPaper, parsePluginYml, readPaperMeta, readPluginMeta } from "./dist/services/updates.js";
+import { compareVersions, latestPaper, latestPlugin, installedPaper, parsePluginYml, readPaperMeta, readPluginMeta } from "./dist/services/updates.js";
 
 let n = 0;
 const eq = (a, b, what) => (assert.deepEqual(a, b, what), n++);
@@ -164,5 +164,37 @@ eq(await installedPaper(vanilla), null, "generic vanilla jar is not mislabeled a
 await fs.unlink(path.join(tracked, "paper.jar"));
 eq(await installedPaper(tracked), null, "tracking/history files alone do not prove Paper is still installed");
 
+// Exercise the real provider selection with in-memory responses, never network or live data.
+const realFetch = globalThis.fetch;
+const { cfg } = await import("./dist/config.js");
+const oldDataDir = cfg.dataDir;
+cfg.dataDir = tmp;
+const calls = [];
+globalThis.fetch = async (url) => {
+  calls.push(url);
+  let value;
+  if (url.endsWith("/v3/projects/paper")) value = { versions: { "26.3": ["26.3-rc-3", "26.3"], "26.2": ["26.2"] } };
+  else if (url.includes("/paper/versions/26.3/")) value = { id: 227, time: "2026-10-27T19:23:01Z", channel: "STABLE" };
+  else if (url.includes("/projects/geyser/")) value = { version: "2.12.1", build: 1276, time: "2026-10-28T11:54:25Z", downloads: { spigot: {} } };
+  else if (url.includes("/projects/floodgate/")) value = { version: "2.2.5", build: 141, time: "2026-09-17T14:53:03Z", downloads: { spigot: {} } };
+  else throw new Error(`Unexpected upstream: ${url}`);
+  return { ok: true, json: async () => value };
+};
+try {
+  const paper = await latestPaper("26.3", true);
+  eq(paper.newestMc, "26.3", "stable Minecraft version selected from v3 version groups");
+  eq([paper.latest.version, paper.latest.build], ["26.3-227", 227], "Paper uses current v3 build API");
+  eq((await latestPlugin("Geyser-Spigot", true)).version, "2.12.1", "Geyser automatically uses its official build API");
+  eq((await latestPlugin("floodgate", true)).build, 141, "Floodgate automatically uses its official build API");
+  cfg.updates.sources["geyser-spigot"] = "none";
+  eq(await latestPlugin("Geyser-Spigot", true), null, "explicit source override wins over built-in mapping");
+  delete cfg.updates.sources["geyser-spigot"];
+  eq(calls.length, 4, "no Modrinth or GitHub-release fallback for official build providers");
+} finally {
+  globalThis.fetch = realFetch;
+  cfg.dataDir = oldDataDir;
+}
+// Let the asynchronous cache write finish before removing its temporary directory.
+await new Promise(resolve => setTimeout(resolve, 100));
 await fs.rm(tmp, { recursive: true, force: true });
 console.log(`updates: ${n} checks passed`);

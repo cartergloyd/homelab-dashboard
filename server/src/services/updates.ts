@@ -244,27 +244,41 @@ async function cached(key: string, fn: () => Promise<UpdateVersion | null>, forc
   return value;
 }
 
-async function latestPaper(mcVersion: string | null, force: boolean): Promise<{ latest: UpdateVersion | null; newestMc: string | null }> {
-  const project = await cached("paper:project", async () => {
-    const p = await getJson<{ versions: string[] }>("https://api.papermc.io/v2/projects/paper");
-    return p ? { version: p.versions[p.versions.length - 1] ?? null, date: null, source: "papermc" } : null;
+export async function latestPaper(mcVersion: string | null, force: boolean): Promise<{ latest: UpdateVersion | null; newestMc: string | null }> {
+  const project = await cached("paper:v3:project", async () => {
+    const p = await getJson<{ versions: Record<string, string[]> }>("https://fill.papermc.io/v3/projects/paper");
+    const versions = Object.values(p?.versions ?? {}).flat().filter((v) => /^\d+(?:\.\d+)+$/.test(v));
+    versions.sort((a, b) => compareVersions(b, a) ?? 0);
+    return versions.length ? { version: versions[0], date: null, source: "papermc" } : null;
   }, force);
   const newestMc = project?.version ?? null;
   const target = mcVersion ?? newestMc;
   if (!target) return { latest: null, newestMc };
-  const latest = await cached(`paper:${target}`, async () => {
-    const b = await getJson<{ builds: { build: number; time: string; channel: string }[] }>(`https://api.papermc.io/v2/projects/paper/versions/${target}/builds`);
-    const last = b?.builds?.[b.builds.length - 1];
-    return last ? { version: `${target}-${last.build}`, build: last.build, date: last.time, channel: last.channel, url: `https://papermc.io/downloads/paper`, source: "papermc", mcVersion: target } : null;
+  const latest = await cached(`paper:v3:${target}`, async () => {
+    const b = await getJson<{ id: number; time: string; channel: string }>(`https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(target)}/builds/latest`);
+    return b && Number.isInteger(b.id) ? { version: `${target}-${b.id}`, build: b.id, date: b.time, channel: b.channel, url: "https://papermc.io/downloads/paper", source: "papermc", mcVersion: target } : null;
   }, force);
   return { latest, newestMc };
 }
 
-async function latestPlugin(name: string, force: boolean): Promise<UpdateVersion | null> {
-  const pref = cfg.updates.sources[name.toLowerCase()];
+// These projects publish their current builds through their own API, rather than
+// GitHub releases or an exact-name Modrinth listing. Explicit overrides still win.
+const DEFAULT_PLUGIN_SOURCES: Record<string, string> = {
+  "geyser-spigot": "geyser:geyser",
+  geyser: "geyser:geyser",
+  floodgate: "geyser:floodgate",
+};
+
+export async function latestPlugin(name: string, force: boolean): Promise<UpdateVersion | null> {
+  const pref = cfg.updates.sources[name.toLowerCase()] ?? DEFAULT_PLUGIN_SOURCES[name.toLowerCase()];
   if (pref === "none") return null;
   return cached(`plugin:${name.toLowerCase()}:${pref ?? "auto"}`, async () => {
     const [kind, ref] = pref ? pref.split(":", 2) : ["modrinth", null];
+    if (kind === "geyser" && (ref === "geyser" || ref === "floodgate")) {
+      const b = await getJson<{ version: string; build: number; time: string; downloads: Record<string, unknown> }>(`https://download.geysermc.org/v2/projects/${ref}/versions/latest/builds/latest`);
+      return b?.version && Number.isInteger(b.build) && b.downloads?.spigot
+        ? { version: b.version, build: b.build, date: b.time, url: `https://geysermc.org/download?project=${ref}`, source: "geyser" } : null;
+    }
     if (kind === "hangar" && ref) {
       const r = await getJson<{ result: { name: string; createdAt: string }[] }>(`https://hangar.papermc.io/api/v1/projects/${ref}/versions?limit=1&platform=PAPER`);
       const v = r?.result?.[0];
