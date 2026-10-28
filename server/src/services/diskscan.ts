@@ -307,6 +307,8 @@ export class DuLineParser {
     const p = m[2];
     const dir = this.pending.get(p);
     if (dir) {
+      // Finish descendants before applying du's already-cumulative total.
+      while (this.tree.stack.length && this.tree.stack[this.tree.stack.length - 1] !== dir) this.tree.dirEnd();
       this.tree.setDirSize(dir, bytes);
       return;
     }
@@ -476,9 +478,8 @@ function finish(s: Scan, builder: TreeBuilder, meta: Record<string, unknown> | n
 }
 
 async function runScan(root: string): Promise<void> {
-  const fsList = await filesystems().catch(() => [] as Filesystem[]);
-  const avail = await detectEngines();
-  const pick = chooseEngine(avail);
+  let fsList: Filesystem[] = [];
+  const pick = chooseEngine(detected ?? { ncdu: null, gdu: null });
   const s: Scan = {
     summary: { id: crypto.randomUUID().slice(0, 8), root, engine: pick.engine, engineVersion: pick.version, status: "running", startedAt: new Date().toISOString(), finishedAt: null, durationMs: null, error: null, progress: { dirs: 0, files: 0 }, totals: { dsize: 0, asize: 0, files: 0, dirs: 0, readErrors: 0, excluded: 0 }, mount: mountFor(root, fsList) },
     tree: null,
@@ -486,6 +487,8 @@ async function runScan(root: string): Promise<void> {
     child: null,
   };
   const previous = scans.get(root);
+  // Reserve the job before awaiting discovery so cold starts return a real ID
+  // and concurrent requests cannot start multiple scanners.
   scans.set(root, s);
   running = root;
   const builder = new TreeBuilder(Math.floor(Date.now() / 1000));
@@ -507,6 +510,11 @@ async function runScan(root: string): Promise<void> {
   };
 
   try {
+    fsList = await filesystems().catch(() => [] as Filesystem[]);
+    const pick = chooseEngine(await detectEngines());
+    s.summary.engine = pick.engine;
+    s.summary.engineVersion = pick.version;
+    s.summary.mount = mountFor(root, fsList);
     // [DEMO] demo-mode branch — a generated ncdu-format export of an imaginary disk stands
     // in for a real scanner; never taken on a real install (see DEMO_INDEX.md)
     if (pick.engine === "demo") {
@@ -583,10 +591,23 @@ function spawnScan(s: Scan, builder: TreeBuilder, engine: DiskScanEngine, root: 
   });
 }
 
+export function canScanPath(root: string, mounted: Filesystem[]): boolean {
+  if (!path.isAbsolute(root)) return false;
+  const r = path.resolve(root);
+  if (/^\/(proc|sys|dev)(\/|$)/.test(r)) return false;
+  if (!/^\/run(\/|$)/.test(r)) return true;
+  // UDisks mounts ordinary data drives here, inside the otherwise virtual /run.
+  return mounted.some((f) => {
+    const mount = path.resolve(f.mount);
+    return f.filesystem.startsWith("/dev/") && mount.startsWith("/run/media/") && (r === mount || r.startsWith(`${mount}/`));
+  });
+}
+
 /** Start (or queue) a scan of `root`. One scan runs at a time. */
 export async function startScan(root: string): Promise<DiskScanSummary> {
   const r = path.resolve(root);
-  if (!path.isAbsolute(r) || /^\/(proc|sys|dev|run)(\/|$)/.test(r)) throw new HttpError(400, `${r} cannot be scanned`);
+  const mounted = /^\/run(\/|$)/.test(r) ? await filesystems().catch(() => [] as Filesystem[]) : [];
+  if (!canScanPath(r, mounted)) throw new HttpError(400, `${r} cannot be scanned`);
   if (!cfg.demo) {
     const st = await fsp.stat(r).catch(() => null);
     if (!st?.isDirectory()) throw new HttpError(404, `${r} is not a folder`);

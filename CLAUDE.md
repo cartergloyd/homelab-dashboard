@@ -404,8 +404,8 @@ override the placeholders wherever they conflict:
 - 2026-10-20 **Remote access = Cloudflare Access + the dashboard's own token check, GitHub as
   the identity provider.** A Cloudflare-stamped request (`CF-Ray`) is authenticated ONLY by its
   Access JWT; Tailscale headers on it are ignored (anyone could type them). Bearer key over the
-  tunnel requires a valid Access token as well. GitHub was chosen because it enforces 2FA on every
-  account and needs one OAuth app, no money; e-mail one-time PIN is a single factor and is not
+  tunnel requires a valid Access token as well. GitHub was chosen as the owner's identity provider and needs one OAuth app, no money;
+  GitHub login alone does not prove MFA was required; verify the owner account and Access policy; e-mail one-time PIN is a single factor and is not
   offered for the dashboard. No JWT library: Node's `crypto.verify` with JWK import.
 - 2026-10-20 **The hostnames card reads DNS, never writes it.** Preferred source is a Cloudflare
   API token scoped to Zone:Read + DNS:Read on this zone only (an integration secret like the
@@ -455,6 +455,24 @@ Follow `SERVER_SETUP.md`. The repo is `git@github.com:cartergloyd/homelab-dashbo
 (private); on the server it lives at `/opt/homelab-dashboard` and runs as user
 `homelab` under `homelab-dashboard.service`.
 
+- 2026-10-20 Installed security follow-up: app-role query/idle-transaction timeouts are 60s,
+  PostgreSQL TCP uses SCRAM restricted to the platform bridge, connection logging is on,
+  and app roles cannot connect to other databases. Both Directus admins are enrolled in MFA.
+  Dashboard authenticator protection and encrypted OneDrive downloaded-copy restore tests are live.
+  Remote bearer auth now requires a service JWT (human JWT + key is rejected); local MCP uses
+  loopback. See docs/SECURITY_HARDENING.md for verified controls, private rollback paths and
+  remaining issue #10 work. Do not claim FULLY CONNECTED or close #10 until the remaining audit
+  failures and external Cloudflare policy/service-token checks are resolved.
+
+- Database page file uploads: see `docs/database-uploads.md`. Owner-only uploads
+  use dedicated per-Directus file service users and DATA_DIR/database-uploads.json;
+  never expose these tokens or make the file library public.
+
+- Family directory: fam.family_users is now authoritative for website profiles and
+  Jellyfin, imported from private users.csv. See deploy/family-directory/README.md.
+  Legacy public member-claim credentials are retired; never restore PIN hashes
+  to public kv records or an embedded website roster.
+
 
 ### 2026-10-25 — Issue #16 Jellyfin social plugins
 
@@ -471,3 +489,17 @@ StarTrack 1.8.1.0 also collides with Jellyfin’s RecommendationDto Swagger sche
 /api-docs/openapi.json returns 500. Normal APIs and playback work. This upstream
 limitation and the remaining per-member external-account validation are documented
 in the installation guide; do not report full end-to-end sync verified yet.
+
+
+## Dash live redesign (2026-10-27)
+
+The React shell now follows the latest Dash preview: Gold Server and xGold AI
+workspace navigation on the same host. Preserve all existing data and controls;
+workspaces are presentation, not security boundaries. See
+[docs/DASH_REDESIGN.md](docs/DASH_REDESIGN.md) for feature/API mapping, authentication,
+new host metrics/repository stores, and deployment/rollback instructions. The
+reference preview's fake data and simulated actions must never be copied into
+production. New record editing signs into configured Directus instances with the
+owner's existing account; tokens stay server-side. Existing uploads remain separate.
+Terminal execution and Directus writes use the central step-up gate. Tests for
+these connections live in `server/test-dash-live.mjs` and use temporary data only.

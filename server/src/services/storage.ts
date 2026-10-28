@@ -11,6 +11,7 @@ import * as demo from "../demo.js";
 import { sleep } from "../util.js";
 import { listBackups } from "./backups.js";
 import { dockerDiskUsage } from "./docker.js";
+import { driveInventory } from "./blockDevices.js";
 import type { Filesystem, FolderUsage, ReclaimItem, ReclaimPayload, StoragePayload } from "../types.js";
 
 const execFileP = promisify(execFile);
@@ -96,11 +97,16 @@ export function refreshFolders(): Promise<void> {
 }
 
 export async function storage(): Promise<StoragePayload> {
-  const fsList = await filesystems().catch(() => [] as Filesystem[]);
+  const [fsList, inventory] = await Promise.all([
+    filesystems().catch(() => [] as Filesystem[]),
+    // [DEMO] demo drive inventory stays separate from the host's real hardware.
+    cfg.demo ? Promise.resolve(demo.driveInventory()) : driveInventory(),
+  ]);
   const stale = !folderCache.refreshedAt || Date.now() - Date.parse(folderCache.refreshedAt) > TTL_MS;
   if (stale) void refreshFolders();
   return {
     filesystems: fsList,
+    driveInventory: inventory,
     folders: folderCache.folders.length ? folderCache.folders : targets().map((t) => ({ ...t, bytes: null })),
     refreshedAt: folderCache.refreshedAt,
     refreshing: refreshing !== null,

@@ -1,7 +1,8 @@
 // Database & apps: the Postgres core (loopback only), the owner's personal Directus
 // over Tailscale, and one Directus per public app (fam, ai, …) published through the
-// Cloudflare Tunnel — each with its own database, users and dumps. Read-only.
+// Cloudflare Tunnel — each with its own database, users and dumps.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DatabaseFiles } from "../components/DatabaseFiles";
 import { api } from "../api";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, PageHead, StatTile, StatusPill, useToast } from "../components/ui";
@@ -172,6 +173,8 @@ export function Database() {
           <AppCard key={x.name} a={x} />
         ))}
       </div>
+
+      <div style={{ marginBottom: 14 }}><DatabaseFiles /></div>
 
       <div className="grid wide" style={{ marginBottom: 14 }}>
         <Card title="Databases on this PostgreSQL">

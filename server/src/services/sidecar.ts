@@ -8,12 +8,15 @@
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
-import type { AgentRun, AgentRunner, AlertEvent, Approval, ConversationTurn, Incident, RepairsPayload, ReportOutcome, SidecarPayload, SidecarPhase, SidecarSettings, SidecarState } from "../types.js";
-import { RUNNER_NAME, currentRun, launchRun, listAgentRuns, runnerAvailable, type LaunchOptions } from "./agentRunner.js";
+import type { AgentRun, AgentRunner, AlertEvent, Approval, ConversationTurn, Incident, IncidentReviewPayload, RepairsPayload, ReportOutcome, SidecarPayload, SidecarPhase, SidecarSettings, SidecarState } from "../types.js";
+import { RUNNER_NAME, currentRun, launchRun, listAgentRuns, runnerAvailable, stopRun, type LaunchOptions } from "./agentRunner.js";
 import { publish, query, subscribe } from "./alerts.js";
 import { addReport, getReport, onReport } from "./reports.js";
+import { addFeedback, decideSuggestion, feedbackFor, incidentSummary, initIncidentReviews, markFeedbackRun, recordSuggestion, suggestionsFor } from "./incidentReviews.js";
+export { decideSuggestion };
 
 interface Identity {
   viaKey?: boolean;
@@ -21,7 +24,6 @@ interface Identity {
 }
 
 const iso = () => new Date().toISOString();
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ACTIVE = new Set<Incident["status"]>(["open", "investigating", "waiting-approval"]);
 const APPROVAL_TTL_MS = 24 * 3600_000;
 
@@ -45,6 +47,7 @@ let conversation: ConversationTurn[] = [];
 const queue: string[] = [];
 const launchTimers = new Map<string, NodeJS.Timeout>();
 const continuations = new Map<string, string>();
+const conversationContinuations: string[] = [];
 const warnSeen = new Map<string, number[]>();
 let phase: SidecarPhase = "off";
 let phaseSince = iso();
@@ -230,6 +233,11 @@ function enqueue(incidentId: string): void {
 
 function pump(): void {
   if (currentRun()) return;
+  const continuation = conversationContinuations.shift();
+  if (continuation) {
+    launchManual(settings.runner, continuation);
+    return;
+  }
   const next = queue.shift();
   if (!next) {
     if (approvals.some((a) => a.status === "pending")) setPhase("waiting-approval", phaseDetail ?? "Waiting for the owner's decision");
@@ -249,9 +257,9 @@ function openIncidentsSummary(): string {
 const RULES = `Rules:
 - Start with read_instructions, then get_alerts (problemsOnly, sinceMinutes=120) and server_status.
 - Keep file edits inside the workspace. Prefer the dashboard's tools (minecraft_rcon, run_script, run_backup, list_jobs) over hand-rolled commands.
-- Before restarting/stopping the server or any destructive RCON command (stop, ban, op, deop, kill, whitelist off) call request_approval(action, reason) and then STOP and end your turn. The dashboard asks the owner and resumes you with the decision; do not wait or poll.
+- Before restarting/stopping the server, destructive RCON, running a maintenance script or job, or changing timers/deleting files, call request_approval(action, reason) and then STOP and end your turn. For scripts use action run_script:<name>, for jobs run_job:<id>, and for service actions minecraft_service:<action>. The dashboard asks the owner and resumes you with the decision; do not wait or poll. When resumed with an approval, perform that approved action without requesting it again.
 - Finish every investigation with submit_report(incidentId=…, outcome=…): what happened, what you did, when and why, what a human should decide, and any suggested changes to the instructions. outcome is "fixed" when you changed or repaired something, "no-action" when you checked and left it alone, "needs-human" when the owner must decide. If nothing needs doing, still file a short report saying so.
-- append_instructions only for durable lessons about this server.`;
+- Never change shared instructions automatically. Put any proposed lasting lesson in submit_report.contextSuggestions. The owner reviews and approves it separately in the incident menu.`;
 
 function incidentPrompt(inc: Incident, continuation?: string): string {
   const head = `You are the Minecraft server maintenance assistant, running as a sidecar of the homelab dashboard. Workspace: ${settings.workspace}.`;
@@ -259,7 +267,9 @@ function incidentPrompt(inc: Incident, continuation?: string): string {
     .slice(-12)
     .map((s) => `  ${s}`)
     .join("\n")}${inc.note ? `\nNote: ${inc.note}` : ""}\n\nOther open incidents:\n${openIncidentsSummary()}`;
-  return [head, "", body, "", RULES, continuation ? `\nUpdate from the dashboard: ${continuation}` : ""].join("\n");
+  const feedback = feedbackFor(inc.id);
+  const context = feedback.length ? `\nOwner feedback for this issue:\n${feedback.map((f) => `- ${f.text}`).join("\n")}\nRecheck the issue using this context. Explain what you reconsidered and file an updated report. Feedback applies to this issue; propose lasting lessons for approval rather than editing shared instructions.` : "";
+  return [head, "", body, context, "", RULES, continuation ? `\nUpdate from the dashboard: ${continuation}` : ""].join("\n");
 }
 
 function chatPrompt(text: string, alert: AlertEvent | null): string {
@@ -283,9 +293,10 @@ function manualPrompt(task: string): string {
 // ---- demo: a simulated agent -------------------------------------------------------------
 
 // [DEMO] a simulated agent stands in for codex/claude in demo mode (see DEMO_INDEX.md)
-function simulateAgent(inc: Incident | null, continuation: string | undefined, runner: AgentRunner, userText?: string): LaunchOptions["simulate"] {
+function simulateAgent(inc: Incident | null, continuation: string | undefined, runner: AgentRunner, userText?: string, feedback?: string): LaunchOptions["simulate"] {
   const name = `${RUNNER_NAME[runner]} (demo)`;
-  return async (emit, say) => {
+  return async (emit, say, signal) => {
+    const sleep = (ms: number) => delay(ms, undefined, { signal });
     const runId = currentRun()?.id ?? null;
     await sleep(700);
     emit("→ read_instructions()");
@@ -300,6 +311,11 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
     }
     if (!inc) {
       say("(demo) Nothing to do.");
+      return 0;
+    }
+    if (feedback) {
+      say("I revisited this issue using your feedback. In this demo the server is healthy, so no change was needed. I've suggested a lesson for you to review separately.");
+      await addReport(name, "Revisited with your feedback", `Summary: Rechecked the issue with the owner's additional context.\n\nActions taken:\n- Considered this feedback: ${feedback}\n- Checked service health; no change was needed.\n\nSuggested context updates:\nCheck recent configuration changes before recommending a restart.`, { incidentId: inc.id, runId, outcome: "no-action" });
       return 0;
     }
     if (continuation?.includes("APPROVED")) {
@@ -346,8 +362,9 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
 function startIncidentRun(incidentId: string): void {
   const inc = incidents.find((i) => i.id === incidentId);
   const continuation = continuations.get(incidentId);
+  const feedback = feedbackFor(incidentId).filter((f) => !f.runId);
   continuations.delete(incidentId);
-  if (!inc || (!continuation && !ACTIVE.has(inc.status))) {
+  if (!inc || (!continuation && !feedback.length && !ACTIVE.has(inc.status))) {
     pump();
     return;
   }
@@ -357,7 +374,7 @@ function startIncidentRun(incidentId: string): void {
     run = launchRun({
       runner: settings.runner,
       prompt: incidentPrompt(inc, continuation),
-      task: continuation ? `Continue incident #${inc.id}: ${inc.title}` : `Investigate incident #${inc.id}: ${inc.title}`,
+      task: feedback.length ? `Revisit: ${incidentSummary(inc)}` : continuation ? `Continue incident #${inc.id}: ${inc.title}` : `Investigate incident #${inc.id}: ${inc.title}`,
       kind: continuation ? "continuation" : "incident",
       incidentId: inc.id,
       resume: lastSession[settings.runner] ?? null,
@@ -365,7 +382,7 @@ function startIncidentRun(incidentId: string): void {
       timeoutMs: settings.maxRunMinutes * 60_000,
       onMessage: (t) => addTurn("assistant", t, current.runId, inc.id),
       onExit: onRunExit,
-      simulate: cfg.demo ? simulateAgent(inc, continuation, settings.runner) : undefined,
+      simulate: cfg.demo ? simulateAgent(inc, continuation, settings.runner, undefined, feedback.map((f) => f.text).join("\n")) : undefined,
     });
   } catch (e) {
     queue.unshift(incidentId);
@@ -375,10 +392,11 @@ function startIncidentRun(incidentId: string): void {
   }
   inc.status = "investigating";
   inc.runIds.push(run.id);
+  if (feedback.length) void markFeedbackRun(feedback.map((f) => f.id), run.id).catch(() => {});
   void persistIncidents();
   current = { incidentId: inc.id, runId: run.id };
   setPhase(continuation ? "acting" : "investigating", `${continuation ? "Continuing" : "Investigating"}: ${inc.title}`);
-  addTurn("system", continuation ? `Resuming incident #${inc.id} — ${continuation}` : `Investigating incident #${inc.id}: ${inc.title} (${inc.count}×, first ${inc.firstSeen.slice(11, 16)})`, run.id, inc.id);
+  addTurn("system", feedback.length ? "Revisiting this issue with your feedback." : continuation ? "Continuing the review with your decision." : `Reviewing: ${incidentSummary(inc)}`, run.id, inc.id);
 }
 
 function onRunExit(run: AgentRun, finalText: string): void {
@@ -389,25 +407,32 @@ function onRunExit(run: AgentRun, finalText: string): void {
   if (turnsThisRun === 0 && finalText) addTurn("assistant", finalText, run.id, run.incidentId);
   const inc = run.incidentId ? incidents.find((i) => i.id === run.incidentId) : null;
   const pending = approvals.find((a) => a.status === "pending" && (a.runId === run.id || (inc && a.incidentId === inc.id)));
-  if (inc) {
+  if (run.status === "cancelled") {
+    if (inc) {
+      inc.status = pending ? "waiting-approval" : "open";
+      inc.note = "Stopped by the owner; automatic investigations are paused.";
+      void persistIncidents();
+    }
+    setPhase("off", "Stopped. Automatic investigations are paused; chat is ready.");
+  } else if (inc) {
     if (pending) {
       inc.status = "waiting-approval";
       setPhase("waiting-approval", `Waiting for approval: ${pending.action}`);
     } else if (run.status === "exited" && (run.exitCode ?? 0) === 0) {
-      if (inc.reportIds.length) inc.status = "resolved";
+      if (inc.reportIds.some((id) => getReport(id)?.runId === run.id)) inc.status = "resolved";
       else {
         inc.status = "open";
-        inc.note = "The agent finished without filing a report — nothing was confirmed. Investigate again or dismiss.";
+        inc.note = "The assistant has not provided its findings yet.";
       }
     } else {
       inc.status = "failed";
-      inc.note = `The agent exited ${run.exitCode ?? "without a code"}. ${runnerOk.ok === false ? runnerOk.note ?? "" : "Check the agent lines in the feed."}`;
-      setPhase("failed", `Last run failed: ${inc.title}`);
+      inc.note = run.error ?? `The agent exited ${run.exitCode ?? "without a code"}. Check the agent lines in the feed.`;
+      setPhase("failed", inc.note);
       setTimeout(() => phase === "failed" && pump(), 60_000).unref();
     }
     void persistIncidents();
   } else if (run.status !== "exited" || (run.exitCode ?? 0) !== 0) {
-    setPhase("failed", `Last run failed (exit ${run.exitCode ?? "?"})`);
+    setPhase("failed", run.error ?? `Last run failed (exit ${run.exitCode ?? "?"})`);
     setTimeout(() => phase === "failed" && pump(), 60_000).unref();
   }
   current = { incidentId: null, runId: null };
@@ -419,8 +444,6 @@ function onRunExit(run: AgentRun, finalText: string): void {
 export function chat(text: string, by: string, alert: AlertEvent | null = null): ConversationTurn {
   const t = text.trim();
   if (!t) throw new HttpError(400, "Say something first");
-  const turn = addTurn("user", alert ? `${t}\n\n↳ about: ${alert.text}` : t, null, current.incidentId);
-  turnsThisRun = 0;
   const run = launchRun({
     runner: settings.runner,
     prompt: chatPrompt(t, alert),
@@ -433,6 +456,8 @@ export function chat(text: string, by: string, alert: AlertEvent | null = null):
     onExit: onRunExit,
     simulate: cfg.demo ? simulateAgent(incidents.find((i) => ACTIVE.has(i.status)) ?? null, undefined, settings.runner, t) : undefined,
   });
+  const turn = addTurn("user", alert ? `${t}\n\n↳ about: ${alert.text}` : t, run.id, null);
+  turnsThisRun = 0;
   current = { incidentId: null, runId: run.id };
   setPhase("investigating", `Answering ${by}`);
   return turn;
@@ -441,7 +466,6 @@ export function chat(text: string, by: string, alert: AlertEvent | null = null):
 /** The "Launch an agent" button: a one-off manual task. */
 export function launchManual(runner: AgentRunner, task: string): AgentRun {
   const t = task.trim() || "Review recent alerts, read the instructions, investigate anything broken, make safe repairs, and file a report.";
-  turnsThisRun = 0;
   const run = launchRun({
     runner,
     prompt: manualPrompt(t),
@@ -454,10 +478,21 @@ export function launchManual(runner: AgentRunner, task: string): AgentRun {
     onExit: onRunExit,
     simulate: cfg.demo ? simulateAgent(incidents.find((i) => ACTIVE.has(i.status)) ?? null, undefined, runner, t) : undefined,
   });
+  turnsThisRun = 0;
   current = { incidentId: null, runId: run.id };
   addTurn("system", `Launched ${RUNNER_NAME[runner]} manually: ${t}`, run.id, null);
   setPhase("investigating", `Manual task: ${t.slice(0, 80)}`);
   return run;
+}
+
+export async function stopAssistant(by: string): Promise<void> {
+  await updateSettings({ enabled: false }, by);
+  continuations.clear();
+  conversationContinuations.splice(0);
+  const run = currentRun();
+  if (run) stopRun(run.id);
+  addTurn("system", run ? `${by} stopped the current job and paused automatic investigations.` : `${by} paused automatic investigations.`, run?.id ?? null, run?.incidentId ?? null);
+  if (!run) setPhase("off", "Automatic investigations are paused; chat is ready.");
 }
 
 // ---- approvals ------------------------------------------------------------------------------
@@ -510,8 +545,9 @@ export async function decideApproval(id: string, decision: "approve" | "deny", b
     const inc = incidents.find((i) => i.id === a.incidentId)!;
     inc.status = "open";
     enqueue(a.incidentId);
-  } else if (!approvals.some((x) => x.status === "pending")) {
-    setPhase(settings.enabled ? "idle" : "off");
+  } else {
+    conversationContinuations.push(message);
+    pump();
   }
   return a;
 }
@@ -531,8 +567,8 @@ function consumeApproval(action: string): boolean {
  * (dashboard key) need a granted approval when requireApproval is on. Without one, a
  * request is created for the owner and the agent gets a 409 telling it to stop.
  */
-export async function gate(action: string, who: Identity, reason = "requested by the agent"): Promise<void> {
-  if (!settings.requireApproval || !who.viaKey) return;
+export async function gate(action: string, who: Identity, reason = "requested by the agent", force = false): Promise<void> {
+  if ((!settings.requireApproval && !force) || !who.viaKey) return;
   if (consumeApproval(action)) return;
   const run = currentRun();
   const a = await requestApproval(action, reason, who.name, run?.id ?? null, current.incidentId);
@@ -554,11 +590,30 @@ function findIncident(id: string): Incident {
 
 export function listIncidents(limit = 40, all = false): Incident[] {
   const sorted = [...incidents].sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)) || b.lastSeen.localeCompare(a.lastSeen));
-  return (all ? sorted : sorted.filter((i) => ACTIVE.has(i.status) || Date.now() - Date.parse(i.lastSeen) < 48 * 3600_000)).slice(0, limit);
+  return (all ? sorted : sorted.filter((i) => ACTIVE.has(i.status) || Date.now() - Date.parse(i.lastSeen) < 48 * 3600_000)).slice(0, limit).map((i) => ({ ...i, summary: incidentSummary(i) }));
 }
 
 export function getIncident(id: string): Incident {
-  return findIncident(id);
+  const incident = findIncident(id);
+  return { ...incident, summary: incidentSummary(incident) };
+}
+
+export function reviewIncident(id: string): IncidentReviewPayload {
+  const incident = getIncident(id);
+  return { incident, reports: incident.reportIds.map(getReport).filter((r): r is NonNullable<typeof r> => !!r).reverse(), conversation: conversation.filter((t) => t.incidentId === id), feedback: feedbackFor(id), suggestions: suggestionsFor(id) };
+}
+
+export async function revisitIncident(id: string, text: string, by: string): Promise<Incident> {
+  const incident = findIncident(id);
+  await addFeedback(id, text, by);
+  if (current.incidentId !== id) incident.status = "open";
+  incident.note = "Your feedback is saved for another review.";
+  await persistIncidents();
+  const timer = launchTimers.get(id);
+  if (timer) clearTimeout(timer);
+  launchTimers.delete(id);
+  enqueue(id);
+  return getIncident(id);
 }
 
 export function investigateIncident(id: string, by: string): Incident {
@@ -628,13 +683,14 @@ export function getSettings(): SidecarSettings {
 }
 
 export async function updateSettings(patch: Partial<SidecarSettings>, by: string): Promise<SidecarSettings> {
+  if (patch.runner && patch.runner !== settings.runner && currentRun()) throw new HttpError(409, "Stop the current job before changing agents");
   const before = settings;
   settings = { ...settings, ...patch };
   if (patch.runner && patch.runner !== before.runner) runnerOk = await runnerAvailable(settings.runner);
   await persistSettings();
   const changed = (Object.keys(patch) as (keyof SidecarSettings)[]).filter((k) => before[k] !== settings[k]);
   if (changed.length) publish({ source: "dashboard", kind: "log", level: "info", tags: ["maintenance"], text: `${by} changed assistant settings: ${changed.map((k) => `${k}=${String(settings[k])}`).join(", ")}` });
-  if (!settings.enabled) {
+  if (!settings.enabled || !settings.autoTrigger) {
     for (const t of launchTimers.values()) clearTimeout(t);
     launchTimers.clear();
     queue.splice(0);
@@ -645,7 +701,7 @@ export async function updateSettings(patch: Partial<SidecarSettings>, by: string
 }
 
 function stateView(): SidecarState {
-  return { phase, since: phaseSince, detail: phaseDetail, currentIncidentId: current.incidentId, currentRunId: current.runId, queue: [...queue], lastRun: listAgentRuns(1)[0] ?? null, runnerAvailable: runnerOk.ok, runnerNote: runnerOk.note };
+  return { phase, since: phaseSince, detail: phaseDetail, currentIncidentId: current.incidentId, currentRunId: current.runId, queue: [...queue], lastRun: listAgentRuns(1)[0] ?? null, runnerAvailable: runnerOk.ok, runnerNote: runnerOk.note, sessionId: currentRun()?.sessionId ?? lastSession[settings.runner] ?? null, model: settings.runner === "codex" ? cfg.codexModel : null };
 }
 
 /** Everything the agent did about each incident it reported on — the "Repairs" list. */
@@ -675,6 +731,7 @@ export function getPayload(): SidecarPayload {
 }
 
 export async function initSidecar(): Promise<void> {
+  await initIncidentReviews();
   const saved = await readJson<{ settings?: Partial<SidecarSettings>; lastSession?: Partial<Record<AgentRunner, string>> } | null>("sidecar.json", null);
   settings = { ...DEFAULTS(), ...(saved?.settings ?? {}) };
   lastSession = saved?.lastSession ?? {};
@@ -701,15 +758,18 @@ export async function initSidecar(): Promise<void> {
   runnerOk = await runnerAvailable(settings.runner);
   setPhase(settings.enabled ? (approvals.some((a) => a.status === "pending") ? "waiting-approval" : "idle") : "off");
   onReport((r) => {
-    const inc = incidents.find((i) => i.id === (r.incidentId ?? current.incidentId));
+    const linkedRun = r.runId ? listAgentRuns(50).find((run) => run.id === r.runId) : null;
+    const inc = incidents.find((i) => i.id === (r.incidentId ?? linkedRun?.incidentId));
     if (!inc) return;
     inc.reportIds.push(r.id);
     if (!r.incidentId) r.incidentId = inc.id;
+    recordSuggestion(r);
     // the strongest outcome wins: a fix stays a fix even if a later report only observes
     const rank: Record<ReportOutcome, number> = { "no-action": 1, "needs-human": 2, fixed: 3 };
     if (r.outcome && (!inc.outcome || rank[r.outcome] > rank[inc.outcome])) inc.outcome = r.outcome;
     void persistIncidents();
   });
   subscribe(onEvent);
+  for (const incident of incidents) if (feedbackFor(incident.id).some((f) => !f.runId)) enqueue(incident.id);
   if (settings.enabled && settings.autoTrigger) for (const inc of incidents) if (inc.status === "open" && !inc.runIds.length) scheduleLaunch(inc);
 }

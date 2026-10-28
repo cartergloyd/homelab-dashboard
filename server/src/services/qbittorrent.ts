@@ -80,6 +80,22 @@ export class QbittorrentClient {
     }
   }
 
+  async queue() {
+    await this.authenticate();
+    const response = await this.request("torrents/info"); this.check(response);
+    const data = await response.json();
+    if (!Array.isArray(data)) throw new HttpError(502, "Unexpected qBittorrent queue response");
+    return data.map((t: Record<string, unknown>) => ({ hash: t.hash, name: t.name, size: t.size, progress: t.progress, state: t.state, downloadSpeed: t.dlspeed, uploadSpeed: t.upspeed, eta: t.eta, savePath: t.save_path }));
+  }
+  async control(hash: string, action: "pause" | "resume" | "remove") {
+    await this.authenticate();
+    const body = new URLSearchParams({ hashes: hash, ...(action === "remove" ? { deleteFiles: "false" } : {}) });
+    const endpoint = action === "remove" ? "delete" : action === "pause" ? "stop" : "start";
+    let response = await this.request(`torrents/${endpoint}`, body);
+    if (response.status === 404 && action !== "remove") response = await this.request(`torrents/${action}`, body);
+    this.check(response);
+  }
+
   async add(input: z.output<typeof TorrentInput>): Promise<{ submitted: number; failed?: number }> {
     await this.authenticate();
     const res = await this.request("torrents/add", new URLSearchParams({ urls: input.urls.join("\n"), stopped: String(input.paused), paused: String(input.paused) }));
@@ -112,3 +128,6 @@ export async function addTorrents(input: z.output<typeof TorrentInput>) {
   if (cfg.demo) return { submitted: input.urls.length, demo: true };
   return client.add(input);
 }
+
+export const torrentQueue = () => client.queue();
+export const controlTorrent = (hash: string, action: "pause" | "resume" | "remove") => client.control(hash, action);

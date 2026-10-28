@@ -26,6 +26,8 @@ for raw in "${apps[@]}"; do
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app', :'pw') WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app') \gexec
 SELECT format('CREATE DATABASE %I OWNER %I', :'app', :'app') WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'app') \gexec
 SELECT format('REVOKE ALL ON DATABASE %I FROM PUBLIC', :'app') \gexec
+SELECT format('ALTER ROLE %I SET statement_timeout = %L', :'app', '60s') \gexec
+SELECT format('ALTER ROLE %I SET idle_in_transaction_session_timeout = %L', :'app', '60s') \gexec
 SQL
   echo "init-apps: database and role '$app' ready"
 done

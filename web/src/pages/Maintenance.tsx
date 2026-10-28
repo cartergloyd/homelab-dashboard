@@ -70,7 +70,7 @@ function fromForm(f: JobForm) {
   return { name: f.name.trim(), type: f.type, cron: f.cron.trim(), enabled: f.enabled, options };
 }
 
-function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
+export function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [f, setF] = useState<JobForm>(toForm(job));
@@ -210,7 +210,7 @@ function JobEditor({ job, onClose }: { job?: JobView; onClose: () => void }) {
   );
 }
 
-export function Maintenance() {
+export function Maintenance({ title = "Minecraft maintenance" }: { title?: string } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm } = useDialog();
@@ -253,8 +253,8 @@ export function Maintenance() {
   return (
     <>
       <PageHead
-        title="Minecraft maintenance"
-        sub="Scheduled restarts with in-game countdowns, world backups with retention, and recurring console commands."
+        title={title}
+        sub="Scheduled jobs, recurring commands and world backups."
         actions={
           <>
             <button

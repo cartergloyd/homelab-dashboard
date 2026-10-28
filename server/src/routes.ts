@@ -9,6 +9,11 @@ import { HttpError } from "./errors.js";
 import type { Identity } from "./auth.js";
 import * as files from "./services/files.js";
 import * as jellyfin from "./services/jellyfin.js";
+import { databaseFileRoutes } from "./services/databaseFiles.js";
+import { readMinecraftSettings } from "./services/minecraftSettings.js";
+import { directusRecordRoutes } from "./services/directusRecords.js";
+import { hostStatus, executeHostCommand } from "./services/host.js";
+import { repositories, RepositoryInput } from "./services/repositories.js";
 import { directusHealth } from "./services/directus.js";
 import { pgStats } from "./services/postgres.js";
 import { getPlayers, minecraftAction, minecraftCommand, minecraftStatus } from "./services/minecraft.js";
@@ -19,7 +24,7 @@ import { cancelScan, dirView, overview as scanOverview, startScan, topFiles } fr
 import { stagedUpdates } from "./services/updates.js";
 import { appsStatus } from "./services/apps.js";
 import { hostnamesStatus } from "./services/hostnames.js";
-import { TorrentInput, addTorrents, torrentStatus } from "./services/qbittorrent.js";
+import { TorrentInput, addTorrents, torrentStatus, torrentQueue, controlTorrent } from "./services/qbittorrent.js";
 import { tailscaleStatus } from "./services/tailscale.js";
 import { getStatus } from "./services/status.js";
 import { LOG_SOURCES } from "./services/logs.js";
@@ -30,9 +35,12 @@ import { addReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
 import * as sidecar from "./services/sidecar.js";
+import { requireStepUp, securityApi, legacyGate } from "./security.js";
 import type { AgentRunner, AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
 export const api = express.Router();
+api.use(requireStepUp);
+api.use("/security", securityApi);
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const user = (res: Response): Identity => res.locals.user as Identity;
@@ -43,6 +51,26 @@ function logAction(res: Response, action: string): void {
   if (u.viaKey) touchAgent(u.name, action);
   else publish({ source: "dashboard", kind: "log", level: "info", tags: ["maintenance"], text: `${u.name}: ${action}` });
 }
+
+api.use("/directus", directusRecordRoutes(logAction));
+api.get("/host", (req, res) => res.json(hostStatus(z.enum(["24h", "7d"]).parse(req.query.range ?? "24h"))));
+api.post("/terminal/execute", async (req, res) => {
+  const body = z.object({ command: z.string().trim().min(1).max(8192), cwd: z.string().max(4096).default("") }).parse(req.body);
+  const result = await executeHostCommand(body.command, body.cwd);
+  logAction(res, `ran a host command (exit ${result.code}${result.timedOut ? ", timed out" : ""})`);
+  res.json(result);
+});
+api.get("/repositories", (_req, res) => res.json(repositories.list()));
+api.post("/repositories", (req, res) => { const item = repositories.add(RepositoryInput.parse(req.body)); logAction(res, `followed repository ${item.name}`); res.status(201).json(item); });
+api.put("/repositories/:id", (req, res) => { const item = repositories.update(String(req.params.id), RepositoryInput.parse(req.body)); logAction(res, `updated repository ${item.name}`); res.json(item); });
+api.delete("/repositories/:id", (req, res) => { repositories.remove(String(req.params.id)); logAction(res, "unfollowed a repository"); res.json({ ok: true }); });
+api.post("/repositories/check", (_req, res) => { void repositories.check().catch(error => console.error("Repository check failed:", error.message)); res.status(202).json({ checking: true }); });
+api.get("/qbittorrent/queue", async (_req, res) => res.json(await torrentQueue()));
+api.post("/qbittorrent/control", async (req, res) => {
+  const body = z.object({ hash: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i), action: z.enum(["pause", "resume", "remove"]) }).parse(req.body);
+  await controlTorrent(body.hash, body.action);
+  logAction(res, `${body.action} torrent ${body.hash}`); res.json({ ok: true });
+});
 
 // ---- app -----------------------------------------------------------------
 
@@ -56,7 +84,7 @@ api.get("/config", (_req, res) => {
     demo: cfg.demo,
     torrentAdd: cfg.demo || !!cfg.qbittorrent.url,
     user: { login: u.login, name: u.name, via: u.via },
-    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl },
+    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl, router: cfg.routerUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
     timezone: cfg.timezone,
     logSources: LOG_SOURCES,
@@ -96,10 +124,10 @@ api.get("/overview", async (_req, res) => {
   ]);
   const payload: OverviewPayload = {
     status,
-    minecraft: { players: mc?.players ?? null, active: mc?.unit?.active ?? (mc?.ping ? "active" : null) },
-    jellyfin: { sessions: jf?.sessions.length ?? 0, playing: jf?.sessions.filter((s) => s.nowPlaying).length ?? 0 },
+    minecraft: { players: mc?.players ?? (mc?.ping ? { online: mc.ping.online, max: mc.ping.max, names: mc.ping.sample } : null), active: mc?.unit?.active ?? (mc?.ping ? "active" : null) },
+    jellyfin: { sessions: jf && !jf.error ? jf.sessions.length : null, playing: jf && !jf.error ? jf.sessions.filter((s) => s.nowPlaying).length : null },
     storage: fsList,
-    tailscale: { online: ts.peers.filter((p) => p.online).length, total: ts.peers.length },
+    tailscale: { online: ts.error ? null : ts.peers.filter((p) => p.online).length, total: ts.error ? null : ts.peers.length },
     nextJob: sched.nextScheduled(),
   };
   res.json(payload);
@@ -109,6 +137,13 @@ api.get("/overview", async (_req, res) => {
 
 api.get("/jellyfin", async (_req, res) => {
   res.json(await jellyfin.overview());
+});
+
+api.get("/jellyfin/library", async (req, res) => {
+  const kind = z.enum(["Movie", "Series", "Audio"]).parse(req.query.kind ?? "Movie");
+  const search = z.string().max(200).parse(req.query.search ?? "");
+  const start = z.coerce.number().int().min(0).max(1000000).parse(req.query.start ?? 0);
+  res.json(await jellyfin.libraryItems(kind, search, start));
 });
 
 api.post("/jellyfin/refresh", async (_req, res) => {
@@ -195,6 +230,8 @@ api.post(
 
 // ---- database ------------------------------------------------------------
 
+api.use("/database/files", databaseFileRoutes(logAction));
+
 // Directus-per-app platform + Cloudflare Tunnel + Postgres core (read-only)
 api.get("/apps", async (req, res) => {
   res.json(await appsStatus(req.query.refresh === "1"));
@@ -216,6 +253,8 @@ api.get("/minecraft", async (_req, res) => {
   res.json(await minecraftStatus());
 });
 
+api.get("/minecraft/settings", async (_req, res) => res.json(await readMinecraftSettings(cfg.minecraft.dir)));
+
 api.get("/minecraft/players", async (_req, res) => {
   res.json(await getPlayers());
 });
@@ -223,7 +262,7 @@ api.get("/minecraft/players", async (_req, res) => {
 api.post("/minecraft/action", async (req, res) => {
   const { action, reason } = z.object({ action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional() }).parse(req.body);
   // agents need the owner's approval for stop/restart when the sidecar says so (issue #5)
-  if (action !== "start") await sidecar.gate(`minecraft_service:${action}`, user(res), reason ?? `${action} the Minecraft server`);
+  if (action !== "start") await legacyGate(res, `minecraft_service:${action}`, user(res), reason ?? `${action} the Minecraft server`);
   logAction(res, `${action} Minecraft service`);
   await minecraftAction(action);
   res.json({ ok: true });
@@ -234,7 +273,7 @@ const RISKY_RCON = /^\/?\s*(stop|ban|ban-ip|pardon|deop|op|kill|whitelist\s+(off
 api.post("/minecraft/command", async (req, res) => {
   const { command, reason } = z.object({ command: z.string().max(500), reason: z.string().max(500).optional() }).parse(req.body);
   const risky = command.trim().match(RISKY_RCON);
-  if (risky) await sidecar.gate(`rcon:${risky[1].toLowerCase().replace(/\s+/g, " ")}`, user(res), reason ?? `RCON: ${command.trim()}`);
+  if (risky) await legacyGate(res, `rcon:${risky[1].toLowerCase().replace(/\s+/g, " ")}`, user(res), reason ?? `RCON: ${command.trim()}`);
   const output = await minecraftCommand(command);
   logAction(res, `RCON: ${command.trim()}`);
   res.json({ output });
@@ -265,7 +304,8 @@ api.delete("/jobs/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-api.post("/jobs/:id/run", (req, res) => {
+api.post("/jobs/:id/run", async (req, res) => {
+  await legacyGate(res, `run_job:${String(req.params.id)}`, user(res), "Run this maintenance job now");
   const run = sched.runJob(String(req.params.id));
   logAction(res, `ran job "${run.jobName}"`);
   res.status(202).json(run);
@@ -276,6 +316,7 @@ api.get("/backups", async (_req, res) => {
 });
 
 api.post("/backups", async (_req, res) => {
+  if (cfg.backups.method.startsWith("script:")) await legacyGate(res, `run_script:${cfg.backups.method.slice(7).trim()}`, user(res), "Run the configured backup script");
   logAction(res, "started a world backup");
   res.json(await runBackup());
 });
@@ -301,6 +342,7 @@ api.get("/scripts/runs", (req, res) => {
 
 api.post("/scripts/:name/run", async (req, res) => {
   const name = String(req.params.name);
+  await legacyGate(res, `run_script:${name}`, user(res), `Run maintenance script ${name}`);
   const run = await startScript(name, user(res).viaKey ? "agent" : "manual");
   logAction(res, `ran script ${name}`);
   res.status(202).json(run);
@@ -391,6 +433,7 @@ api.get("/context", async (_req, res) => {
 });
 
 api.put("/context", async (req, res) => {
+  if (user(res).viaKey && user(res).name.startsWith("Dashboard ")) throw new HttpError(403, "Propose lasting changes in a report so the owner can review and approve them.");
   const body = z.object({ content: z.string().max(512 * 1024), baseHash: z.string().optional(), note: z.string().max(200).default("") }).parse(req.body);
   const result = await writeContext(body.content, body.baseHash, author(res), body.note);
   if (user(res).viaKey) touchAgent(user(res).name, `updated instructions${body.note ? `: ${body.note}` : ""}`);
@@ -406,6 +449,7 @@ api.get("/context/history/:id", async (req, res) => {
 });
 
 api.post("/context/history/:id/restore", async (req, res) => {
+  if (user(res).viaKey && user(res).name.startsWith("Dashboard ")) throw new HttpError(403, "Only the owner can restore shared instructions.");
   res.json(await restoreVersion(String(req.params.id), author(res)));
 });
 
@@ -424,6 +468,11 @@ api.post("/reports", async (req, res) => {
 // ---- assistant sidecar (issue #5) ---------------------------------------------
 
 api.get("/sidecar", (_req, res) => {
+  res.json(sidecar.getPayload());
+});
+
+api.post("/sidecar/stop", async (_req, res) => {
+  await sidecar.stopAssistant(user(res).name);
   res.json(sidecar.getPayload());
 });
 
@@ -460,6 +509,22 @@ api.get("/sidecar/incidents", (req, res) => {
 
 api.get("/sidecar/incidents/:id", (req, res) => {
   res.json(sidecar.getIncident(String(req.params.id)));
+});
+
+api.get("/sidecar/incidents/:id/review", (req, res) => {
+  res.json(sidecar.reviewIncident(String(req.params.id)));
+});
+
+api.post("/sidecar/incidents/:id/revisit", async (req, res) => {
+  if (user(res).viaKey) throw new HttpError(403, "Only the owner can submit feedback for a revisit.");
+  const { text } = z.object({ text: z.string().trim().min(1).max(4000) }).parse(req.body);
+  res.json(await sidecar.revisitIncident(String(req.params.id), text, user(res).name));
+});
+
+api.post("/sidecar/suggestions/:id", async (req, res) => {
+  if (user(res).viaKey) throw new HttpError(403, "Only the owner can approve lasting instruction changes.");
+  const { decision } = z.object({ decision: z.enum(["approve", "decline"]) }).parse(req.body);
+  res.json(await sidecar.decideSuggestion(String(req.params.id), decision, user(res).name));
 });
 
 api.post("/sidecar/incidents/:id/investigate", (req, res) => {

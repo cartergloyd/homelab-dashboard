@@ -134,7 +134,7 @@ async function httpsProbe(url: string, timeoutMs = 8000): Promise<HostnameProbe>
   }
 }
 
-async function probe(host: string, role: HostRole, port: number | null): Promise<HostnameProbe> {
+export async function probeHostname(host: string, role: HostRole, port: number | null): Promise<HostnameProbe> {
   switch (role) {
     case "game": {
       const p = await pingServer(host, port ?? 25565, 4000);
@@ -150,16 +150,22 @@ async function probe(host: string, role: HostRole, port: number | null): Promise
       const first = await httpsProbe(`https://${host}/`);
       if (first.ok) return first;
       const jf = await httpsProbe(`http://${host}:8096/health`, 5000);
-      return jf.ok ? { ...jf, detail: "Jellyfin answers on 8096" } : { ...first, detail: `${first.detail} — from inside the house a hairpin-NAT block can hide a working forward` };
+      if (jf.ok) return { ...jf, detail: "Jellyfin answers on 8096" };
+      // A failed loopback connection is not evidence of an external outage.
+      // Preserve concrete HTTP failures, but distinguish an unanswered LAN probe.
+      if (first.httpStatus !== null) return first;
+      if (jf.httpStatus !== null) return jf;
+      return { ...first, ok: null, detail: "Public access unverified from this server: HTTPS and port 8096 did not answer. Router NAT loopback may block this check even when access works outside Wi-Fi." };
     }
     default:
       return httpsProbe(`https://${host}/`);
   }
 }
 
-function stateOf(p: HostnameProbe, resolved: string[], planned: boolean): ServiceState {
+export function stateOf(p: HostnameProbe, resolved: string[], planned: boolean): ServiceState {
   if (planned && !resolved.length) return "unavailable";
   if (!resolved.length) return "down";
+  if (p.ok === null) return "unavailable";
   if (p.ok && p.cert && p.cert.daysLeft < 14) return "degraded"; // renewal is late — the card says so
   if (p.ok) return "ok";
   if (p.httpStatus === 404) return "degraded";
@@ -220,7 +226,7 @@ export async function hostnamesStatus(force = false): Promise<HostnamesPayload> 
       const proxiedLive = resolved.length ? resolved.every(isCloudflareIp) : null;
       const proxied = recs.find((r) => r.proxied !== null)?.proxied ?? proxiedLive;
       const planned = source === "extra" || source === "config";
-      const p = resolved.length ? await probe(host, role, srvPorts.get(host) ?? null) : { kind: "none" as const, ok: null, httpStatus: null, latencyMs: null, detail: planned ? "no record yet" : "does not resolve" };
+      const p = resolved.length ? await probeHostname(host, role, srvPorts.get(host) ?? null) : { kind: "none" as const, ok: null, httpStatus: null, latencyMs: null, detail: planned ? "no record yet" : "does not resolve" };
       const certNote = p.cert && p.cert.daysLeft < 14 ? `certificate expires in ${p.cert.daysLeft} day(s) — renewal is late` : undefined;
       const note = role === "game" && srvPorts.has(host) ? `SRV → port ${srvPorts.get(host)}` : proxied && (role === "game" || role === "stream") ? "proxied — this cannot work for a non-HTTP service; set the record to DNS only" : certNote;
       return { host, role, records: recs.map((r) => `${r.type} ${r.data}`), source, target: describeTarget(recs, homeIp) ?? (resolved.length ? resolved.join(", ") : null), proxied, resolved, probe: p, state: note?.startsWith("proxied") ? "down" : stateOf(p, resolved, planned), note };

@@ -16,8 +16,9 @@ const STATUS: Record<UpdateStatus, { label: string; state: string }> = {
 };
 
 function Ver({ v, empty = "–" }: { v: UpdateVersion | null; empty?: string }) {
-  if (!v || (!v.version && v.build === null)) return <span className="muted">{empty}</span>;
-  const label = v.version ?? (v.build !== null && v.build !== undefined ? `build ${v.build}` : "?");
+  if (!v) return <span className="muted">{empty}</span>;
+  const label = v.version && v.version === v.mcVersion && v.build != null ? `${v.version}-${v.build}`
+    : v.version ?? (v.build != null ? `build ${v.build}` : "version unknown");
   return (
     <span className="nowrap" title={[v.file, v.source ? `source: ${v.source}` : null, v.channel ? `channel: ${v.channel}` : null].filter(Boolean).join("\n")}>
       {v.url ? (
@@ -137,7 +138,7 @@ export function StagedUpdate() {
         </table>
       )}
       <p className="muted small" style={{ margin: "10px 0 0" }}>
-        Installed versions are read from each jar's plugin.yml; staged ones from the staging folder your update-fetch job fills; latest from PaperMC, Modrinth, Hangar or GitHub. This panel only reads — the existing update + restart timer applies staged files.
+        Paper is read from the server jar in the main Minecraft folder; plugin versions come from their plugin.yml files. Staged versions come from your update-fetch folder; latest versions from PaperMC, Modrinth, Hangar or GitHub. This panel only reads — the existing update + restart timer applies staged files.
       </p>
     </Card>
   );

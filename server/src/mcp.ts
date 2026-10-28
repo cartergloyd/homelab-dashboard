@@ -14,6 +14,10 @@ import { z } from "zod";
 
 const BASE = (process.env.HOMELAB_URL ?? "http://127.0.0.1:3000").replace(/\/$/, "");
 const KEY = process.env.HOMELAB_KEY ?? process.env.DASHBOARD_KEY ?? "";
+const accessId = process.env.CF_ACCESS_CLIENT_ID;
+const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+if (!!accessId !== !!accessSecret) throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET for remote automation.");
+if (accessId && new URL(BASE).protocol !== "https:") throw new Error("Cloudflare service credentials require an HTTPS HOMELAB_URL.");
 let agentName = process.env.HOMELAB_AGENT ?? "MCP client";
 
 const LOG_SOURCES = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"] as const;
@@ -25,10 +29,15 @@ async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, 
     headers: {
       Authorization: `Bearer ${KEY}`,
       "X-Homelab-Agent": agentName,
+      ...(accessId && accessSecret ? {
+        "CF-Access-Client-Id": accessId,
+        "CF-Access-Client-Secret": accessSecret,
+      } : {}),
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
+    redirect: "error",
   });
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
@@ -328,7 +337,7 @@ server.registerTool(
   },
   async ({ title, summary, actionsTaken, followUp, contextSuggestions, incidentId, outcome }) => {
     const body = [`Summary: ${summary.trim()}`, actionsTaken ? `Actions taken:\n${actionsTaken.trim()}` : "", followUp ? `Follow-up for a human:\n${followUp.trim()}` : "", contextSuggestions ? `Suggested context updates:\n${contextSuggestions.trim()}` : ""].filter(Boolean).join("\n\n");
-    const r = await call<{ id: string }>("POST", "/api/reports", { title, body, incidentId, outcome });
+    const r = await call<{ id: string }>("POST", "/api/reports", { title, body, incidentId, outcome, runId: process.env.HOMELAB_RUN_ID });
     return text(`Report filed (${r.id})${incidentId ? ` for incident #${incidentId}` : ""}.`);
   },
 );

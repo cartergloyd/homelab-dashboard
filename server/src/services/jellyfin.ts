@@ -112,3 +112,10 @@ export function scheduleLibraryRefresh(): void {
     refreshLibrary().catch((e: Error) => console.warn(`[jellyfin] library refresh failed: ${e.message}`));
   }, 30_000);
 }
+
+export async function libraryItems(kind: "Movie" | "Series" | "Audio", search: string, start: number) {
+  if (!cfg.jellyfin.apiKey) throw new Error("JELLYFIN_API_KEY is not configured");
+  const query = new URLSearchParams({ IncludeItemTypes: kind, Recursive: "true", Limit: "30", StartIndex: String(start), SortBy: "SortName", SortOrder: "Ascending", Fields: "Path,ProductionYear", ...(search ? { SearchTerm: search } : {}) });
+  const result = await api<{ Items: { Id: string; Name: string; Type: string; ProductionYear?: number; Path?: string; RunTimeTicks?: number }[]; TotalRecordCount: number }>(`/Items?${query}`);
+  return { items: result.Items.map(item => ({ id: item.Id, name: item.Name, type: item.Type, year: item.ProductionYear, path: item.Path, minutes: item.RunTimeTicks ? Math.round(item.RunTimeTicks / 600_000_000) : null })), total: result.TotalRecordCount };
+}

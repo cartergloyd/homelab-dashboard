@@ -22,6 +22,7 @@ import type {
   ContainerInfo,
   DatabasePayload,
   Filesystem,
+  DriveInventory,
   FolderUsage,
   GeoInfo,
   JellyfinPayload,
@@ -297,6 +298,16 @@ export function folders(): FolderUsage[] {
     { label: "Minecraft server", path: "/opt/minecraft", bytes: 14.2 * 1024 ** 3 },
     { label: "Minecraft backups", path: "/var/backups/minecraft", bytes: 61 * 1024 ** 3 },
   ];
+}
+
+export function driveInventory(): DriveInventory {
+  return {
+    devices: [
+      ...filesystems().map((f) => ({ path: f.filesystem, type: "disk", model: "Demo storage", label: null, filesystem: "ext4", uuid: null, sizeBytes: f.totalBytes, mounts: [f.mount], readOnly: false, children: [] })),
+      { path: "/dev/sdc", type: "disk", model: "Demo archive disk", label: null, filesystem: null, uuid: null, sizeBytes: 1_000_000_000_000, mounts: [], readOnly: false, children: [{ path: "/dev/sdc1", type: "part", model: null, label: "Archive", filesystem: "ntfs", uuid: "demo-archive", sizeBytes: 1_000_000_000_000, mounts: [], readOnly: false, children: [] }] },
+    ],
+    error: null,
+  };
 }
 
 // ---- storage explorer (issue #4) -------------------------------------------

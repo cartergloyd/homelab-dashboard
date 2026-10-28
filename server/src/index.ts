@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 import express, { type ErrorRequestHandler } from "express";
 import { ZodError } from "zod";
 import { identityMiddleware } from "./auth.js";
+import { httpSecurity, sensitiveRateLimit } from "./httpSecurity.js";
 import { cfg } from "./config.js";
+import { stepUp } from "./security.js";
 import { bootstrapDemo } from "./demo.js";
 import { statusOf } from "./errors.js";
 import { api } from "./routes.js";
@@ -13,10 +15,13 @@ import { startHub } from "./services/alerts.js";
 import { initContext } from "./services/context.js";
 import { initDiskScan } from "./services/diskscan.js";
 import { initReports } from "./services/reports.js";
+import { initMinecraft } from "./services/minecraft.js";
 import { initScheduler } from "./services/scheduler.js";
 import { initScripts } from "./services/scripts.js";
 import { initSidecar } from "./services/sidecar.js";
 import { refreshFolders } from "./services/storage.js";
+import { initHostMetrics } from "./services/host.js";
+import { initRepositoryChecks } from "./services/repositories.js";
 import { attachLogSocket } from "./ws.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,9 +37,14 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 
 async function main(): Promise<void> {
+  if (cfg.demo && cfg.cfAccess?.publicUrl) throw new Error("Refusing demo mode on a configured public dashboard. Remove DEMO from the production environment.");
   // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) await bootstrapDemo();
   fs.mkdirSync(cfg.dataDir, { recursive: true });
+  initHostMetrics();
+  initRepositoryChecks();
+  await stepUp.init();
+  initMinecraft();
   await startHub();
   await initScripts();
   await initContext();
@@ -47,8 +57,10 @@ async function main(): Promise<void> {
   const app = express();
   app.set("trust proxy", false);
   app.disable("x-powered-by");
+  app.use(httpSecurity);
   app.use(express.json({ limit: "1mb" }));
   app.use(identityMiddleware);
+  app.use(sensitiveRateLimit());
   app.use("/api", api);
 
   const webDist = path.resolve(here, "../../web/dist");
