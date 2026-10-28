@@ -354,7 +354,7 @@ export interface OverviewPayload {
   minecraft: { players: McPlayers | null; active: string | null };
   jellyfin: { sessions: number | null; playing: number | null };
   storage: Filesystem[];
-  tailscale: { online: number; total: number };
+  tailscale: { online: number | null; total: number | null };
   nextJob: { name: string; at: string } | null;
 }
 

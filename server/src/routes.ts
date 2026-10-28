@@ -123,10 +123,10 @@ api.get("/overview", async (_req, res) => {
   ]);
   const payload: OverviewPayload = {
     status,
-    minecraft: { players: mc?.players ?? null, active: mc?.unit?.active ?? (mc?.ping ? "active" : null) },
+    minecraft: { players: mc?.players ?? (mc?.ping ? { online: mc.ping.online, max: mc.ping.max, names: mc.ping.sample } : null), active: mc?.unit?.active ?? (mc?.ping ? "active" : null) },
     jellyfin: { sessions: jf && !jf.error ? jf.sessions.length : null, playing: jf && !jf.error ? jf.sessions.filter((s) => s.nowPlaying).length : null },
     storage: fsList,
-    tailscale: { online: ts.peers.filter((p) => p.online).length, total: ts.peers.length },
+    tailscale: { online: ts.error ? null : ts.peers.filter((p) => p.online).length, total: ts.error ? null : ts.peers.length },
     nextJob: sched.nextScheduled(),
   };
   res.json(payload);

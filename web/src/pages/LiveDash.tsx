@@ -266,7 +266,7 @@ export function LiveOverview({ business = false }: { business?: boolean }) {
           <Icons.shield />
           <h2>Tailscale</h2>
           <strong>
-            {d ? `${d.tailscale.online} / ${d.tailscale.total}` : "—"}
+            {d?.tailscale.total != null ? `${d.tailscale.online} / ${d.tailscale.total}` : "Unavailable"}
           </strong>
           <small>Devices online</small>
         </Link>
