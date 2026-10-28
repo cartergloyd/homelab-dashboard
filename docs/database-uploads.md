@@ -45,3 +45,17 @@ Database dumps contain metadata only; include upload storage in file backups.
 Live verification passed for document/image uploads, listing, exact download
 bytes and image previews in all three targets. Anonymous requests were rejected.
 All six temporary verification files were removed after testing.
+
+## Redesigned AI workspace upload action
+
+In xGold AI → Files, the Directus panel's Upload files action opens the private
+library and the system file chooser in one click. It uses the selected Directus
+instance (AI by default in the business workspace). Files opens the same library
+without opening the chooser. The chooser waits until that target's private upload
+service is ready and opens only once per drawer visit. The underlying owner-only
+upload service and 25 MB limit are unchanged.
+
+The browser regression checks that the action opens a chooser, posts multipart
+file content to the AI target, and that browsing the library does not trigger a
+chooser. Live document/image uploads, exact downloads and inline image previews
+are verified during deployment; synthetic verification files are removed afterward.

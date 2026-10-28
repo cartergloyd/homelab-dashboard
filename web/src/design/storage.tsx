@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAppConfig } from "../App";
@@ -32,9 +32,11 @@ type StoredFile = {
 export function FileStore({
   initialTarget,
   compact = false,
+  autoPick = false,
 }: {
   initialTarget?: string;
   compact?: boolean;
+  autoPick?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
   const targets = useRead<FileTarget[]>(
@@ -46,6 +48,7 @@ export function FileStore({
     [progress, setProgress] = useState(""),
     [view, setView] = useState<StoredFile | null>(null),
     input = useRef<HTMLInputElement>(null),
+    picked = useRef(false),
     toast = useToast(),
     qc = useQueryClient();
   const target = selected || targets.data?.find((t) => t.enabled)?.id || "",
@@ -56,6 +59,12 @@ export function FileStore({
         api.get<StoredFile[]>(`/database/files/${encodeURIComponent(target)}`),
       enabled: !!enabled,
     });
+  useEffect(() => {
+    if (autoPick && enabled && !picked.current) {
+      picked.current = true;
+      input.current?.click();
+    }
+  }, [autoPick, enabled]);
   async function upload(files: File[]) {
     if (files.some((f) => f.size > 25 * 1024 * 1024)) {
       toast("Each file must be 25 MB or smaller.", "error");
