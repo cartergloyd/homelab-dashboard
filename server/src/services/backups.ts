@@ -5,6 +5,7 @@
 //   mc-YYYYMMDD-HHMMSS.tar.gz        "dashboard"    (what the built-in backup writes in archive mode)
 //   mcworld_YYYY_MM_DD/<x>.tar.gz    "dated-folder" (the owner's existing layout, issue #2)
 //   *.tar.gz | *.tgz | *.zip | *.tar.zst   "archive" (anything else that looks like a backup)
+import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -36,7 +37,7 @@ export async function worldFolders(): Promise<string[]> {
   return [level, `${level}_nether`, `${level}_the_end`];
 }
 
-const DASH_RE = /^mc-\d{8}-\d{6}\.tar\.gz$/;
+const DASH_RE = /^mc-\d{8}-\d{6}(?:-[a-f0-9]{8})?\.tar\.gz$/;
 const DATED_RE = /^mcworld_\d{4}_\d{2}_\d{2}$/;
 const ARCHIVE_RE = /\.(tar\.gz|tgz|zip|tar\.zst|tar\.xz|tar)$/i;
 
@@ -173,8 +174,9 @@ async function resumeSaving(): Promise<void> {
  * "Back up now" / backup jobs. BACKUP_METHOD=script:<name> runs the owner's own
  * script; builtin pauses autosave, tars the worlds in BACKUP_FORMAT, resumes.
  */
-export async function runBackup(keep = cfg.backups.keep): Promise<BackupResult> {
-  const method = cfg.backups.method;
+export async function runBackup(keep = cfg.backups.keep, options: { preserveExisting?: boolean; offline?: boolean } = {}): Promise<BackupResult> {
+  const method = options.preserveExisting ? "builtin" : cfg.backups.method;
+  const format = options.preserveExisting ? "archive" : cfg.backups.format;
   if (method.startsWith("script:")) {
     const name = method.slice(7).trim();
     const { run, tail } = await runScriptAndWait(name, "job");
@@ -191,10 +193,11 @@ export async function runBackup(keep = cfg.backups.keep): Promise<BackupResult> 
   if (!worlds.length) throw new Error(`No world folders (${names.join(", ")}) found in ${cfg.minecraft.dir} — check level-name in server.properties`);
 
   const now = new Date();
-  const saving = await pauseSaving();
+  const saving = options.offline ? false : await pauseSaving();
+  if (options.preserveExisting && !options.offline && !saving) throw new Error("Cannot make a consistent live backup: Minecraft save control is unavailable");
   let outPath: string;
   try {
-    if (cfg.backups.format === "dated-folder") {
+    if (format === "dated-folder") {
       const day = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
       outPath = path.join(root, `mcworld_${day}`);
       await fs.mkdir(outPath, { recursive: true });
@@ -203,7 +206,8 @@ export async function runBackup(keep = cfg.backups.keep): Promise<BackupResult> 
       }
     } else {
       const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-      outPath = path.join(root, `mc-${stamp}.tar.gz`);
+      outPath = path.join(root, `mc-${stamp}${options.preserveExisting ? `-${crypto.randomUUID().slice(0, 8)}` : ""}.tar.gz`);
+      if (options.preserveExisting) { const reserved = await fs.open(outPath, "wx", 0o600); await reserved.close(); }
       try {
         await execFileP("tar", ["-czf", outPath, "-C", cfg.minecraft.dir, "--exclude=session.lock", ...worlds], { timeout: 60 * 60_000, maxBuffer: 1 << 20 });
       } catch (e) {
@@ -216,7 +220,7 @@ export async function runBackup(keep = cfg.backups.keep): Promise<BackupResult> 
   }
 
   await markCreated(outPath);
-  const size = cfg.backups.format === "dated-folder" ? (await dirSize(outPath)).bytes : (await fs.stat(outPath)).size;
-  const pruned = await prune(keep);
-  return { file: path.basename(outPath), bytes: size, pruned, savedWhileRunning: saving, method: `builtin/${cfg.backups.format}` };
+  const size = format === "dated-folder" ? (await dirSize(outPath)).bytes : (await fs.stat(outPath)).size;
+  const pruned = options.preserveExisting ? 0 : await prune(keep);
+  return { file: path.basename(outPath), bytes: size, pruned, savedWhileRunning: saving, method: `builtin/${format}` };
 }

@@ -13,6 +13,8 @@ export interface Identity {
   via: IdentityVia;
   /** true when authenticated with DASHBOARD_KEY (scripts, MCP connector, agents) */
   viaKey?: boolean;
+  /** Present only for the dashboard-managed assistant connection. */
+  dashboardRunId?: string;
   /** Stable binding to the signed Access login, without retaining its JWT. */
   sessionId?: string;
 }
@@ -60,7 +62,7 @@ function bearerOf(headers: IncomingHttpHeaders): string | null {
 
 function keyIdentity(headers: IncomingHttpHeaders): Identity {
   const agent = (header(headers, "x-homelab-agent") ?? "").trim().slice(0, 60) || "connector";
-  return { login: "dashboard-key", name: agent, via: "key", viaKey: true };
+  return { login: "dashboard-key", name: agent, via: "key", viaKey: true, dashboardRunId: header(headers, "x-homelab-run-id")?.trim().slice(0, 100) || undefined };
 }
 
 // ---- Cloudflare Access (the dashboard published through the tunnel, SERVER_SETUP § 7b) ----------

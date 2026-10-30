@@ -74,11 +74,23 @@ export async function requireStepUp(req: Request, res: Response, next: NextFunct
   if (user.viaKey && (/^\/sidecar\/approvals\/[^/]+$/.test(p) || p.startsWith("/security/")) && !(req.method === "GET" && p === "/security/status")) {
     throw new HttpError(403, "Only a signed-in owner can manage security or decide approvals");
   }
+  // Recovery is preauthorized for the dedicated responder; browser actions still use TOTP.
+  const recoveryAction = p === "/minecraft/action" ? `minecraft_service:${req.body?.action}`
+    : p === "/minecraft/command" ? `rcon:${String(req.body?.command ?? "").trim().replace(/^\//, "").replace(/\s+/g, " ").replace(/^say .*/i, "say").toLowerCase()}` : "";
+  if (sidecar.isPlayerSupportRun(user)) {
+    const diagnosis = req.method === "GET" && ["/status", "/minecraft", "/minecraft/settings", "/alerts", "/context", "/jobs", "/updates"].includes(p);
+    if (p === "/alerts" && req.query?.sources !== "minecraft") throw new HttpError(403, "Discord support may read Minecraft alerts only");
+    const report = req.method === "POST" && p === "/reports" && req.body?.runId === user.dashboardRunId;
+    if (diagnosis || report || (req.method === "POST" && sidecar.canRecover(recoveryAction, user))) return next();
+    throw new HttpError(403, "Discord player support is limited to Minecraft diagnosis and start/restart recovery. Administrative changes require the owner through the dashboard.");
+  }
+  if (sidecar.canRecover(recoveryAction, user)) return next();
   const description = protectedAction(req.method, req.path, req.body);
   if (!description) return next();
   const securityChange = p.startsWith("/security/");
   const login = user.login.toLowerCase();
   if (!securityChange && !stepUp.activeAccounts()) return next(); // Enrollment enables enforcement.
+  if (user.viaKey && !user.dashboardRunId) return next(); // Interactive clients ask in their own CLI/chat.
   if (user.viaKey) {
     // The owner must approve this exact method/path/body through the protected UI.
     await sidecar.gate(`stepup:${target(req)}`, user, `${description}${req.method === "DELETE" && req.path.toLowerCase().replace(/\/+$/, "") === "/backups" ? `: ${String(req.query.path ?? req.query.name ?? "").slice(0, 500)}` : ""}`, true);

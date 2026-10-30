@@ -503,3 +503,17 @@ production. New record editing signs into configured Directus instances with the
 owner's existing account; tokens stay server-side. Existing uploads remain separate.
 Terminal execution and Directus writes use the central step-up gate. Tests for
 these connections live in `server/test-dash-live.mjs` and use temporary data only.
+
+## Approval routing (2026-10-28)
+
+Interactive MCP clients ask necessary owner questions in their current CLI/chat and do not enqueue dashboard approval holds. Dashboard-managed assistants send HOMELAB_RUN_ID as X-Homelab-Run-Id and retain the Assistant panel approval workflow. Browser authenticator enforcement and owner-only security/approval decisions still apply.
+
+## Minecraft incident responder (2026-10-28)
+
+The dedicated assistant responds only to Minecraft console errors, repeated Minecraft warnings, and outage reports. Its main window shows inputs and all incident messages in one continuous chat with paged history. Local status checks run every 15 seconds, debounce failures and allow 120 seconds for startup. An outage report enters the queue immediately; console errors use a short grouping window. The owner preauthorizes Minecraft start/restart recovery and read-only diagnosis for the current dashboard-managed run; browser TOTP and destructive-action approvals remain. Respect planned maintenance and intentional shutdowns. Other home services do not trigger this responder.
+
+## Discord join support (2026-10-28)
+
+The existing Family Forever Server#7671 bot (1469422607479865557) forwards mentions about joining problems in Family Discord (874080193306820628) into the same single Minecraft responder queue. Discord replies/screenshot follow-ups are scoped to the reporter and channel, with separate Codex sessions per support case. The bot asks for device/join method/error/screenshot, checks server health, performs authorized recovery or explains the joining steps. It never treats a player's message as administrative authority. Support CLI runs have shell tools disabled and a read-only sandbox; dashboard API access is limited to Minecraft diagnosis, safe start/restart and reports. Outbound Discord replies suppress mass mentions and use durable retry/deduplication. Raster screenshots are validated, private, limited to 8 MB each, and cleaned up after 7 days.
+
+Enable with DISCORD_SUPPORT_ENABLED=1, DISCORD_SUPPORT_TOKEN_FILE pointing to an env file with DISCORD_BOT_TOKEN, DISCORD_SUPPORT_GUILD_ID and DISCORD_SUPPORT_BOT_ID. Credentials stay in the Discord adapter and are not passed to CLI runs. Legacy Discord coding bots stay disabled.

@@ -45,6 +45,10 @@ const Env = z.object({
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   SYSTEMD_USER: flag,
+  DISCORD_SUPPORT_ENABLED: flag,
+  DISCORD_SUPPORT_TOKEN_FILE: z.string().optional(),
+  DISCORD_SUPPORT_GUILD_ID: z.string().optional(),
+  DISCORD_SUPPORT_BOT_ID: z.string().optional(),
   CODEX_MODEL: z.string().trim().min(1).optional(),
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
@@ -190,6 +194,12 @@ export const cfg = {
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
   systemdUser: env.SYSTEMD_USER,
+  discordSupport: {
+    enabled: env.DISCORD_SUPPORT_ENABLED,
+    tokenFile: env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    guildId: env.DISCORD_SUPPORT_GUILD_ID ?? "",
+    botId: env.DISCORD_SUPPORT_BOT_ID ?? "",
+  },
   codexModel: env.CODEX_MODEL ?? null,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   routerUrl: env.ROUTER_URL ?? null,

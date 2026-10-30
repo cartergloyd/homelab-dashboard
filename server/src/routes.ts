@@ -492,7 +492,13 @@ api.put("/sidecar/settings", async (req, res) => {
 });
 
 api.get("/sidecar/conversation", (req, res) => {
-  res.json(sidecar.getConversation(Math.min(500, Number(req.query.limit) || 100)));
+  res.json(sidecar.getConversation(Math.max(1, Math.min(500, Number(req.query.limit) || 100)), typeof req.query.before === "string" ? req.query.before : undefined));
+});
+
+api.post("/sidecar/problems", (req, res) => {
+  if (user(res).viaKey && user(res).dashboardRunId) throw new HttpError(403, "The responder cannot submit its own outage reports");
+  const body = z.object({ kind: z.enum(["outage", "console"]), text: z.string().trim().min(1).max(4000) }).parse(req.body);
+  res.status(201).json(sidecar.reportProblem(body.kind, body.text, user(res).name));
 });
 
 api.post("/sidecar/chat", (req, res) => {
@@ -556,6 +562,7 @@ api.get("/sidecar/approvals", (req, res) => {
 api.post("/sidecar/approvals", async (req, res) => {
   const body = z.object({ action: z.string().trim().min(1).max(80), reason: z.string().trim().min(1).max(1000), incidentId: z.string().trim().max(40).optional() }).parse(req.body);
   const u = user(res);
+  if (u.viaKey && !u.dashboardRunId) throw new HttpError(400, "Ask the owner in your current CLI or assistant conversation. Dashboard approvals are for its dedicated assistant only.");
   res.status(201).json(await sidecar.requestApproval(body.action, body.reason, u.name, null, body.incidentId ?? null));
 });
 

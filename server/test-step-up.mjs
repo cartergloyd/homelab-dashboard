@@ -94,7 +94,7 @@ async function checks() {
   const app = express();
   app.use(express.json());
   // Synthetic identities exist ONLY in this isolated fixture server.
-  app.use((req, res, next) => { const keyed = req.get("test-key") === "yes"; res.locals.user = { login: req.get("test-login") ?? "owner@example.com", name: "Fixture", via: keyed ? "key" : "cloudflare", viaKey: keyed, sessionId: req.get("test-auth") ?? "login-session-a" }; next(); });
+  app.use((req, res, next) => { const keyed = req.get("test-key") === "yes"; res.locals.user = { login: req.get("test-login") ?? "owner@example.com", name: "Fixture", via: keyed ? "key" : "cloudflare", viaKey: keyed, dashboardRunId: req.get("test-dashboard-run") || undefined, sessionId: req.get("test-auth") ?? "login-session-a" }; next(); });
   app.use("/api", requireStepUp);
   app.use("/api/security", securityApi);
   let actions = 0;
@@ -140,7 +140,12 @@ async function checks() {
   assert.equal((await call(owner, "/security/enroll", {}, { "test-key": "yes" })).status, 403);
   assert.equal((await call(owner, "/sidecar/approvals/fake", { decision: "approve" }, { "test-key": "yes" })).status, 403);
 
-  const keyed = { "test-key": "yes" };
+  const interactive = { "test-key": "yes" };
+  const before = sidecar.listApprovals(true).length;
+  assert.equal((await call({ cookie: "" }, "/minecraft/action", { action: "restart" }, interactive)).status, 200, "interactive assistant uses its own conversation even with enrollment active");
+  assert.equal(sidecar.listApprovals(true).length, before, "interactive work must not enqueue dashboard approvals");
+  actions = 1;
+  const keyed = { "test-key": "yes", "test-dashboard-run": "fixture-run" };
   assert.equal((await call({ cookie: "" }, "/minecraft/action", { action: "restart" }, keyed)).status, 409, "agent needs owner approval even when requireApproval was off");
   const approval = sidecar.listApprovals().find((a) => a.action.startsWith("stepup:"));
   assert.ok(approval);
@@ -153,6 +158,8 @@ async function checks() {
   assert.equal(actions, 2);
   assert.equal((await call({ cookie: "" }, "/minecraft/action", { action: "stop" }, keyed)).status, 409, "owner approval is bound to the exact action");
   assert.equal(actions, 2);
+  assert.equal((await call({ cookie: "" }, "/minecraft/action", { action: "stop" }, interactive)).status, 200, "legacy gate also allows interactive clients with requireApproval enabled");
+  assert.equal(actions, 3);
   console.log("step-up: encrypted enrollment, hashed single-use recovery, TOTP replay/rate limits, fail-closed reload, session/action binding, CSRF, route coverage and owner-approved agents passed");
 }
 

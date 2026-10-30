@@ -28,12 +28,20 @@ try {
 
   sidecar.chat("first message", "owner");
   const first = runner.currentRun();
+  assert.equal(sidecar.canRecover("minecraft_service:restart", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), true);
+  assert.equal(sidecar.canRecover("minecraft_service:stop", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), false);
+  assert.equal(sidecar.canRecover("minecraft_service:restart", { viaKey: true, name: "other", dashboardRunId: "unrelated-run" }), false);
+  assert.equal(sidecar.canRecover("rcon:op", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), false);
   const turnsBefore = sidecar.getConversation().length;
   assert.throws(() => sidecar.chat("must not be recorded", "owner"), /already running/);
   assert.equal(sidecar.getConversation().length, turnsBefore, "busy submissions must not leave phantom user messages");
   await waitFor(() => first.finishedAt, "first run did not finish");
   assert.equal(first.status, "exited");
   assert.ok(first.pid);
+  const inputCount = sidecar.listIncidents(200, true).length;
+  publish({ source: "jellyfin", kind: "log", level: "error", text: "Not a Minecraft error" });
+  publish({ source: "jobs", kind: "job", level: "error", text: "Unrelated failed job" });
+  assert.equal(sidecar.listIncidents(200, true).length, inputCount, "the responder ignores non-Minecraft failures");
   assert.equal(sidecar.getPayload().state.sessionId, first.sessionId);
 
   sidecar.chat("follow-up", "owner");
@@ -164,8 +172,16 @@ try {
   } finally {
     await new Promise((resolve) => http.close(resolve));
   }
-  await assert.rejects(sidecar.gate("run_script:fixture.sh", { viaKey: true, name: "Dashboard Codex" }), /Approval required/);
+  await assert.rejects(sidecar.gate("run_script:fixture.sh", { viaKey: true, name: "Dashboard Codex", dashboardRunId: "fixture-run" }), /Approval required/);
   await sidecar.gate("run_script:fixture.sh", { viaKey: false, name: "owner" });
+  const page = sidecar.getConversation(2);
+  const previous = sidecar.getConversation(2, page[0].id);
+  assert.equal(previous.some(t => page.some(p => p.id === t.id)), false, "history pages do not overlap");
+  assert.throws(() => sidecar.getConversation(2, "unknown"), /cursor not found/);
+  const countBeforeReport = sidecar.getConversation(500).length;
+  sidecar.reportProblem("outage", "Players cannot connect to the server", "owner");
+  assert.equal(sidecar.getConversation(500).length, countBeforeReport + 1, "outage input appears in the continuous chat");
+  assert.match(sidecar.getConversation(1)[0].text, /Players cannot connect/);
   console.log("agent-runner: lifecycle, service launch, feedback persistence, and owner-only instruction approval passed");
 } finally {
   for (const pid of runningPids) {

@@ -1515,3 +1515,12 @@ table.table {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.minecraft-responder .convo { min-height: 360px; max-height: 640px; padding: 16px; gap: 14px; }
+.minecraft-responder .turn { padding: 10px 14px; line-height: 1.6; }
+.minecraft-responder .turn.assistant { max-width: 100%; border: 0; background: transparent; }
+.minecraft-responder .turn.user { max-width: 94%; }
+.responder-inputs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.responder-composer { display: flex; flex-direction: column; gap: 8px; }
+.responder-controls summary { cursor: pointer; }
+.responder-controls .row { margin-top: 8px; }

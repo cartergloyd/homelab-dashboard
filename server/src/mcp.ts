@@ -18,6 +18,7 @@ const accessId = process.env.CF_ACCESS_CLIENT_ID;
 const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET;
 if (!!accessId !== !!accessSecret) throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET for remote automation.");
 if (accessId && new URL(BASE).protocol !== "https:") throw new Error("Cloudflare service credentials require an HTTPS HOMELAB_URL.");
+const dashboardRunId = process.env.HOMELAB_RUN_ID;
 let agentName = process.env.HOMELAB_AGENT ?? "MCP client";
 
 const LOG_SOURCES = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"] as const;
@@ -29,6 +30,7 @@ async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, 
     headers: {
       Authorization: `Bearer ${KEY}`,
       "X-Homelab-Agent": agentName,
+      ...(dashboardRunId ? { "X-Homelab-Run-Id": dashboardRunId } : {}),
       ...(accessId && accessSecret ? {
         "CF-Access-Client-Id": accessId,
         "CF-Access-Client-Secret": accessSecret,
@@ -183,7 +185,7 @@ server.registerTool(
   "minecraft_service",
   {
     title: "Start / stop / restart Minecraft",
-    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. When the sidecar requires approval, stop/restart return NOT RUN with an approval request: end your turn and the dashboard resumes you with the owner's decision.",
+    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. Dashboard-managed assistants use the Assistant panel for required approvals. Interactive CLI/chat assistants ask the owner in their current conversation when needed; do not stop to wait for dashboard approval.",
     inputSchema: { action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional().describe("why — shown to the owner if approval is needed") },
   },
   async ({ action, reason }) => {
@@ -221,10 +223,11 @@ server.registerTool(
   "request_approval",
   {
     title: "Ask the owner for approval",
-    description: "Before a risky step (restart/stop, destructive RCON, deleting files, changing timers) ask the owner. Returns immediately with the request id; the owner answers in the dashboard and the sidecar resumes you with the decision — so after calling this, STOP and end your turn. If a matching approval was already granted, the gated tool simply works.",
+    description: dashboardRunId ? "Minecraft start/restart recovery is preauthorized; do not request approval for it. Before destructive changes, stopping without recovery, maintenance scripts or jobs, or changing timers, ask the owner. Returns immediately with the request id; the owner answers in the dashboard and the sidecar resumes you with the decision — so after calling this, STOP and end your turn. If a matching approval was already granted, the gated tool simply works." : "Dashboard approvals are only for its dedicated problem-solving assistant. For interactive work, ask any necessary question directly in your current CLI or assistant conversation. Do not create a dashboard approval or end your turn waiting for one.",
     inputSchema: { action: z.string().min(1).max(80).describe('short id, e.g. "minecraft_service:restart", "rcon:stop", "delete:old-backups"'), reason: z.string().min(1).max(1000).describe("what you want to do and why, in plain words"), incidentId: z.string().max(40).optional() },
   },
   async ({ action, reason, incidentId }) => {
+    if (!dashboardRunId) return text("Ask any necessary approval question directly in your current CLI or assistant conversation. No dashboard approval was created. Continue work already authorized by the owner.");
     const a = await call<{ id: string; status: string }>("POST", "/api/sidecar/approvals", { action, reason, incidentId });
     return text(`Approval ${a.id} is ${a.status} for "${action}". End your turn now; the dashboard will resume you when the owner decides.`);
   },

@@ -38,6 +38,10 @@ export interface LaunchOptions {
   resume?: string | null;
   cwd?: string;
   timeoutMs?: number;
+  /** Locally validated screenshots to attach to the CLI prompt. */
+  imagePaths?: string[];
+  /** Player messages receive a read-only shell; recovery remains available through MCP. */
+  playerSupport?: boolean;
   /** the agent's own messages (not tool chatter), as they complete */
   onMessage?: (text: string) => void;
   /** called once, after the process ends */
@@ -128,16 +132,22 @@ async function claudeMcpConfig(runId: string): Promise<string> {
   return file;
 }
 
-async function commandFor(runner: AgentRunner, prompt: string, resume: string | null | undefined, cwd: string, runId: string): Promise<{ command: string; args: string[] }> {
+async function commandFor(runner: AgentRunner, prompt: string, resume: string | null | undefined, cwd: string, runId: string, imagePaths: string[] = [], playerSupport = false): Promise<{ command: string; args: string[] }> {
   const command = await runnerCommand(runner);
   if (runner === "codex") {
     // The dashboard owns approvals for this connection; no terminal is attached.
     const mcp = `{command=${JSON.stringify(process.execPath)},args=[${JSON.stringify(path.join(cfg.repoRoot, "server/dist/mcp.js"))}],env_vars=["HOMELAB_URL","HOMELAB_KEY","HOMELAB_AGENT","HOMELAB_RUN_ID"],required=true,default_tools_approval_mode="approve"}`;
-    const args = ["exec", "--sandbox", "workspace-write", "-C", cwd,
+    const args = ["exec", "--sandbox", playerSupport ? "read-only" : "workspace-write", "-C", cwd,
       "-c", "mcp_servers.homelab.enabled=false", "-c", `mcp_servers.dashboard=${mcp}`];
+    if (playerSupport) args.push("--disable", "shell_tool");
     if (cfg.codexModel) args.push("--model", cfg.codexModel);
     // Sandbox flags belong to exec, before resume. Pass the prompt over stdin.
     args.push(...(resume ? ["resume", "--json", "--skip-git-repo-check", resume, "-"] : ["--json", "--skip-git-repo-check", "-"]));
+    // Resume has its own --image option. Images must precede the session/prompt arguments.
+    if (imagePaths.length) {
+      const position = args.indexOf("--json");
+      args.splice(position, 0, ...imagePaths.flatMap(file => ["--image", file]));
+    }
     return { command, args };
   }
   const mcp = await claudeMcpConfig(runId);
@@ -276,7 +286,7 @@ export function launchRun(opts: LaunchOptions): AgentRun {
   }
 
   void (async () => {
-    const { command, args } = await commandFor(opts.runner, opts.prompt, opts.resume, cwd, run.id);
+    const { command, args } = await commandFor(opts.runner, opts.prompt, opts.resume, cwd, run.id, opts.imagePaths, opts.playerSupport);
     if (control.controller.signal.aborted) {
       finish(null);
       return;
