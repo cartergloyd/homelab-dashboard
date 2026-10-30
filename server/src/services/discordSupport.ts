@@ -7,6 +7,7 @@ import { Client, Events, GatewayIntentBits, Routes } from "discord.js";
 import { cfg } from "../config.js";
 import type { AgentRun } from "../types.js";
 import { publish } from "./alerts.js";
+import { secretIn } from "./secretFilter.js";
 import { getConversation, getSettings, registerIncidentDelivery, submitSupportReport } from "./sidecar.js";
 
 export interface SupportMessage {
@@ -26,6 +27,7 @@ interface SupportCase {
 const JOIN_HELP = /(?:can[’']?t|cannot|unable|won[’']?t|not|couldn[’']?t).{0,45}(?:join|connect|log\s?in|get\s+(?:on|in)|work)|(?:how|help).{0,40}(?:join|connect|get\s+(?:on|in))|(?:server|minecraft).{0,30}(?:down|offline|outage|unavailable)|(?:join|connect).{0,30}(?:fail|error|issue)|\bhelp\b|\berror\b|\bwhitelist\b/i;
 const TTL = 24 * 3600_000;
 const MAX_IMAGE = 8 * 1024 * 1024;
+const BLOCKED_REPLY = "I couldn't send my answer here. The server owner has been told and will follow up.";
 
 export function isSupportInput(message: SupportMessage, botId: string, guildId: string, active?: { userId: string; channelId: string; replyIds: string[]; updatedAt: number }): boolean {
   if (message.guildId !== guildId || message.author.bot || message.webhook || message.author.id === botId) return false;
@@ -151,7 +153,10 @@ export class DiscordJoinSupport {
           const reply = run.status === "exited" && !run.exitCode
             ? getConversation(500).filter(t => t.runId === run.id && t.role === "assistant").at(-1)?.text || text
             : "I couldn't finish checking this issue. Please contact the server owner and include the error screenshot. Your report is saved.";
-          support.pendingReplies.push({ runId: run.id, text: reply });
+          // Replies are public: one that carries a secret is replaced before it is stored or sent.
+          const leaked = secretIn(reply);
+          if (leaked) publish({ source: "dashboard", kind: "agent", level: "error", tags: ["security"], text: `Blocked a Discord support reply that contained ${leaked}`, meta: { incidentId: support.incidentId } });
+          support.pendingReplies.push({ runId: run.id, text: leaked ? BLOCKED_REPLY : reply });
         }
         await this.save();
         await this.flushReplies();

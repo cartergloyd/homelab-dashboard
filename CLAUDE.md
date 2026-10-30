@@ -447,6 +447,20 @@ override the placeholders wherever they conflict:
   environment (`AGENT_ENV`): systemd's EnvironmentFile had put the master key, the RCON password and
   the Postgres URL into every run. Step 1 of the assistant redesign; the ops lane comes with the ops
   agent.
+- 2026-10-30 **Run guards replace prompt rules for what a run may never do** (`services/runGuards.ts`,
+  `services/secretFilter.ts`, applied by `security.ts` to run-token requests only). These are refused:
+  - console verbs that grant power, act against players or cheat (`op`, `execute`, `ban`, `kick`,
+    `gamemode`, `give`, `tp` …), `whitelist off/remove`, and `stop`/`reload`/`save-off`, namespaced
+    forms included;
+  - a start/restart within 5 minutes of a run's last one, or once Paper has started twice in the
+    hour. Starts are counted from systemd's "Started" lines, so its own `Restart=on-failure` counts;
+  - scripts outside the Minecraft folder (`SCRIPTS_DIR` also lists `public-apps/scripts`), and jobs
+    whose script, command or restart fails the same checks;
+  - any console command or public Discord reply containing a secret value from the env,
+    `DISCORD_SUPPORT_TOKEN_FILE`, DiscordSRV's config or Codex's `auth.json`, or a token-shaped
+    string. The feed names the kind of secret, never its value.
+
+  Per-member Discord limits wait for `whitelist_add` (step 3).
 
 ## How to run & verify
 

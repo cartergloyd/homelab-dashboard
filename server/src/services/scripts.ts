@@ -73,7 +73,7 @@ export function listRuns(limit = 50): ScriptRun[] {
 }
 
 /** Resolves a script name to the first folder that contains it. */
-async function locate(name: string): Promise<{ dir: string; file: string }> {
+export async function locate(name: string): Promise<{ dir: string; file: string }> {
   if (!NAME_RE.test(name)) throw new HttpError(400, "Script names must be plain *.py or *.sh file names");
   for (const dir of cfg.scriptsDirs) {
     const file = path.join(dir, name);

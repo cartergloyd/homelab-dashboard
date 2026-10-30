@@ -3,7 +3,9 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import { cfg } from "./config.js";
 import type { Identity } from "./auth.js";
+import { jobRefusal, rconRefusal, restartRefusal, scriptRefusal } from "./services/runGuards.js";
 import type { RunLane } from "./services/runTokens.js";
+import { secretIn } from "./services/secretFilter.js";
 import { HttpError } from "./errors.js";
 import { publish } from "./services/alerts.js";
 import { StepUpStore } from "./services/stepUp.js";
@@ -64,6 +66,35 @@ export function laneRefusal(lane: RunLane, method: string, p: string): string | 
   return LANE_WRITES[lane].some((re) => re.test(`${m.toLowerCase()} ${p}`)) ? null : `The ${lane} assistant may not ${m} ${p}; it acts on ${lane} only.`;
 }
 
+function decodeSegment(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+/** The run guards for writes a lane allows: console never-list, restart limit, Minecraft-only scripts and jobs, no secrets in chat. */
+async function guardRefusal(req: Request, p: string, user: Identity): Promise<string | null> {
+  if (req.method.toUpperCase() !== "POST") return null;
+  if (p === "/minecraft/command") {
+    const command = String(req.body?.command ?? "");
+    const leaked = secretIn(command);
+    if (leaked) {
+      publish({ source: "dashboard", kind: "agent", level: "error", tags: ["security"], text: `Blocked a Minecraft command from ${user.name} that contained ${leaked}`, meta: { agent: user.name } });
+      return `That command contains ${leaked} and was blocked. Never send secrets to players.`;
+    }
+    return rconRefusal(command);
+  }
+  if (p === "/minecraft/action" && ["start", "restart"].includes(String(req.body?.action))) return restartRefusal();
+  // Routes match case-insensitively; script names keep their case.
+  const script = /^\/scripts\/([^/]+)\/run\/?$/i.exec(req.path);
+  if (script) return scriptRefusal(decodeSegment(script[1]));
+  const job = /^\/jobs\/([^/]+)\/run\/?$/i.exec(req.path);
+  if (job) return jobRefusal(decodeSegment(job[1]));
+  return null;
+}
+
 /** Keep coverage centralized, including case/trailing-slash variants Express accepts. */
 export function protectedAction(method: string, pathname: string, body: Record<string, unknown> = {}): string | null {
   let p: string;
@@ -100,7 +131,7 @@ export async function requireStepUp(req: Request, res: Response, next: NextFunct
     throw new HttpError(403, "Only a signed-in owner can manage security or decide approvals");
   }
   if (user.lane) {
-    const refusal = laneRefusal(user.lane, req.method, p);
+    const refusal = laneRefusal(user.lane, req.method, p) ?? (await guardRefusal(req, p, user));
     if (refusal) throw new HttpError(403, refusal);
   }
   // Recovery is preauthorized for the dedicated responder; browser actions still use TOTP.

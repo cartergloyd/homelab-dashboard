@@ -69,12 +69,10 @@ try {
   assert.equal(supportIdentity.dashboardRunId,supportRun.id);
   assert.equal(sidecar.isPlayerSupportRun(supportIdentity),true);
   assert.equal(sidecar.isPlayerSupportRun(identity),false);
-  let recoveryAllowed=false;
-  await requireStepUp({path:'/minecraft/action',method:'POST',body:{action:'restart'}},{locals:{user:supportIdentity}},()=>{recoveryAllowed=true});
-  assert.equal(recoveryAllowed,true);
-  for(const req of [{path:'/minecraft/command',method:'POST',body:{command:'op BadActor'}},{path:'/config',method:'GET'}]) {
-    await assert.rejects(requireStepUp(req,{locals:{user:supportIdentity}},()=>{}),/limited to Minecraft diagnosis/);
-  }
+  assert.equal(sidecar.canRecover('minecraft_service:restart',supportIdentity),true,'Discord support keeps start/restart recovery');
+  await assert.rejects(requireStepUp({path:'/minecraft/action',method:'POST',body:{action:'restart'}},{locals:{user:supportIdentity}},()=>{}),/less than 5 minutes ago/,'both runs share one restart limit');
+  await assert.rejects(requireStepUp({path:'/minecraft/command',method:'POST',body:{command:'op BadActor'}},{locals:{user:supportIdentity}},()=>{}),/only the owner may run it/);
+  await assert.rejects(requireStepUp({path:'/config',method:'GET'},{locals:{user:supportIdentity}},()=>{}),/limited to Minecraft diagnosis/);
   await assert.rejects(requireStepUp({path:'/terminal/execute',method:'POST',body:{command:'rm -rf world'}},{locals:{user:supportIdentity}},()=>{}),/no access to \/terminal/);
   sidecar.submitSupportReport('test-player-case', 'The screenshot says outdated client');
   await waitFor(() => supportRun.finishedAt);
