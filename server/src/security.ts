@@ -147,7 +147,11 @@ export async function requireStepUp(req: Request, res: Response, next: NextFunct
   }
   if (user.lane) {
     const refusal = laneRefusal(user.lane, req.method, p) ?? (await guardRefusal(req, p, user)) ?? (sidecar.isPlayerSupportRun(user) ? discordRefusal(req, p, user) : null);
-    if (refusal) throw new HttpError(403, refusal);
+    if (refusal) {
+      // Refused changes reach the feed and the owner's Discord; refused reads are only the agent's business.
+      if (!["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())) publish({ source: "dashboard", kind: "agent", level: "warn", tags: ["security", "refused"], text: `Refused ${user.name}${user.runOrigin === "discord" ? " (Discord run)" : ""}: ${refusal}`, meta: { agent: user.name, runId: user.dashboardRunId } });
+      throw new HttpError(403, refusal);
+    }
     return next();
   }
   const description = protectedAction(req.method, req.path, req.body);

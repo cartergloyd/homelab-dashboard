@@ -479,6 +479,16 @@ override the placeholders wherever they conflict:
     Management Protocol, which is off in `server.properties` on the live server. Gamertags with
     spaces are refused, because `fwhitelist` would take only the first word.
   - **Screenshots:** they moved to `DATA_DIR/discord-support-attachments`.
+- 2026-10-30 **The assistant reports to the owner in Discord; it never asks there** (`services/notify.ts`,
+  `OWNER_DISCORD_CHANNEL_ID`, token from `OWNER_DISCORD_TOKEN_FILE` or `DISCORD_SUPPORT_TOKEN_FILE`).
+  - **Posted:** files a run changed (with its rollback id), refused changes, blocked secrets, failed
+    runs, and reports whose outcome is `fixed` or `needs-human`. `no-action` reports and routine
+    lines stay in the dashboard.
+  - **Limits:** at most 6 posts an hour; held ones are summarized when there is room. Identical
+    text is skipped for 10 minutes, nobody is mentioned, and a post carrying a secret is withheld.
+  - **Channel:** on the live server it is `#server-console`, DiscordSRV's console channel. The
+    dashboard posts as DiscordSRV's own bot, and `DiscordConsoleChannelBlockBots: true`, so posts are
+    never run as console commands. Decisions stay in the dashboard.
 
 ## How to run & verify
 

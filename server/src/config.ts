@@ -49,6 +49,8 @@ const Env = z.object({
   DISCORD_SUPPORT_TOKEN_FILE: z.string().optional(),
   DISCORD_SUPPORT_GUILD_ID: z.string().optional(),
   DISCORD_SUPPORT_BOT_ID: z.string().optional(),
+  OWNER_DISCORD_CHANNEL_ID: z.string().trim().regex(/^\d+$/).optional(), // where the assistant reports to the owner
+  OWNER_DISCORD_TOKEN_FILE: z.string().optional(), // env-style file with DISCORD_BOT_TOKEN; defaults to DISCORD_SUPPORT_TOKEN_FILE
   CODEX_MODEL: z.string().trim().min(1).optional(),
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
@@ -199,6 +201,11 @@ export const cfg = {
     tokenFile: env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
     guildId: env.DISCORD_SUPPORT_GUILD_ID ?? "",
     botId: env.DISCORD_SUPPORT_BOT_ID ?? "",
+  },
+  ownerDiscord: {
+    channelId: env.OWNER_DISCORD_CHANNEL_ID ?? "",
+    tokenFile: env.OWNER_DISCORD_TOKEN_FILE ?? env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    dashboardUrl: env.PUBLIC_DASHBOARD_URL?.trim().replace(/\/$/, "") || null,
   },
   codexModel: env.CODEX_MODEL ?? null,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
