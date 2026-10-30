@@ -1,0 +1,18 @@
+[Unit]
+Description=Personal Outlook MCP endpoint for Claude
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gold/server-platform/connectors/ms365
+EnvironmentFile=/home/gold/server-platform/connectors/ms365/remote.env
+ExecStart=/home/gold/.local/node/bin/node /home/gold/server-platform/connectors/ms365/node_modules/@softeria/ms-365-mcp-server/dist/index.js --http 127.0.0.1:3002 --preset all --trust-proxy-auth --no-dynamic-registration
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=OAuth and private-key gateway for personal Outlook MCP
+Requires=ms365-mcp.service
+After=ms365-mcp.service
+PartOf=ms365-mcp.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gold/server-platform/connectors/ms365
+ExecStart=/home/gold/.local/node/bin/node /home/gold/server-platform/connectors/ms365/oauth-gateway.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
