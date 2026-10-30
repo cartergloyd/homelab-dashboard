@@ -4,8 +4,10 @@
 // through the same routes the UI uses, so it is attributed in the alerts feed.
 //
 //   HOMELAB_URL   dashboard base URL (default http://127.0.0.1:3000)
-//   HOMELAB_KEY   the dashboard's DASHBOARD_KEY (a local password, not an AI API key)
+//   HOMELAB_KEY   the dashboard's DASHBOARD_KEY (a local password, not an AI API key), or,
+//                 for runs the dashboard launches, that run's own token (services/runTokens.ts)
 //   HOMELAB_AGENT optional display name; otherwise taken from the connecting client
+//   HOMELAB_RUN_ID set by the dashboard for its own runs; must match the run's token
 //
 // Never write to stdout here except through the MCP transport.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

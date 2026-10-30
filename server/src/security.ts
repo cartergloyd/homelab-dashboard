@@ -3,6 +3,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import { cfg } from "./config.js";
 import type { Identity } from "./auth.js";
+import type { RunLane } from "./services/runTokens.js";
 import { HttpError } from "./errors.js";
 import { publish } from "./services/alerts.js";
 import { StepUpStore } from "./services/stepUp.js";
@@ -39,6 +40,30 @@ function session(req: Request, res: Response) {
 
 const target = (req: Request) => hash(JSON.stringify([req.method, req.originalUrl, req.body ?? null]));
 
+// What a dashboard-launched run may change, by lane. Anything not listed is refused before any
+// other check, so a run cannot even queue an approval for work outside its lane. Reads stay open
+// for diagnosis, except the apps' own data, repositories, the terminal and security settings.
+const LANE_WRITES: Record<RunLane, RegExp[]> = {
+  minecraft: [
+    /^post \/minecraft\/(action|command)$/,
+    /^post \/backups$/,
+    /^post \/scripts\/[^/]+\/run$/,
+    /^post \/jobs\/[^/]+\/run$/,
+    /^post \/reports$/,
+    /^post \/sidecar\/approvals$/,
+    /^post \/storage\/(scan|refresh)$/,
+  ],
+};
+const LANE_HIDDEN = /^\/(security|directus|database|repositories|terminal)(\/|$)/;
+
+/** Why a run in this lane may not make this request, or null when it may. `p` is the normalized API path. */
+export function laneRefusal(lane: RunLane, method: string, p: string): string | null {
+  const m = method.toUpperCase();
+  if (LANE_HIDDEN.test(p)) return `The ${lane} assistant has no access to /${p.split("/")[1]}.`;
+  if (["GET", "HEAD", "OPTIONS"].includes(m)) return null;
+  return LANE_WRITES[lane].some((re) => re.test(`${m.toLowerCase()} ${p}`)) ? null : `The ${lane} assistant may not ${m} ${p}; it acts on ${lane} only.`;
+}
+
 /** Keep coverage centralized, including case/trailing-slash variants Express accepts. */
 export function protectedAction(method: string, pathname: string, body: Record<string, unknown> = {}): string | null {
   let p: string;
@@ -73,6 +98,10 @@ export async function requireStepUp(req: Request, res: Response, next: NextFunct
   // A shared dashboard key must never approve its own actions or enroll a factor.
   if (user.viaKey && (/^\/sidecar\/approvals\/[^/]+$/.test(p) || p.startsWith("/security/")) && !(req.method === "GET" && p === "/security/status")) {
     throw new HttpError(403, "Only a signed-in owner can manage security or decide approvals");
+  }
+  if (user.lane) {
+    const refusal = laneRefusal(user.lane, req.method, p);
+    if (refusal) throw new HttpError(403, refusal);
   }
   // Recovery is preauthorized for the dedicated responder; browser actions still use TOTP.
   const recoveryAction = p === "/minecraft/action" ? `minecraft_service:${req.body?.action}`

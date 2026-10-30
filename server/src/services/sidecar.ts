@@ -15,12 +15,14 @@ import type { AgentRun, AgentRunner, AlertEvent, Approval, ConversationTurn, Inc
 import { RUNNER_NAME, currentRun, launchRun, listAgentRuns, runnerAvailable, stopRun, type LaunchOptions } from "./agentRunner.js";
 import { publish, query, subscribe } from "./alerts.js";
 import { addReport, getReport, onReport } from "./reports.js";
+import type { RunOrigin } from "./runTokens.js";
 import { addFeedback, decideSuggestion, feedbackFor, incidentSummary, initIncidentReviews, markFeedbackRun, recordSuggestion, suggestionsFor } from "./incidentReviews.js";
 export { decideSuggestion };
 
 interface Identity {
   viaKey?: boolean;
   dashboardRunId?: string;
+  runOrigin?: RunOrigin;
   name: string;
 }
 
@@ -594,9 +596,9 @@ function consumeApproval(action: string): boolean {
   return true;
 }
 
+/** A run started by a Discord player's message; the origin comes from the run's own token. */
 export function isPlayerSupportRun(who: Identity): boolean {
-  return !!who.viaKey && !!who.dashboardRunId && who.dashboardRunId === current.runId
-    && !!current.incidentId && !!deliveryFor(current.incidentId);
+  return !!who.viaKey && !!who.dashboardRunId && who.runOrigin === "discord";
 }
 
 /** Owner-authorized Minecraft recovery by the dedicated incident responder. */

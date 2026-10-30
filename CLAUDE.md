@@ -437,6 +437,16 @@ override the placeholders wherever they conflict:
   or in the repos) and `psql` inside the postgres container — no new dependency. Public write access
   is **not** granted at home by default (`--public-access` mirrors the Supabase anon policy when the
   front-end moves). The script runs on the server only; see the known-facts note on the dev Mac.
+- 2026-10-30 **Dashboard-launched runs get their own token, never `DASHBOARD_KEY`.** Each run gets a
+  random `hlr_` token, bound to the run id, its lane (`minecraft` for now) and its origin (`discord` or
+  `dashboard`). The token is revoked when the run ends, expires a minute past its run limit, and is
+  accepted on loopback only. A run's identity now comes only from its token: `X-Homelab-Run-Id` must
+  match it and no longer turns the master key into a run. `security.ts` refuses any write outside the
+  lane's list (`LANE_WRITES`) before any other check, and hides `/directus`, `/database`,
+  `/repositories`, `/terminal` and `/security` from runs. The runner passes agents an allowlisted
+  environment (`AGENT_ENV`): systemd's EnvironmentFile had put the master key, the RCON password and
+  the Postgres URL into every run. Step 1 of the assistant redesign; the ops lane comes with the ops
+  agent.
 
 ## How to run & verify
 
