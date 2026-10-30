@@ -31,6 +31,7 @@ const propose = flag(argv, "--propose");
 const applyProposals = flag(argv, "--apply");
 
 const { cfg } = await import("../config.js");
+const { securityChecks } = await import("./security-audit.js");
 const { unitState } = await import("../services/systemd.js");
 const { containerInfo, dockerAvailable } = await import("../services/docker.js");
 const { health: jellyfinHealth } = await import("../services/jellyfin.js");
@@ -56,7 +57,8 @@ const add = (area: string, name: string, status: Status, detail: string, gate = 
 
 async function run(cmd: string, args: string[], timeout = 8000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   try {
-    const r = await execFileP(cmd, args, { timeout, maxBuffer: 1 << 20 });
+    const scopedArgs = cmd === "systemctl" && cfg.systemdUser ? ["--user", ...args] : args;
+    const r = await execFileP(cmd, scopedArgs, { timeout, maxBuffer: 1 << 20 });
     return { ok: true, stdout: r.stdout, stderr: r.stderr };
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string };
@@ -105,7 +107,11 @@ add("status", `systemd unit ${cfg.minecraft.service}`, unit ? "pass" : "fail", u
 
 const sudoList = (await sh("sudo", ["-n", "-l"])) ?? "";
 const unitName = cfg.minecraft.service.endsWith(".service") ? cfg.minecraft.service : `${cfg.minecraft.service}.service`;
-add("status", "sudo rule for restart", sudoList.includes(`systemctl restart ${unitName}`) ? "pass" : "fail", sudoList.includes(`systemctl restart ${unitName}`) ? "present" : `sudoers lacks "systemctl restart ${unitName}" (deploy/sudoers-homelab)`, true);
+if (cfg.systemdUser) {
+  add("status", "user service control", unit ? "pass" : "fail", unit ? "SYSTEMD_USER=1; service is managed by the current user's systemd manager" : "user unit not found", true);
+} else {
+  add("status", "sudo rule for restart", sudoList.includes(`systemctl restart ${unitName}`) ? "pass" : "fail", sudoList.includes(`systemctl restart ${unitName}`) ? "present" : `sudoers lacks "systemctl restart ${unitName}" (deploy/sudoers-homelab)`, true);
+}
 add("status", "sudo rules for VPN inspection", /wg show/.test(sudoList) && /nft list ruleset|iptables -t mangle/.test(sudoList) ? "pass" : "warn", /wg show/.test(sudoList) ? "wg show allowed" : "wg show / nft not allowed — VPN page will show Unknown for handshake and bypass detection");
 
 add("status", "docker socket", dockerAvailable() ? "pass" : "fail", dockerAvailable() ? cfg.dockerSocket : `${cfg.dockerSocket} not readable — is homelab in the docker group?`, true);
@@ -491,6 +497,19 @@ if (cfg.cfAccess) {
     add("remote", "outside with forged Tailscale headers", forged === null ? "warn" : forged !== 200 ? "pass" : "fail", forged === null ? "not reachable from here" : forged !== 200 ? `HTTP ${forged}` : "HTTP 200 — forged identity accepted", forged !== null);
   }
 } else add("remote", "cloudflare access", "skip", "CF_ACCESS_TEAM_DOMAIN / CF_ACCESS_AUD unset — the dashboard is Tailscale-only (SERVER_SETUP § 7b publishes it with GitHub login + 2FA)");
+
+if (cfg.cfAccess) {
+  try {
+    const result = await fetch(`${base}/api/security/status`, { headers: auth, signal: AbortSignal.timeout(5000) });
+    const state = await result.json() as { activeAccounts?: number; canManage?: boolean };
+    const enabled = result.ok && (state.activeAccounts ?? 0) > 0;
+    add("remote", "dashboard action confirmation", enabled ? "pass" : "fail", enabled ? `${state.activeAccounts} account(s) enrolled; protected actions require single-use confirmation` : "not enrolled — open Security in the dashboard, scan the QR and save recovery codes", true);
+    const denied = await fetch(`${base}/api/security/enroll`, { method: "POST", headers: auth, signal: AbortSignal.timeout(5000) });
+    add("remote", "agent key cannot enroll authenticator", denied.status === 403 ? "pass" : "fail", `HTTP ${denied.status}`, true);
+  } catch (e) { add("remote", "dashboard action confirmation", "fail", (e as Error).message, true); }
+}
+
+checks.push(...await securityChecks(envFile));
 
 // ---- discovery: script folders, backup roots, mirror jobs ---------------------------------------
 

@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import { AccessVerifier, accessTokenFrom, identityFromClaims, isCloudflareRequest, sessionKeyOf } from "./cf-access.js";
 import { cfg } from "./config.js";
 import { publish, touchAgent } from "./services/alerts.js";
+import { isRunToken, verifyRunToken, type RunClaims, type RunLane, type RunOrigin } from "./services/runTokens.js";
 import type { IdentityVia } from "./types.js";
 
 export interface Identity {
@@ -11,8 +12,17 @@ export interface Identity {
   name: string;
   /** how this request was authenticated (shown in the footer, recorded in the feed) */
   via: IdentityVia;
-  /** true when authenticated with DASHBOARD_KEY (scripts, MCP connector, agents) */
+  /** true when authenticated with DASHBOARD_KEY or a run token (scripts, MCP connector, agents) */
   viaKey?: boolean;
+  /** Present only for a dashboard-launched run, taken from its own run token — never from a header. */
+  dashboardRunId?: string;
+  /** The run's lane and what started it; present exactly when dashboardRunId is. */
+  lane?: RunLane;
+  runOrigin?: RunOrigin;
+  /** The Discord member whose message started the run, when it came from Discord. */
+  requester?: string;
+  /** Stable binding to the signed Access login, without retaining its JWT. */
+  sessionId?: string;
 }
 
 type Resolved = { ok: true; user: Identity } | { ok: false; status: number; message: string };
@@ -56,9 +66,18 @@ function bearerOf(headers: IncomingHttpHeaders): string | null {
   return auth?.startsWith("Bearer ") ? auth.slice(7).trim() : null;
 }
 
+function agentName(headers: IncomingHttpHeaders): string {
+  return (header(headers, "x-homelab-agent") ?? "").trim().slice(0, 60) || "connector";
+}
+
 function keyIdentity(headers: IncomingHttpHeaders): Identity {
-  const agent = (header(headers, "x-homelab-agent") ?? "").trim().slice(0, 60) || "connector";
-  return { login: "dashboard-key", name: agent, via: "key", viaKey: true };
+  return { login: "dashboard-key", name: agentName(headers), via: "key", viaKey: true };
+}
+
+function runIdentity(headers: IncomingHttpHeaders, run: RunClaims): Resolved {
+  const claimed = header(headers, "x-homelab-run-id")?.trim();
+  if (claimed && claimed !== run.runId) return { ok: false, status: 403, message: "X-Homelab-Run-Id does not match this run's token" };
+  return { ok: true, user: { login: "dashboard-run", name: agentName(headers), via: "key", viaKey: true, dashboardRunId: run.runId, lane: run.lane, runOrigin: run.origin, requester: run.requester } };
 }
 
 // ---- Cloudflare Access (the dashboard published through the tunnel, SERVER_SETUP § 7b) ----------
@@ -78,7 +97,7 @@ function noteLogin(key: string, who: string, country: string | undefined): void 
  * Requests that arrived through Cloudflare's proxy (the tunnel). Tailscale headers are NEVER read
  * here — anyone on the internet could type them — the identity comes only from the Access token
  * Cloudflare attached, which we verify ourselves. The bearer key is accepted over the tunnel only
- * together with a valid Access token (a person's or a service token's): two locks, always.
+ * together with a valid service-token Access JWT: human logins cannot authorize automation.
  */
 async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved> {
   if (!cfg.cfAccess || !accessVerifier) {
@@ -94,6 +113,7 @@ async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved
 
   const bearer = bearerOf(headers);
   if (bearer !== null) {
+    if (!who.service) return { ok: false, status: 403, message: "Remote automation requires a Cloudflare Access service token in addition to the dashboard key." };
     if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
     noteLogin(sessionKeyOf(r.claims), `${who.name} + dashboard key`, r.claims.country);
     return { ok: true, user: keyIdentity(headers) };
@@ -105,7 +125,7 @@ async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved
     return { ok: false, status: 403, message: `${who.login} is not in ALLOWED_LOGINS` };
   }
   noteLogin(sessionKeyOf(r.claims), who.login, r.claims.country);
-  return { ok: true, user: { login: who.login, name: who.name, via: "cloudflare" } };
+  return { ok: true, user: { login: who.login, name: who.name, via: "cloudflare", sessionId: crypto.createHash("sha256").update(sessionKeyOf(r.claims)).digest("hex") } };
 }
 
 /**
@@ -113,7 +133,8 @@ async function resolveCloudflare(headers: IncomingHttpHeaders): Promise<Resolved
  *  1. Tailscale identity headers. The app binds to 127.0.0.1 and `tailscale serve`
  *     proxies to it, stripping any inbound Tailscale-* headers before adding its own,
  *     so they are trustworthy only on local connections. Funnel is refused.
- *  2. `Authorization: Bearer <DASHBOARD_KEY>` for scripts and the MCP connector.
+ *  2. `Authorization: Bearer <DASHBOARD_KEY>` for scripts and the MCP connector, or a run's
+ *     own token (services/runTokens.ts) for agents the dashboard launched — loopback only.
  *     `X-Homelab-Agent` names the agent so its actions are attributed in the feed.
  *  3. Through the Cloudflare Tunnel: a Cloudflare Access token, verified here (above).
  */
@@ -122,6 +143,11 @@ export async function resolveIdentity(headers: IncomingHttpHeaders, remoteAddres
 
   const bearer = bearerOf(headers);
   if (bearer !== null) {
+    if (!isLoopback(remoteAddress)) return { ok: false, status: 403, message: "Dashboard keys require a private loopback proxy or a Cloudflare Access service token." };
+    if (isRunToken(bearer)) {
+      const run = verifyRunToken(bearer);
+      return run ? runIdentity(headers, run) : { ok: false, status: 401, message: "This run's token has expired or was revoked" };
+    }
     if (!keyMatches(bearer)) return { ok: false, status: 401, message: "Invalid dashboard key" };
     return { ok: true, user: keyIdentity(headers) };
   }

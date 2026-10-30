@@ -23,7 +23,7 @@ export function Minecraft() {
   const toast = useToast();
   const { confirm } = useDialog();
   const config = useAppConfig();
-  const q = useQuery({ queryKey: ["minecraft"], queryFn: () => api.get<MinecraftPayload>("/minecraft"), refetchInterval: 5000 });
+  const q = useQuery({ queryKey: ["minecraft"], queryFn: () => api.get<MinecraftPayload>("/minecraft"), refetchInterval: 30_000 });
   const scripts = useQuery({ queryKey: ["scripts"], queryFn: () => api.get<ScriptsPayload>("/scripts"), refetchInterval: 4000 });
   const missingDirs = scripts.data?.dirs.filter((d) => !d.exists) ?? [];
   const runScript = useMutation({
@@ -56,12 +56,14 @@ export function Minecraft() {
   const active = d?.unit?.active ?? (d?.ping ? "active" : null);
   const state = d?.ping ? "ok" : unitToState(active);
   const running = active === "active";
+  const controlsReady = d?.rcon.ok === true;
+  const controlsUnavailable = !!d && !controlsReady && (running || !!d.ping || active === "activating");
 
   const guarded = async (a: "stop" | "restart") => {
-    const n = d?.players?.online ?? 0;
+    const n = d?.players?.online ?? d?.ping?.online;
     const ok = await confirm({
       title: `${a === "stop" ? "Stop" : "Restart"} the Minecraft server?`,
-      body: n > 0 ? `${n} player${n === 1 ? " is" : "s are"} online and will be disconnected.` : "No players are online.",
+      body: n === undefined ? "The player count is unavailable. Anyone connected will be disconnected." : n > 0 ? `${n} player${n === 1 ? " is" : "s are"} online and will be disconnected.` : "No players are online.",
       confirmLabel: a === "stop" ? "Stop" : "Restart",
       danger: true,
     });
@@ -108,7 +110,7 @@ export function Minecraft() {
               <button className="btn danger" disabled={!running || action.isPending} onClick={() => guarded("stop")}>
                 <Icons.stop width={14} height={14} /> Stop
               </button>
-              <Link className="btn" to="/minecraft#maintenance">
+              <Link className="btn" to="/automation">
                 <Icons.clock width={14} height={14} /> Maintenance
               </Link>
             </div>
@@ -116,7 +118,21 @@ export function Minecraft() {
         }
       />
       <ErrorNotice error={q.error} />
-      {d && !d.rcon.ok && running && <div className="notice" style={{ marginBottom: 14 }}>RCON unavailable: {d.rcon.error}. Player list and console need RCON enabled in server.properties.</div>}
+      {controlsUnavailable && (
+        <div className="notice" style={{ marginBottom: 14 }}>
+          <strong>Minecraft controls are unavailable.</strong>{" "}
+          {d.ping
+            ? "The game server is responding, but the dashboard can't reach its control connection. Player names and console commands are unavailable."
+            : "The server may still be starting or not responding. Player names and console commands will be available when its control connection is ready."}
+          {" "}The dashboard checks again automatically.
+          {d.rcon.error && (
+            <details style={{ marginTop: 8 }}>
+              <summary>Technical details</summary>
+              <div className="mono small" style={{ marginTop: 6, overflowWrap: "anywhere" }}>{d.rcon.error}</div>
+            </details>
+          )}
+        </div>
+      )}
 
       <div className="alerts-layout">
         <div>
@@ -136,20 +152,20 @@ export function Minecraft() {
             onSubmit={(e) => {
               e.preventDefault();
               const c = cmd.trim();
-              if (!c) return;
+              if (!c || !controlsReady) return;
               send.mutate(c);
               setCmd("");
               inputRef.current?.focus();
             }}
           >
-            <input ref={inputRef} className="input" placeholder={running ? "RCON command, e.g. list, say hello, whitelist add Alex" : "Server is offline"} value={cmd} disabled={!running} onChange={(e) => setCmd(e.target.value)} />
-            <button className="btn primary" type="submit" disabled={!running || send.isPending || !cmd.trim()}>
+            <input ref={inputRef} className="input" placeholder={controlsReady ? "Server command, e.g. list, say hello, whitelist add Alex" : running || d?.ping || active === "activating" ? "Waiting for the server's control connection" : d ? "Server is offline" : "Checking server connection"} value={cmd} disabled={!controlsReady} onChange={(e) => setCmd(e.target.value)} />
+            <button className="btn primary" type="submit" disabled={!controlsReady || send.isPending || !cmd.trim()}>
               Send
             </button>
           </form>
           <div className="row" style={{ marginTop: 8, gap: 6 }}>
             {["list", "tps", "save-all", "whitelist list", "say Server maintenance soon"].map((c) => (
-              <button key={c} className="btn sm ghost mono" disabled={!running} onClick={() => send.mutate(c)}>
+              <button key={c} className="btn sm ghost mono" disabled={!controlsReady} onClick={() => send.mutate(c)}>
                 {c}
               </button>
             ))}

@@ -65,3 +65,29 @@ eq(zone.find((r) => r.name === "streaming.xgold.tech")?.ttl, 14400, "explicit TT
 const small = parseZoneFile("$ORIGIN example.com.\n$TTL 300\nwww IN CNAME host.example.net. ; comment\n  IN A 192.0.2.1\n@ 60 IN TXT \"a;b\"\nmail.example.com. IN MX 10 mx.example.com.\n");
 eq(small.map((r) => `${r.name} ${r.type} ${r.ttl} ${r.data}`), ["www.example.com CNAME 300 host.example.net.", "www.example.com A 300 192.0.2.1", "example.com TXT 60 \"a;b\"", "mail.example.com MX 300 10 mx.example.com."], "$TTL default, indented continuation, TTL before class, absolute owner");
 console.log(`zone parser: ${n} checks total (dns-lib + zone)`);
+
+// A loopback timeout must not claim that outside clients cannot connect.
+const { probeHostname, stateOf } = await import("./dist/services/hostnames.js");
+const originalFetch = globalThis.fetch;
+try {
+  globalThis.fetch = async () => { throw new Error("connection timed out"); };
+  const unreachable = await probeHostname("stream.example.invalid", "stream", null);
+  eq(unreachable.ok, null, "unanswered public streaming probe is unverified");
+  eq(stateOf(unreachable, ["192.0.2.1"], false), "unavailable", "LAN timeout is not reported down");
+  eq(stateOf(unreachable, [], false), "down", "missing DNS is still down");
+  globalThis.fetch = async (url) => {
+    if (url.startsWith("https:")) throw new Error("connection timed out");
+    return { status: 200, headers: new Headers() };
+  };
+  const reachable = await probeHostname("stream.example.invalid", "stream", null);
+  eq(reachable.ok, true, "Jellyfin HTTP fallback can establish availability");
+  eq(stateOf(reachable, ["192.0.2.1"], false), "ok", "successful fallback stays healthy");
+  globalThis.fetch = async (url) => {
+    if (url.startsWith("https:")) throw new Error("connection timed out");
+    return { status: 503, headers: new Headers() };
+  };
+  const failed = await probeHostname("stream.example.invalid", "stream", null);
+  eq(failed.httpStatus, 503, "concrete service failure is retained");
+  eq(stateOf(failed, ["192.0.2.1"], false), "down", "HTTP service failure remains down");
+} finally { globalThis.fetch = originalFetch; }
+console.log(`hostnames: ${n} total checks passed`);

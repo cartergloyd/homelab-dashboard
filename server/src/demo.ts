@@ -22,6 +22,7 @@ import type {
   ContainerInfo,
   DatabasePayload,
   Filesystem,
+  DriveInventory,
   FolderUsage,
   GeoInfo,
   JellyfinPayload,
@@ -299,6 +300,16 @@ export function folders(): FolderUsage[] {
   ];
 }
 
+export function driveInventory(): DriveInventory {
+  return {
+    devices: [
+      ...filesystems().map((f) => ({ path: f.filesystem, type: "disk", model: "Demo storage", label: null, filesystem: "ext4", uuid: null, sizeBytes: f.totalBytes, mounts: [f.mount], readOnly: false, children: [] })),
+      { path: "/dev/sdc", type: "disk", model: "Demo archive disk", label: null, filesystem: null, uuid: null, sizeBytes: 1_000_000_000_000, mounts: [], readOnly: false, children: [{ path: "/dev/sdc1", type: "part", model: null, label: "Archive", filesystem: "ntfs", uuid: "demo-archive", sizeBytes: 1_000_000_000_000, mounts: [], readOnly: false, children: [] }] },
+    ],
+    error: null,
+  };
+}
+
 // ---- storage explorer (issue #4) -------------------------------------------
 // An imaginary disk layout: a number is a size (a file if the name has an
 // extension, otherwise a folder whose contents are not broken down); an object is
@@ -544,8 +555,18 @@ export function apps(): AppsPayload {
         database: { exists: true, sizeBytes: 412 * 1024 ** 2, tables: 38, collections: 6, users: 2, lastLogin: ago(26) },
         backup: { latest: ago(55), file: "/var/backups/postgres/ai-20261017-040002.sql.gz", bytes: 18.4 * 1024 ** 2, count: 12 },
       },
+      {
+        name: "umami", kind: "umami", url: "http://127.0.0.1:3021",
+        publicUrl: "https://crm.xgold.tech/stats", siteUrl: null,
+        containerName: "homelab-umami", db: "umami", state: "ok",
+        container: container("ghcr.io/example/umami-stats:v2.19.0", 24),
+        local: { ok: true, status: "ok", latencyMs: 8 },
+        public: { ok: true, httpStatus: 302, latencyMs: 100, note: "behind Cloudflare Access (login required)" },
+        database: { exists: true, sizeBytes: 9 * 1024 ** 2, tables: 12, collections: 1, users: 1, lastLogin: null },
+        backup: { latest: ago(7), file: "/var/backups/postgres/umami.dump.gpg", bytes: 20000, count: 1 },
+      },
     ],
-    tunnel: { container: container("cloudflare/cloudflared:latest", 72), ready: true, connections: 4, hostnames: ["fam-api.xgold.tech", "ai-api.xgold.tech"] },
+    tunnel: { container: container("cloudflare/cloudflared:latest", 72), ready: true, connections: 4, hostnames: ["fam-api.xgold.tech", "ai-api.xgold.tech", "crm.xgold.tech"] },
     postgres: {
       connected: true,
       version: "PostgreSQL 16.4 on x86_64-pc-linux-gnu",

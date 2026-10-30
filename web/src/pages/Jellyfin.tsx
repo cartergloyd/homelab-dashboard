@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useAppConfig } from "../App";
 import { Icons } from "../components/icons";
+import { AddTorrentButton } from "../components/AddTorrentButton";
 import { Card, ErrorNotice, PageHead, StatTile, StatusPill, useDialog, useToast } from "../components/ui";
 import { fmtRelative, fmtUptime } from "../format";
 import type { JellyfinPayload } from "../types";
@@ -10,6 +12,7 @@ export function Jellyfin() {
   const qc = useQueryClient();
   const toast = useToast();
   const { confirm } = useDialog();
+  const config = useAppConfig();
   const q = useQuery({ queryKey: ["jellyfin"], queryFn: () => api.get<JellyfinPayload>("/jellyfin"), refetchInterval: 10_000 });
   const refresh = useMutation({
     mutationFn: () => api.post("/jellyfin/refresh"),
@@ -38,7 +41,13 @@ export function Jellyfin() {
             <a className="btn primary" href={d?.url} target="_blank" rel="noreferrer">
               <Icons.external width={14} height={14} /> Open Jellyfin
             </a>
-            <Link className="btn" to="/media#files">
+            {config.data?.links.qbittorrent && (
+              <a className="btn" href={config.data.links.qbittorrent} target="_blank" rel="noreferrer">
+                <Icons.external width={14} height={14} /> Open qBittorrent
+              </a>
+            )}
+            <AddTorrentButton />
+            <Link className="btn" to="/files">
               <Icons.folder width={14} height={14} /> Media files
             </Link>
             <button className="btn" disabled={refresh.isPending} onClick={() => refresh.mutate()}>

@@ -685,7 +685,7 @@ applies anything — the existing update + restart timer does. Configure:
 | Variable | Meaning |
 |---|---|
 | `UPDATE_STAGING_DIR` | `[INSTALLER]` where the fetch job puts new jars. Unset = look for `plugins/update` (Bukkit applies it on restart), `updates`, `staged`, `staging` under `MC_DIR`. Read the fetch script to find the real folder. |
-| `PLUGIN_SOURCES` | per-plugin upstream, e.g. `EssentialsX=modrinth:essentialsx,Chunky=hangar:pop4959/Chunky,Vault=github:MilkBowl/Vault,GoldsPlugin=none`. Unlisted plugins are searched on Modrinth by exact name. |
+| `PLUGIN_SOURCES` | per-plugin upstream, e.g. `EssentialsX=modrinth:essentialsx,Chunky=hangar:pop4959/Chunky,Vault=github:MilkBowl/Vault,GoldsPlugin=none`. Geyser-Spigot and floodgate default to their official build API (`geyser:geyser`, `geyser:floodgate`); Paper uses the PaperMC v3 API. Other unlisted plugins are searched on Modrinth by exact name. |
 | `UPDATE_CHECK` | `0` disables all upstream lookups (air-gapped / privacy). |
 
 The panel's "Applied by" line is the dashboard job (the mirrored update/restart timer)

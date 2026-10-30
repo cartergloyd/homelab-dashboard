@@ -101,15 +101,24 @@ export function getRules(): RuleSet {
   return rawRules;
 }
 
+const RCON_CONNECTION_ACTIVITY = /\bThread RCON Client \/\S+ (?:started|shutting down)\s*$/;
+
+/** Keep polling connection chatter in raw logs, not in the operational feed. */
+export function isRoutineConnection(e: Pick<AlertEvent, "source" | "kind" | "level" | "text">): boolean {
+  return e.source === "minecraft" && e.kind === "log" && e.level === "info" && RCON_CONNECTION_ACTIVITY.test(e.text);
+}
+
 export function classify(text: string): { level: AlertLevel; tags: string[] } {
+  const level = rules.error.test(text) ? "error" : rules.warn.test(text) ? "warn" : "info";
   return {
-    level: rules.error.test(text) ? "error" : rules.warn.test(text) ? "warn" : "info",
-    tags: rules.maintenance.test(text) ? ["maintenance"] : [],
+    level,
+    tags: level === "info" && RCON_CONNECTION_ACTIVITY.test(text) ? [] : rules.maintenance.test(text) ? ["maintenance"] : [],
   };
 }
 
 /** The "Problems & maintenance" filter: anything that isn't routine log noise. */
 export function isProblem(e: AlertEvent): boolean {
+  if (isRoutineConnection(e)) return false;
   return e.level !== "info" || e.tags.includes("maintenance") || e.kind !== "log";
 }
 
@@ -249,7 +258,7 @@ export interface QueryOptions {
 }
 
 export function query(opts: QueryOptions = {}): AlertEvent[] {
-  let list: AlertEvent[] = events;
+  let list: AlertEvent[] = events.filter((e) => !isRoutineConnection(e));
   if (opts.sources?.length) {
     const set = new Set(opts.sources);
     list = list.filter((e) => set.has(e.source));
@@ -275,6 +284,7 @@ export function summary(): AlertSummary {
   let lastMaintenance: AlertEvent | null = null;
   let lastAgent: AlertEvent | null = null;
   for (const e of events) {
+    if (isRoutineConnection(e)) continue;
     if (e.ts > hourAgo) {
       if (e.level === "error") errorsLastHour++;
       else if (e.level === "warn") warnsLastHour++;
@@ -315,6 +325,10 @@ interface TailState {
 }
 const tails = new Map<LogSource, TailState>();
 
+export function isTailDiagnostic(line: string): boolean {
+  return /^\[(?:journalctl(?: unavailable)?\]|docker (?:socket not available at |logs error\]))/.test(line);
+}
+
 function startTail(source: LogSource): void {
   const state = tails.get(source) ?? { stop: null, attempts: 0, startedAt: 0 };
   tails.set(source, state);
@@ -322,7 +336,7 @@ function startTail(source: LogSource): void {
   const quiet = state.attempts > 0; // after a failure, don't re-log the tailer's own complaints
 
   const onLine = (line: string) => {
-    if (quiet && line.startsWith("[")) return;
+    if (quiet && isTailDiagnostic(line)) return;
     publish({ source, kind: "log", text: line });
     rawSubs.get(source)?.forEach((fn) => fn(line));
   };

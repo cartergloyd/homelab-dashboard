@@ -211,7 +211,7 @@ export function Modal({ title, onClose, children, wide = false }: { title: strin
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal>
-        <h2>{title}</h2>
+        <div className="row spread" style={{ marginBottom: 16 }}><h2>{title}</h2><button type="button" className="btn ghost sm" aria-label="Close" onClick={onClose}>×</button></div>
         {children}
       </div>
     </div>

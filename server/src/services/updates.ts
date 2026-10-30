@@ -132,28 +132,69 @@ function paperFromName(name: string): { version: string; build: number | null } 
   return m ? { version: m[1], build: m[2] ? Number(m[2]) : null } : null;
 }
 
-async function installedPaper(): Promise<UpdateVersion | null> {
-  const dir = cfg.minecraft.dir;
-  const jars = await listJars(dir);
-  const paper = jars.map((j) => ({ ...j, meta: paperFromName(j.name) })).filter((j) => j.meta).sort((a, b) => b.mtime.getTime() - a.mtime.getTime())[0];
-  if (paper?.meta) return { version: paper.meta.version, build: paper.meta.build, date: paper.mtime.toISOString(), file: paper.file, mcVersion: paper.meta.version };
-  // Paper records what actually ran in version_history.json: "git-Paper-232 (MC: 1.21.4)" or "1.21.4-232-abcdef (MC: 1.21.4)"
+export async function readPaperMeta(file: string): Promise<{ version: string | null; build: number | null } | null> {
   try {
-    const vh = JSON.parse(await fsp.readFile(path.join(dir, "version_history.json"), "utf8")) as { currentVersion?: string };
-    const cur = vh.currentVersion ?? "";
-    const mc = cur.match(/MC:\s*([\d.]+)/)?.[1] ?? null;
-    const build = cur.match(/(?:Paper-|-)(\d+)(?:-|\s|$)/)?.[1];
-    const st = await fsp.stat(path.join(dir, "version_history.json"));
-    const generic = jars.find((j) => /^(server|minecraft_server).*\.jar$/i.test(j.name));
-    return { version: mc, build: build ? Number(build) : null, date: (generic?.mtime ?? st.mtime).toISOString(), file: generic?.file ?? null, mcVersion: mc };
+    const manifest = (await readZipEntry(file, ["META-INF/MANIFEST.MF"]))?.text.replace(/\r?\n /g, "") ?? "";
+    const field = (name: string) => manifest.match(new RegExp(`^${name}:\\s*(.+)$`, "mi"))?.[1].trim() ?? null;
+    const libraries = (await readZipEntry(file, ["META-INF/libraries.list"]))?.text ?? "";
+    const apiVersion = libraries.match(/\bio\.papermc\.paper:paper-api:([^\s]+)/)?.[1] ?? null;
+    if (!apiVersion && !/paper|purpur|folia/i.test(`${field("Implementation-Title")} ${field("Main-Class")}`)) return null;
+    const versionEntry = await readZipEntry(file, ["version.json"]);
+    let mcVersion: string | null = null;
+    try {
+      const data = JSON.parse(versionEntry?.text ?? "null") as { id?: unknown } | null;
+      if (typeof data?.id === "string" && /^\d+(?:\.\d+)+(?:[-+][\w.-]+)?$/.test(data.id)) mcVersion = data.id;
+    } catch { /* Older Paper jars may only have manifest metadata. */ }
+    const implementation = field("Implementation-Version");
+    const versions = [field("Specification-Version"), implementation, apiVersion]
+      .map((text) => text?.match(/^(\d+(?:\.\d+)+)(?:\.build\.(\d+)|-(\d+)(?:-|$))?/))
+      .filter((match): match is RegExpMatchArray => !!match && (!mcVersion || match[1] === mcVersion));
+    const version = versions.find((match) => match[2] || match[3]) ?? versions[0];
+    const explicitBuild = field("Build-Number");
+    const build = explicitBuild && /^\d+$/.test(explicitBuild) ? Number(explicitBuild)
+      : version?.[2] || version?.[3] ? Number(version[2] ?? version[3])
+      : implementation?.match(/git-(?:Paper|Purpur|Folia)-(\d+)/i)?.[1];
+    return { version: mcVersion ?? version?.[1] ?? null, build: build === undefined ? null : Number(build) };
   } catch {
     return null;
   }
 }
 
-async function stagingDirs(): Promise<{ path: string; exists: boolean; files: number }[]> {
+export async function installedPaper(dir = cfg.minecraft.dir): Promise<UpdateVersion | null> {
+  const jars = await listJars(dir);
+  const readText = (name: string) => fsp.readFile(path.join(dir, name), "utf8").then((text) => text.trim()).catch(() => "");
+  const [trackedVersion, trackedBuild, historyText] = await Promise.all([readText("paper-version.txt"), readText("paper-build.txt"), readText("version_history.json")]);
+  let history: { version: string | null; build: number | null } | null = null;
+  try {
+    const vh = JSON.parse(historyText) as { currentVersion?: string };
+    const cur = vh.currentVersion ?? "";
+    const build = cur.match(/(?:Paper-|-)(\d+)(?:-|\s|$)/)?.[1] ?? null;
+    history = { version: cur.match(/MC:\s*([\d.]+)/)?.[1] ?? null, build: build ? Number(build) : null };
+  } catch { /* History is optional, not evidence that Paper is missing. */ }
+  const aliases = ["server.jar", "paper.jar", "paper-server.jar", "minecraft_server.jar"];
+  const candidates = jars.filter((jar) => aliases.includes(jar.name.toLowerCase()) || paperFromName(jar.name))
+    .sort((a, b) => {
+      const rank = (name: string) => { const i = aliases.indexOf(name.toLowerCase()); return i < 0 ? aliases.length : i; };
+      return rank(a.name) - rank(b.name) || b.mtime.getTime() - a.mtime.getTime();
+    });
+  for (const jar of candidates) {
+    const embedded = await readPaperMeta(jar.file);
+    const named = paperFromName(jar.name);
+    const tracking = /^\d+(?:\.\d+)+$/.test(trackedVersion) ? trackedVersion : null;
+    if (!embedded && !named && !history && !tracking && !/^paper(?:-server)?\.jar$/i.test(jar.name)) continue;
+    const version = embedded?.version ?? named?.version ?? tracking ?? history?.version ?? null;
+    // Jar metadata wins; only use sidecar build numbers for the matching Minecraft version.
+    const build = embedded?.build ?? named?.build
+      ?? (version === tracking && /^\d+$/.test(trackedBuild) ? Number(trackedBuild) : null)
+      ?? (version === history?.version ? history.build : null);
+    return { version, build, date: jar.mtime.toISOString(), file: jar.file, mcVersion: version };
+  }
+  return null;
+}
+
+export async function stagingDirs(): Promise<{ path: string; exists: boolean; files: number }[]> {
   const mc = cfg.minecraft.dir;
-  const candidates = cfg.updates.stagingDir ? [cfg.updates.stagingDir] : [path.join(mc, "plugins", "update"), path.join(mc, "updates"), path.join(mc, "staged"), path.join(mc, "staging"), path.join(mc, "update")];
+  const candidates = cfg.updates.stagingDir ? [cfg.updates.stagingDir, path.join(cfg.updates.stagingDir, "paper"), path.join(cfg.updates.stagingDir, "plugins")] : [path.join(mc, "plugins", "update"), path.join(mc, "updates"), path.join(mc, "staged"), path.join(mc, "staging"), path.join(mc, "update")];
   const out: { path: string; exists: boolean; files: number }[] = [];
   for (const c of candidates) {
     const jars = await listJars(c);
@@ -203,27 +244,41 @@ async function cached(key: string, fn: () => Promise<UpdateVersion | null>, forc
   return value;
 }
 
-async function latestPaper(mcVersion: string | null, force: boolean): Promise<{ latest: UpdateVersion | null; newestMc: string | null }> {
-  const project = await cached("paper:project", async () => {
-    const p = await getJson<{ versions: string[] }>("https://api.papermc.io/v2/projects/paper");
-    return p ? { version: p.versions[p.versions.length - 1] ?? null, date: null, source: "papermc" } : null;
+export async function latestPaper(mcVersion: string | null, force: boolean): Promise<{ latest: UpdateVersion | null; newestMc: string | null }> {
+  const project = await cached("paper:v3:project", async () => {
+    const p = await getJson<{ versions: Record<string, string[]> }>("https://fill.papermc.io/v3/projects/paper");
+    const versions = Object.values(p?.versions ?? {}).flat().filter((v) => /^\d+(?:\.\d+)+$/.test(v));
+    versions.sort((a, b) => compareVersions(b, a) ?? 0);
+    return versions.length ? { version: versions[0], date: null, source: "papermc" } : null;
   }, force);
   const newestMc = project?.version ?? null;
   const target = mcVersion ?? newestMc;
   if (!target) return { latest: null, newestMc };
-  const latest = await cached(`paper:${target}`, async () => {
-    const b = await getJson<{ builds: { build: number; time: string; channel: string }[] }>(`https://api.papermc.io/v2/projects/paper/versions/${target}/builds`);
-    const last = b?.builds?.[b.builds.length - 1];
-    return last ? { version: `${target}-${last.build}`, build: last.build, date: last.time, channel: last.channel, url: `https://papermc.io/downloads/paper`, source: "papermc", mcVersion: target } : null;
+  const latest = await cached(`paper:v3:${target}`, async () => {
+    const b = await getJson<{ id: number; time: string; channel: string }>(`https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(target)}/builds/latest`);
+    return b && Number.isInteger(b.id) ? { version: `${target}-${b.id}`, build: b.id, date: b.time, channel: b.channel, url: "https://papermc.io/downloads/paper", source: "papermc", mcVersion: target } : null;
   }, force);
   return { latest, newestMc };
 }
 
-async function latestPlugin(name: string, force: boolean): Promise<UpdateVersion | null> {
-  const pref = cfg.updates.sources[name.toLowerCase()];
+// These projects publish their current builds through their own API, rather than
+// GitHub releases or an exact-name Modrinth listing. Explicit overrides still win.
+const DEFAULT_PLUGIN_SOURCES: Record<string, string> = {
+  "geyser-spigot": "geyser:geyser",
+  geyser: "geyser:geyser",
+  floodgate: "geyser:floodgate",
+};
+
+export async function latestPlugin(name: string, force: boolean): Promise<UpdateVersion | null> {
+  const pref = cfg.updates.sources[name.toLowerCase()] ?? DEFAULT_PLUGIN_SOURCES[name.toLowerCase()];
   if (pref === "none") return null;
   return cached(`plugin:${name.toLowerCase()}:${pref ?? "auto"}`, async () => {
     const [kind, ref] = pref ? pref.split(":", 2) : ["modrinth", null];
+    if (kind === "geyser" && (ref === "geyser" || ref === "floodgate")) {
+      const b = await getJson<{ version: string; build: number; time: string; downloads: Record<string, unknown> }>(`https://download.geysermc.org/v2/projects/${ref}/versions/latest/builds/latest`);
+      return b?.version && Number.isInteger(b.build) && b.downloads?.spigot
+        ? { version: b.version, build: b.build, date: b.time, url: `https://geysermc.org/download?project=${ref}`, source: "geyser" } : null;
+    }
     if (kind === "hangar" && ref) {
       const r = await getJson<{ result: { name: string; createdAt: string }[] }>(`https://hangar.papermc.io/api/v1/projects/${ref}/versions?limit=1&platform=PAPER`);
       const v = r?.result?.[0];
@@ -287,7 +342,7 @@ export async function stagedUpdates(force = false): Promise<StagedUpdatePayload>
   const notes: string[] = [];
   const mc = cfg.minecraft.dir;
   const paper = await installedPaper();
-  if (!paper) notes.push(`No paper-*.jar or version_history.json found in ${mc} — is MC_DIR right?`);
+  if (!paper) notes.push(`No Paper server jar found in ${mc} (checked server.jar, paper.jar, paper-server.jar and versioned jars). Check MC_DIR.`);
 
   const plugins = await listJars(path.join(mc, "plugins"));
   const installed = new Map<string, UpdateVersion & { meta: PluginMeta }>();

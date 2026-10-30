@@ -1,0 +1,6 @@
+{
+  "name": "directus-extension-family-directory",
+  "version": "1.0.0",
+  "type": "module",
+  "directus:extension": { "type": "endpoint", "path": "index.js", "source": "index.js", "host": "^12.0.0" }
+}

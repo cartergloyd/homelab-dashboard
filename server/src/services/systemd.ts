@@ -13,6 +13,10 @@ function unitName(unit: string): string {
   return unit.endsWith(".service") ? unit : `${unit}.service`;
 }
 
+function systemctlArgs(args: string[]): string[] {
+  return cfg.systemdUser ? ["--user", ...args] : args;
+}
+
 /** `systemctl show` needs no privileges, so this works for any unit. */
 export async function unitState(unit: string): Promise<UnitState | null> {
   // [DEMO] demo-mode branch — fake data for `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
@@ -20,7 +24,7 @@ export async function unitState(unit: string): Promise<UnitState | null> {
   try {
     const { stdout } = await execFileP(
       "systemctl",
-      ["show", unitName(unit), "--no-pager", "--property=ActiveState,SubState,ActiveEnterTimestamp,MainPID,MemoryCurrent,LoadState"],
+      systemctlArgs(["show", unitName(unit), "--no-pager", "--property=ActiveState,SubState,ActiveEnterTimestamp,MainPID,MemoryCurrent,LoadState"]),
       { timeout: 5000 },
     );
     const kv: Record<string, string> = {};
@@ -52,12 +56,16 @@ export async function unitState(unit: string): Promise<UnitState | null> {
  */
 export async function unitAction(unit: string, action: UnitAction): Promise<void> {
   if (cfg.demo) return demo.unitAction(unit, action);
+  if (cfg.systemdUser) {
+    await execFileP("systemctl", systemctlArgs([action, unitName(unit)]), { timeout: 180_000 });
+    return;
+  }
   await execFileP("sudo", ["-n", "systemctl", action, unitName(unit)], { timeout: 180_000 });
 }
 
 /** Tails journald; returns a stop function. `args` selects the unit/priority. `onEnd` fires if the tail dies. */
 export function followJournal(args: string[], onLine: (line: string) => void, onEnd?: () => void): () => void {
-  const child = spawn("journalctl", [...args, "-f", "-n", "200", "-o", "cat", "--no-pager"], {
+  const child = spawn("journalctl", [...(cfg.systemdUser ? ["--user"] : []), ...args, "-f", "-n", "200", "-o", "cat", "--no-pager"], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   let ended = false;

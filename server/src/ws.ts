@@ -2,8 +2,9 @@ import type http from "node:http";
 import type net from "node:net";
 import { WebSocketServer, WebSocket } from "ws";
 import { resolveIdentity } from "./auth.js";
-import { isProblem, isTailed, query, recentLines, subscribe, subscribeRaw } from "./services/alerts.js";
+import { isProblem, isRoutineConnection, isTailed, query, recentLines, subscribe, subscribeRaw } from "./services/alerts.js";
 import { LOG_SOURCES, openLogStream } from "./services/logs.js";
+import { minecraftPlayers } from "./services/minecraft.js";
 import type { AlertSource, LogSource } from "./types.js";
 
 const MAX_BUFFERED = 1_000_000; // bytes queued to a slow client before we drop messages
@@ -12,13 +13,14 @@ const MAX_LINE = 4000;
 /**
  * /ws/logs?source=<LogSource>            raw lines of one source
  * /ws/alerts[?sources=a,b&problemsOnly=1] classified events from the alerts hub
+ * /ws/minecraft                       player/control state change notifications
  */
 export function attachLogSocket(server: http.Server): void {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", async (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname !== "/ws/logs" && url.pathname !== "/ws/alerts") {
+    if (url.pathname !== "/ws/logs" && url.pathname !== "/ws/alerts" && url.pathname !== "/ws/minecraft") {
       socket.destroy();
       return;
     }
@@ -43,11 +45,15 @@ export function attachLogSocket(server: http.Server): void {
     const keepAlive = setInterval(() => ws.readyState === WebSocket.OPEN && ws.ping(), 30_000);
     let stop: (() => void) | null = null;
 
-    if (url.pathname === "/ws/alerts") {
+    if (url.pathname === "/ws/minecraft") {
+      stop = minecraftPlayers.subscribe(() => send({ type: "minecraft-update" }));
+      send({ type: "minecraft-update" });
+    } else if (url.pathname === "/ws/alerts") {
       const sources = url.searchParams.get("sources")?.split(",").filter(Boolean) as AlertSource[] | undefined;
       const problemsOnly = url.searchParams.get("problemsOnly") === "1";
       send({ type: "backlog", events: query({ sources, problemsOnly, limit: 300 }) });
       stop = subscribe((e) => {
+        if (isRoutineConnection(e)) return;
         if (sources?.length && !sources.includes(e.source)) return;
         if (problemsOnly && !isProblem(e)) return;
         send({ type: "event", event: e });

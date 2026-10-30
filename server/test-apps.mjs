@@ -48,3 +48,9 @@ eq(mixed.map((a) => [a.name, a.kind, a.url, a.publicUrl, a.siteUrl, a.container,
 assert.throws(() => appsFromEnv(["x"], { APP_X_KIND: "wordpress" }, null), /APP_X_KIND/, "unknown kinds are rejected at boot");
 n++;
 console.log(`apps-config (kinds): ${n} checks total`);
+
+// Analytics shares the CRM hostname and must not consume a Directus port.
+const analytics = appsFromEnv(["fam", "umami", "ai"], { APP_UMAMI_KIND: "umami" }, "xgold.tech");
+eq(analytics[1], { name: "umami", kind: "umami", url: "http://127.0.0.1:3021", publicUrl: "https://crm.xgold.tech/stats", siteUrl: null, container: "homelab-umami", db: "umami", healthPath: "/stats/api/heartbeat" }, "analytics path and loopback defaults");
+eq(analytics[2].url, "http://127.0.0.1:8057", "Umami does not shift Directus ports");
+console.log(`apps-config (analytics): ${n} checks total`);

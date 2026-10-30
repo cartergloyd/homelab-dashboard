@@ -11,7 +11,7 @@
 //
 //   APPS=fam,ai,crm                                 the app names (also the Postgres database + role names)
 //   PUBLIC_DOMAIN=xgold.tech                        the owner's domain, on Cloudflare DNS
-//   APP_CRM_KIND=twenty                             directus (default) | twenty
+//   APP_CRM_KIND=twenty                             directus (default) | twenty | umami
 //   APP_FAM_URL=http://127.0.0.1:8056               where the dashboard reaches the app (default: 8056, 8057, … for
 //                                                   directus apps in APPS order; 3020 for twenty)
 //   APP_FAM_PUBLIC_URL=https://fam-api.xgold.tech   what users/apps open through the tunnel (default by kind)
@@ -19,7 +19,7 @@
 //   APP_FAM_CONTAINER=homelab-directus-fam          its container (default by kind)
 //   APP_FAM_DB=fam                                  its database (default: the name)
 
-export type AppKind = "directus" | "twenty";
+export type AppKind = "directus" | "twenty" | "umami";
 
 export interface AppConfig {
   name: string;
@@ -39,7 +39,7 @@ export interface AppConfig {
 }
 
 export const APP_NAME_RE = /^[a-z][a-z0-9_-]{0,30}$/;
-export const APP_KINDS: AppKind[] = ["directus", "twenty"];
+export const APP_KINDS: AppKind[] = ["directus", "twenty", "umami"];
 
 export function envKey(name: string): string {
   return name.toUpperCase().replace(/-/g, "_");
@@ -59,7 +59,9 @@ export function appsFromEnv(names: string[], env: Record<string, string | undefi
     if (!APP_KINDS.includes(kindRaw)) throw new Error(`APP_${k}_KIND: "${kindRaw}" is not one of ${APP_KINDS.join(", ")}`);
     const kind = kindRaw;
     const defaults =
-      kind === "twenty"
+      kind === "umami"
+        ? { url: "http://127.0.0.1:3021", publicHost: domain ? `crm.${domain}/stats` : null, siteHost: null, container: "homelab-umami", healthPath: "/stats/api/heartbeat" }
+        : kind === "twenty"
         ? { url: "http://127.0.0.1:3020", publicHost: domain ? `${name}.${domain}` : null, siteHost: null, container: "homelab-twenty", healthPath: "/healthz" }
         : { url: `http://127.0.0.1:${8056 + directusIndex++}`, publicHost: domain ? `${name}-api.${domain}` : null, siteHost: domain ? `${name}.${domain}` : null, container: `homelab-directus-${name}`, healthPath: "/server/health" };
     out.push({

@@ -229,8 +229,23 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       checklist, service token for MCP, image versions in the Staged update card
 - [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up` (then
       `fam-api.xgold.tech/server/health` turns from Cloudflare 530 into `{"status":"ok"}`)
-- [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
-      Codex version on the server (plain-text output still works, resume is skipped if absent)
+- [x] Sidecar: `codex exec --json` and `codex exec resume <thread>` verified against the installed
+      Codex (0.162) on the server, 2026-10-30: runs parse messages and tool calls and resume sessions
+- [x] **Assistant redesign** (Carter, 2026-10-30; design in the decisions log below):
+      - a per-run lane token instead of `DASHBOARD_KEY`, and an allowlisted environment;
+      - run guards (console never-list, restart limit, Minecraft-only scripts, secret blocking);
+      - an autonomous Minecraft lane with `whitelist_add`, snapshots and rollback;
+      - Discord reports to the owner;
+      - the ops agent with routing, noise, run budget and memory guard.
+- [ ] Assistant redesign follow-ups:
+      - show the ops lane and its incidents in the Assistant panel (today: `GET /api/ops`, Discord
+        and reports);
+      - have the OnFailure hook (`notify_unit_failure.sh`) also ingest `{unit, result,
+        discordMessageId}`, so the dashboard replies under its post;
+      - group the same failure seen as a unit failure and as its script's output;
+      - retire the disabled `minecraft-claude-bot` / `minecraft-codex-bot` / `minecraft-log-monitor`
+        units and the `log_monitor.py` section of the Minecraft `CLAUDE.md`;
+      - review the first week of Discord posts and tune `routing.json`.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -404,8 +419,8 @@ override the placeholders wherever they conflict:
 - 2026-10-20 **Remote access = Cloudflare Access + the dashboard's own token check, GitHub as
   the identity provider.** A Cloudflare-stamped request (`CF-Ray`) is authenticated ONLY by its
   Access JWT; Tailscale headers on it are ignored (anyone could type them). Bearer key over the
-  tunnel requires a valid Access token as well. GitHub was chosen because it enforces 2FA on every
-  account and needs one OAuth app, no money; e-mail one-time PIN is a single factor and is not
+  tunnel requires a valid Access token as well. GitHub was chosen as the owner's identity provider and needs one OAuth app, no money;
+  GitHub login alone does not prove MFA was required; verify the owner account and Access policy; e-mail one-time PIN is a single factor and is not
   offered for the dashboard. No JWT library: Node's `crypto.verify` with JWK import.
 - 2026-10-20 **The hostnames card reads DNS, never writes it.** Preferred source is a Cloudflare
   API token scoped to Zone:Read + DNS:Read on this zone only (an integration secret like the
@@ -437,6 +452,82 @@ override the placeholders wherever they conflict:
   or in the repos) and `psql` inside the postgres container — no new dependency. Public write access
   is **not** granted at home by default (`--public-access` mirrors the Supabase anon policy when the
   front-end moves). The script runs on the server only; see the known-facts note on the dev Mac.
+- 2026-10-30 **Dashboard-launched runs get their own token, never `DASHBOARD_KEY`.** Each run gets a
+  random `hlr_` token, bound to the run id, its lane (`minecraft` for now) and its origin (`discord` or
+  `dashboard`). The token is revoked when the run ends, expires a minute past its run limit, and is
+  accepted on loopback only. A run's identity now comes only from its token: `X-Homelab-Run-Id` must
+  match it and no longer turns the master key into a run. `security.ts` refuses any write outside the
+  lane's list (`LANE_WRITES`) before any other check, and hides `/directus`, `/database`,
+  `/repositories`, `/terminal` and `/security` from runs. The runner passes agents an allowlisted
+  environment (`AGENT_ENV`): systemd's EnvironmentFile had put the master key, the RCON password and
+  the Postgres URL into every run. Step 1 of the assistant redesign; the ops lane comes with the ops
+  agent.
+- 2026-10-30 **Run guards replace prompt rules for what a run may never do** (`services/runGuards.ts`,
+  `services/secretFilter.ts`, applied by `security.ts` to run-token requests only). These are refused:
+  - console verbs that grant power, act against players or cheat (`op`, `execute`, `ban`, `kick`,
+    `gamemode`, `give`, `tp` …), `whitelist off/remove`, and `stop`/`reload`/`save-off`, namespaced
+    forms included;
+  - a start/restart within 5 minutes of a run's last one, or once Paper has started twice in the
+    hour. Starts are counted from systemd's "Started" lines, so its own `Restart=on-failure` counts;
+  - scripts outside the Minecraft folder (`SCRIPTS_DIR` also lists `public-apps/scripts`), and jobs
+    whose script, command or restart fails the same checks;
+  - any console command or public Discord reply containing a secret value from the env,
+    `DISCORD_SUPPORT_TOKEN_FILE`, DiscordSRV's config or Codex's `auth.json`, or a token-shaped
+    string. The feed names the kind of secret, never its value.
+
+  Per-member Discord limits wait for `whitelist_add` (step 3).
+- 2026-10-30 **The Minecraft lane acts on its own** (owner: "work autonomously", "restarts aren't a big deal";
+  Discord members are trusted, and Discord-triggered actions stay inside Minecraft).
+  - **No approvals, no step-up:** lane runs never create approval holds. `request_approval` tells them
+    to file a needs-human report instead.
+  - **Sandbox:** `workspace-write` with `-C <MC_DIR>/scripts` plus `--add-dir` for
+    `plugins/Geyser-Spigot` and `plugins/ViaVersion` (`services/lanes.ts`). The server root, the
+    worlds, DiscordSRV (bot token, console roles) and floodgate (key) are not writable.
+  - **Discord runs:** they get the same sandbox and a shell. They read only join-help data
+    (`DISCORD_READS`), are limited per member to 6 changes an hour and 3 whitelist additions a day,
+    may not stop Minecraft, and their public replies hide IP addresses.
+  - **Snapshots:** each writable folder has a local git history (`services/snapshots.ts`; plugin
+    folders track config files only). Every run's changed files are posted to the feed and can be
+    undone with `rollback_run` / `POST /api/sidecar/runs/:id/rollback`.
+  - **Whitelisting:** `whitelist_add` uses Paper's `whitelist add` (Java) and Floodgate's
+    `fwhitelist add` (Bedrock), then reads the list back. The family site's worker uses the
+    Management Protocol, which is off in `server.properties` on the live server. Gamertags with
+    spaces are refused, because `fwhitelist` would take only the first word.
+  - **Screenshots:** they moved to `DATA_DIR/discord-support-attachments`.
+- 2026-10-30 **The assistant reports to the owner in Discord; it never asks there** (`services/notify.ts`,
+  `OWNER_DISCORD_CHANNEL_ID`, token from `OWNER_DISCORD_TOKEN_FILE` or `DISCORD_SUPPORT_TOKEN_FILE`).
+  - **Posted:** files a run changed (with its rollback id), refused changes, blocked secrets, failed
+    runs, and reports whose outcome is `fixed` or `needs-human`. `no-action` reports and routine
+    lines stay in the dashboard.
+  - **Limits:** at most 6 posts an hour; held ones are summarized when there is room. Identical
+    text is skipped for 10 minutes, nobody is mentioned, and a post carrying a secret is withheld.
+  - **Channel:** on the live server it is `#server-console`, DiscordSRV's console channel. The
+    dashboard posts as DiscordSRV's own bot, and `DiscordConsoleChannelBlockBots: true`, so posts are
+    never run as console commands. Decisions stay in the dashboard.
+- 2026-10-30 **Two lanes: the Minecraft responder and an ops agent for the whole server** (`services/opsAgent.ts`,
+  `services/routing.ts`, `services/hostOps.ts`). They are split by scope, not privilege: both act on
+  their own, each with one run at a time in its own slot (`currentRun(lane)`).
+  - **What goes to ops:** failed user units (except Paper's own), OOM kills (even when Paper died,
+    so Minecraft lines about them are skipped), container error lines, script and job failures,
+    and memory or disk thresholds sampled every minute.
+  - **What gets dropped:** known noise in `DATA_DIR/routing.json`, which the owner can edit.
+    Minecraft chat lines are never incidents.
+  - **Run budget:** at most 2 automatic runs per problem per 24 h in either lane, then
+    `needs-human` and one Discord post.
+  - **Memory guard:** automatic runs wait (up to 10 minutes) while memory is too tight (under
+    400 MB available, or PSI full avg10 over 20). Memory incidents themselves still run.
+  - **Workspace:** `OPS_AGENT_DIR`, with `AGENTS.md` playbooks from `deploy/ops-agent/AGENTS.md`.
+    It may also write `OPS_WRITABLE_DIRS` (live: `~/server-platform/scripts`,
+    `~/.config/systemd/user`) and Minecraft's folders, all snapshotted.
+  - **Tools:** `host_pressure`, `units`, `unit_journal`, `unit_action` (start/restart, systemd
+    reloaded first), `containers`, `container_logs`, `container_restart`, `ops_incidents`.
+  - **Guards:** each unit or container may be restarted at most twice an hour, nothing may be
+    stopped, and the dashboard may not be restarted. Paper shares the Minecraft restart limit.
+  - **Residual risk, accepted by the owner:** a run that edits a script or unit file runs code
+    outside its sandbox the next time that file runs. Every such change is posted with its
+    rollback id.
+  - **The Auto switch** and the Stop button pause both lanes. Ops incidents are at `GET /api/ops`;
+    the Assistant panel does not show them yet.
 
 ## How to run & verify
 
@@ -454,3 +545,66 @@ MCP smoke test (once Step 6 lands): `node server/test-mcp.mjs`.
 Follow `SERVER_SETUP.md`. The repo is `git@github.com:cartergloyd/homelab-dashboard.git`
 (private); on the server it lives at `/opt/homelab-dashboard` and runs as user
 `homelab` under `homelab-dashboard.service`.
+
+- 2026-10-20 Installed security follow-up: app-role query/idle-transaction timeouts are 60s,
+  PostgreSQL TCP uses SCRAM restricted to the platform bridge, connection logging is on,
+  and app roles cannot connect to other databases. Both Directus admins are enrolled in MFA.
+  Dashboard authenticator protection and encrypted OneDrive downloaded-copy restore tests are live.
+  Remote bearer auth now requires a service JWT (human JWT + key is rejected); local MCP uses
+  loopback. See docs/SECURITY_HARDENING.md for verified controls, private rollback paths and
+  remaining issue #10 work. Do not claim FULLY CONNECTED or close #10 until the remaining audit
+  failures and external Cloudflare policy/service-token checks are resolved.
+
+- Database page file uploads: see `docs/database-uploads.md`. Owner-only uploads
+  use dedicated per-Directus file service users and DATA_DIR/database-uploads.json;
+  never expose these tokens or make the file library public.
+
+- Family directory: fam.family_users is now authoritative for website profiles and
+  Jellyfin, imported from private users.csv. See deploy/family-directory/README.md.
+  Legacy public member-claim credentials are retired; never restore PIN hashes
+  to public kv records or an embedded website roster.
+
+
+### 2026-10-25 — Issue #16 Jellyfin social plugins
+
+Jellyfin is pinned to the 10.11.9 image/digest in deploy/jellyfin-social/plugins.lock.json
+so Jellyscribe 2.13.2.0 can run. StarTrack 1.8.1.0 is the 10.11/.NET 9 build.
+Jellyscribe owns external Letterboxd/Serializd sync; family members opt in privately
+through Jellyfin Web → Jellyscribe → My accounts, with the recent-only filter off
+for historical catch-up. StarTrack supplies local social ratings/reviews and mirrors
+stars to native Jellyfin ratings. Its competing external-sync buttons are hidden.
+No external accounts were linked or histories synced automatically. Seerr remains
+unconfigured; telemetry is off. Installation/verification/rollback are documented in
+deploy/jellyfin-social/README.md. Preserve plugin keys/config with the Jellyfin DB.
+StarTrack 1.8.1.0 also collides with Jellyfin’s RecommendationDto Swagger schema;
+/api-docs/openapi.json returns 500. Normal APIs and playback work. This upstream
+limitation and the remaining per-member external-account validation are documented
+in the installation guide; do not report full end-to-end sync verified yet.
+
+
+## Dash live redesign (2026-10-27)
+
+The React shell now follows the latest Dash preview: Gold Server and xGold AI
+workspace navigation on the same host. Preserve all existing data and controls;
+workspaces are presentation, not security boundaries. See
+[docs/DASH_REDESIGN.md](docs/DASH_REDESIGN.md) for feature/API mapping, authentication,
+new host metrics/repository stores, and deployment/rollback instructions. The
+reference preview's fake data and simulated actions must never be copied into
+production. New record editing signs into configured Directus instances with the
+owner's existing account; tokens stay server-side. Existing uploads remain separate.
+Terminal execution and Directus writes use the central step-up gate. Tests for
+these connections live in `server/test-dash-live.mjs` and use temporary data only.
+
+## Approval routing (2026-10-28)
+
+Interactive MCP clients ask necessary owner questions in their current CLI/chat and do not enqueue dashboard approval holds. Dashboard-managed assistants send HOMELAB_RUN_ID as X-Homelab-Run-Id and retain the Assistant panel approval workflow. Browser authenticator enforcement and owner-only security/approval decisions still apply.
+
+## Minecraft incident responder (2026-10-28, autonomous since 2026-10-30)
+
+The dedicated assistant handles Minecraft console errors, repeated Minecraft warnings, outage reports and Discord join help. Its main window shows inputs and all incident messages in one continuous chat with paged history. Local status checks run every 15 seconds, debounce failures and allow 120 seconds for startup. An outage report enters the queue immediately; console errors use a short grouping window. It acts on its own inside the Minecraft lane: no approvals, but the run guards apply (see the 2026-10-30 decisions). Respect planned maintenance and intentional shutdowns. Other home services do not trigger this responder.
+
+## Discord join support (2026-10-28)
+
+The existing Family Forever Server#7671 bot (1469422607479865557) forwards mentions about joining problems in Family Discord (874080193306820628) into the same single Minecraft responder queue. Discord replies/screenshot follow-ups are scoped to the reporter and channel, with separate Codex sessions per support case. The bot asks for device/join method/error/screenshot, checks server health, performs authorized recovery or explains the joining steps. It never treats a player's message as administrative authority. Since 2026-10-30 support runs are Minecraft-lane runs: they may restart Minecraft, fix Minecraft scripts and Geyser/ViaVersion configs, and whitelist players, within the run guards and per-member limits; they read only join-help data, and public replies hide IP addresses. Outbound Discord replies suppress mass mentions and use durable retry/deduplication. Raster screenshots are validated, private (`DATA_DIR/discord-support-attachments`), limited to 8 MB each, and cleaned up after 7 days.
+
+Enable with DISCORD_SUPPORT_ENABLED=1, DISCORD_SUPPORT_TOKEN_FILE pointing to an env file with DISCORD_BOT_TOKEN, DISCORD_SUPPORT_GUILD_ID and DISCORD_SUPPORT_BOT_ID. Credentials stay in the Discord adapter and are not passed to CLI runs. Legacy Discord coding bots stay disabled.

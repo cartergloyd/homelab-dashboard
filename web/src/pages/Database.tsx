@@ -1,7 +1,8 @@
 // Database & apps: the Postgres core (loopback only), the owner's personal Directus
 // over Tailscale, and one Directus per public app (fam, ai, …) published through the
-// Cloudflare Tunnel — each with its own database, users and dumps. Read-only.
+// Cloudflare Tunnel — each with its own database, users and dumps.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DatabaseFiles } from "../components/DatabaseFiles";
 import { api } from "../api";
 import { Icons } from "../components/icons";
 import { Card, ErrorNotice, PageHead, StatTile, StatusPill, useToast } from "../components/ui";
@@ -20,19 +21,19 @@ function AppCard({ a }: { a: AppStatus }) {
       }
       actions={
         a.publicUrl ? (
-          <a className="btn sm" href={a.kind === "twenty" ? a.publicUrl : `${a.publicUrl}/admin`} target="_blank" rel="noreferrer">
-            <Icons.external width={13} height={13} /> {a.kind === "twenty" ? "Open Twenty" : "Open admin"}
+          <a className="btn sm" href={a.kind !== "directus" ? a.publicUrl : `${a.publicUrl}/admin`} target="_blank" rel="noreferrer">
+            <Icons.external width={13} height={13} /> {a.kind === "umami" ? "Open analytics" : a.kind === "twenty" ? "Open Twenty" : "Open admin"}
           </a>
         ) : undefined
       }
     >
       <div className="kv">
         <div>
-          <span className="kv-k">{a.kind === "twenty" ? "URL" : "API (Directus)"}</span>
+          <span className="kv-k">{a.kind !== "directus" ? "URL" : "API (Directus)"}</span>
           <span className="kv-v">
             {a.publicUrl ? (
               <a href={a.publicUrl} target="_blank" rel="noreferrer" className="mono">
-                {host}
+                {host}{a.kind === "umami" ? new URL(a.publicUrl).pathname : ""}
               </a>
             ) : (
               <span className="muted">none</span>
@@ -54,7 +55,7 @@ function AppCard({ a }: { a: AppStatus }) {
           </div>
         )}
         <div>
-          <span className="kv-k">{a.kind === "twenty" ? "Twenty CRM" : "Directus"}</span>
+          <span className="kv-k">{a.kind === "umami" ? "Umami analytics" : a.kind === "twenty" ? "Twenty CRM" : "Directus"}</span>
           <span className="kv-v">
             <StatusPill state={a.local.ok ? "ok" : a.container?.state === "running" ? "degraded" : "down"} label={a.local.ok ? `healthy · ${a.local.latencyMs} ms` : (a.local.error ?? "not healthy")} />
             <span className="muted small"> · {a.containerName}{a.container ? ` ${a.container.state}` : " (no container)"}</span>
@@ -65,8 +66,8 @@ function AppCard({ a }: { a: AppStatus }) {
           <span className="kv-v">
             {a.database.exists ? (
               <>
-                <span className="mono">{a.db}</span> · {fmtBytes(a.database.sizeBytes)} · {a.database.collections ?? 0} collection{a.database.collections === 1 ? "" : "s"}
-                <span className="muted small"> ({a.database.tables ?? 0} tables incl. {a.kind === "twenty" ? "Twenty's own" : "Directus"})</span>
+                <span className="mono">{a.db}</span> · {fmtBytes(a.database.sizeBytes)} · {a.database.collections ?? 0} {a.kind === "umami" ? "website" : "collection"}{a.database.collections === 1 ? "" : "s"}
+                <span className="muted small"> ({a.database.tables ?? 0} tables incl. {a.kind === "umami" ? "Umami" : a.kind === "twenty" ? "Twenty's own" : "Directus"})</span>
               </>
             ) : (
               <span style={{ color: "var(--critical)" }}>{a.database.error ?? "missing"}</span>
@@ -75,7 +76,7 @@ function AppCard({ a }: { a: AppStatus }) {
         </div>
         <div>
           <span className="kv-k">Users</span>
-          <span className="kv-v">{a.database.users === null ? <span className="muted">{a.kind === "twenty" ? "Twenty" : "Directus"} not bootstrapped yet</span> : <>{a.database.users} · last login {a.database.lastLogin ? fmtRelative(a.database.lastLogin) : "never"}</>}</span>
+          <span className="kv-v">{a.database.users === null ? <span className="muted">{a.kind === "umami" ? "Umami" : a.kind === "twenty" ? "Twenty" : "Directus"} not bootstrapped yet</span> : <>{a.database.users}{a.kind !== "umami" && <> · last login {a.database.lastLogin ? fmtRelative(a.database.lastLogin) : "never"}</>}</>}</span>
         </div>
         <div>
           <span className="kv-k">Backup</span>
@@ -118,7 +119,7 @@ export function Database() {
     <>
       <PageHead
         title="Database & apps"
-        sub="One PostgreSQL, bound to 127.0.0.1 only. Your personal Directus over Tailscale, plus one Directus per public app — each with its own database, users and backups — published through the Cloudflare Tunnel without opening a router port."
+        sub="One private PostgreSQL for your apps, CRM and analytics, with separate databases and backups. Public apps use Cloudflare Tunnel; your personal Directus stays on Tailscale."
         actions={
           <div className="row" style={{ gap: 8 }}>
             <button className="btn" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
@@ -172,6 +173,8 @@ export function Database() {
           <AppCard key={x.name} a={x} />
         ))}
       </div>
+
+      <div style={{ marginBottom: 14 }}><DatabaseFiles /></div>
 
       <div className="grid wide" style={{ marginBottom: 14 }}>
         <Card title="Databases on this PostgreSQL">

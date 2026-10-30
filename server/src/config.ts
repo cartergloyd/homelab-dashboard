@@ -45,12 +45,33 @@ const Env = z.object({
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   SYSTEMD_USER: flag,
+  DISCORD_SUPPORT_ENABLED: flag,
+  DISCORD_SUPPORT_TOKEN_FILE: z.string().optional(),
+  DISCORD_SUPPORT_GUILD_ID: z.string().optional(),
+  DISCORD_SUPPORT_BOT_ID: z.string().optional(),
+  OPS_AGENT_DIR: z.string().optional(), // the ops agent's workspace (its AGENTS.md and notes)
+  OPS_WRITABLE_DIRS: z.string().optional(), // comma-separated extra folders the ops agent may change
+  OWNER_DISCORD_CHANNEL_ID: z.string().trim().regex(/^\d+$/).optional(), // where the assistant reports to the owner
+  OWNER_DISCORD_TOKEN_FILE: z.string().optional(), // env-style file with DISCORD_BOT_TOKEN; defaults to DISCORD_SUPPORT_TOKEN_FILE
+  CODEX_MODEL: z.string().trim().min(1).optional(),
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
   JELLYFIN_PUBLIC_URL: z.string().optional(),
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_CONTAINER: z.string().default("jellyfin"),
   QBITTORRENT_PUBLIC_URL: z.string().optional(),
+  QBITTORRENT_URL: z.string().url().optional(),
+  QBITTORRENT_USERNAME: z.string().optional(),
+  QBITTORRENT_PASSWORD: z.string().optional(),
+  ROUTER_URL: z.preprocess(
+    (value) => typeof value === "string" && !value.trim() ? undefined : value,
+    z.string().trim().url().refine((value) => {
+      try {
+        const url = new URL(value);
+        return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+      } catch { return false; }
+    }, "ROUTER_URL must use HTTP or HTTPS without embedded credentials").optional(),
+  ),
   // "Movies=/srv/media/movies,Shows=/srv/media/shows"
   MEDIA_ROOTS: csv,
 
@@ -177,7 +198,25 @@ export const cfg = {
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
   systemdUser: env.SYSTEMD_USER,
+  discordSupport: {
+    enabled: env.DISCORD_SUPPORT_ENABLED,
+    tokenFile: env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    guildId: env.DISCORD_SUPPORT_GUILD_ID ?? "",
+    botId: env.DISCORD_SUPPORT_BOT_ID ?? "",
+  },
+  ops: {
+    // [INSTALLER] the live server: ~/server-platform/ops-agent, with ~/server-platform/scripts and ~/.config/systemd/user writable
+    dir: env.OPS_AGENT_DIR?.trim() || path.join(path.dirname(path.resolve(env.DATA_DIR)), "ops-agent"),
+    writableDirs: (env.OPS_WRITABLE_DIRS ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+  },
+  ownerDiscord: {
+    channelId: env.OWNER_DISCORD_CHANNEL_ID ?? "",
+    tokenFile: env.OWNER_DISCORD_TOKEN_FILE ?? env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    dashboardUrl: env.PUBLIC_DASHBOARD_URL?.trim().replace(/\/$/, "") || null,
+  },
+  codexModel: env.CODEX_MODEL ?? null,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  routerUrl: env.ROUTER_URL ?? null,
   jellyfin: {
     url: env.JELLYFIN_URL.replace(/\/$/, ""),
     publicUrl: (env.JELLYFIN_PUBLIC_URL ?? env.JELLYFIN_URL).replace(/\/$/, ""),
@@ -186,6 +225,9 @@ export const cfg = {
   },
   qbittorrent: {
     publicUrl: env.QBITTORRENT_PUBLIC_URL?.replace(/\/$/, "") ?? null,
+    url: env.QBITTORRENT_URL?.replace(/\/$/, "") ?? null,
+    username: env.QBITTORRENT_USERNAME,
+    password: env.QBITTORRENT_PASSWORD,
   },
   mediaRoots: parseRoots(env.MEDIA_ROOTS),
   minecraft: {
