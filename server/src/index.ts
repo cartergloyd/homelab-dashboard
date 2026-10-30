@@ -21,6 +21,7 @@ import { initScheduler } from "./services/scheduler.js";
 import { initScripts } from "./services/scripts.js";
 import { prepareDiscordSupport } from "./services/discordSupport.js";
 import { startNotifications } from "./services/notify.js";
+import { initOpsAgent } from "./services/opsAgent.js";
 import { initSidecar } from "./services/sidecar.js";
 import { refreshFolders } from "./services/storage.js";
 import { initHostMetrics } from "./services/host.js";
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
   });
   await initSidecar();
   await startNotifications();
+  await initOpsAgent();
   startDiscordSupport();
   startMinecraftWatch();
   await initDiskScan();

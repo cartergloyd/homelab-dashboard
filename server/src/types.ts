@@ -430,6 +430,8 @@ export interface AgentRun {
   /** why it was started (sidecar) */
   kind: AgentRunKind;
   incidentId: string | null;
+  /** minecraft (the Minecraft responder) or ops (the whole-server agent); one run at a time per lane */
+  lane?: "minecraft" | "ops";
   /** runner session id, so the next run can resume the same conversation */
   sessionId: string | null;
   pid: number | null;

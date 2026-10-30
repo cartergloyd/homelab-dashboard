@@ -489,6 +489,30 @@ override the placeholders wherever they conflict:
   - **Channel:** on the live server it is `#server-console`, DiscordSRV's console channel. The
     dashboard posts as DiscordSRV's own bot, and `DiscordConsoleChannelBlockBots: true`, so posts are
     never run as console commands. Decisions stay in the dashboard.
+- 2026-10-30 **Two lanes: the Minecraft responder and an ops agent for the whole server** (`services/opsAgent.ts`,
+  `services/routing.ts`, `services/hostOps.ts`). They are split by scope, not privilege: both act on
+  their own, each with one run at a time in its own slot (`currentRun(lane)`).
+  - **What goes to ops:** failed user units (except Paper's own), OOM kills (even when Paper died,
+    so Minecraft lines about them are skipped), container error lines, script and job failures,
+    and memory or disk thresholds sampled every minute.
+  - **What gets dropped:** known noise in `DATA_DIR/routing.json`, which the owner can edit.
+    Minecraft chat lines are never incidents.
+  - **Run budget:** at most 2 automatic runs per problem per 24 h in either lane, then
+    `needs-human` and one Discord post.
+  - **Memory guard:** automatic runs wait (up to 10 minutes) while memory is too tight (under
+    400 MB available, or PSI full avg10 over 20). Memory incidents themselves still run.
+  - **Workspace:** `OPS_AGENT_DIR`, with `AGENTS.md` playbooks from `deploy/ops-agent/AGENTS.md`.
+    It may also write `OPS_WRITABLE_DIRS` (live: `~/server-platform/scripts`,
+    `~/.config/systemd/user`) and Minecraft's folders, all snapshotted.
+  - **Tools:** `host_pressure`, `units`, `unit_journal`, `unit_action` (start/restart, systemd
+    reloaded first), `containers`, `container_logs`, `container_restart`, `ops_incidents`.
+  - **Guards:** each unit or container may be restarted at most twice an hour, nothing may be
+    stopped, and the dashboard may not be restarted. Paper shares the Minecraft restart limit.
+  - **Residual risk, accepted by the owner:** a run that edits a script or unit file runs code
+    outside its sandbox the next time that file runs. Every such change is posted with its
+    rollback id.
+  - **The Auto switch** and the Stop button pause both lanes. Ops incidents are at `GET /api/ops`;
+    the Assistant panel does not show them yet.
 
 ## How to run & verify
 

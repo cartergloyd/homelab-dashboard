@@ -1,10 +1,12 @@
 // A local git history of the folders a run may write (lanes.ts), so the owner can see exactly what
 // an autonomous run changed and undo it. Before a run, pending changes are committed and each
 // root's commit is recorded; after it, the run's changes are committed and listed. Rollback puts a
-// root back to its recorded commit. Nothing is pushed anywhere. Plugin folders track config files
-// only (no caches, keys, databases or jars); the rules live in .git/info/exclude, not in the folder.
+// root back to its recorded commit. Nothing is pushed anywhere. Folders other than a scripts folder
+// track config, unit and note files only (no caches, keys, databases or jars); the rules live in
+// .git/info/exclude, not in the folder.
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { cfg } from "../config.js";
@@ -13,7 +15,7 @@ import { HttpError } from "../errors.js";
 const execFileP = promisify(execFile);
 const IDENTITY = ["-c", "user.name=homelab-dashboard", "-c", "user.email=homelab-dashboard@localhost", "-c", "commit.gpgsign=false", "-c", "core.quotepath=false"];
 const EXCLUDE_SCRIPTS = "__pycache__/\n*.pyc\n*.log\n*.jar\n*.tar.gz\n*.zip\nbackups/\nupdates/\n";
-const EXCLUDE_CONFIG = "*\n!*/\n!*.yml\n!*.yaml\n!*.properties\n!*.toml\n!*.conf\n!*.txt\n";
+const EXCLUDE_CONFIG = "*\n!*/\n!*.yml\n!*.yaml\n!*.properties\n!*.toml\n!*.conf\n!*.txt\n!*.md\n!*.service\n!*.timer\n!*.path\n!*.socket\n!*.target\n";
 const KEEP_RUNS = 200;
 
 type Recorded = Record<string, Record<string, string>>; // runId → root → commit before the run
@@ -60,7 +62,11 @@ async function record(runId: string, heads: Record<string, string>): Promise<voi
   await fs.rename(`${file()}.tmp`, file());
 }
 
-const label = (root: string, f: string) => `${path.relative(cfg.minecraft.dir, root) || path.basename(root)}/${f}`;
+function label(root: string, f: string): string {
+  const rel = path.relative(cfg.minecraft.dir, root);
+  const where = rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : root.replace(os.homedir(), "~");
+  return `${where}/${f}`;
+}
 
 export async function snapshotBefore(runId: string, roots: string[]): Promise<void> {
   const heads: Record<string, string> = {};

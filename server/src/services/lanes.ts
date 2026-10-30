@@ -11,8 +11,10 @@ import type { RunLane } from "./runTokens.js";
 // roles allowed to run console commands from Discord) or floodgate (its key).
 const MINECRAFT_ROOTS = ["scripts", "plugins/Geyser-Spigot", "plugins/ViaVersion"];
 
+/** The ops agent: its own workspace first, then the owner's extra folders (OPS_WRITABLE_DIRS), then Minecraft's. */
 export function writableRoots(lane: RunLane): string[] {
-  const roots = lane === "minecraft" ? MINECRAFT_ROOTS.map((r) => path.join(cfg.minecraft.dir, r)) : [];
+  const minecraft = MINECRAFT_ROOTS.map((r) => path.join(cfg.minecraft.dir, r));
+  const roots = lane === "minecraft" ? minecraft : [cfg.ops.dir, ...cfg.ops.writableDirs, ...minecraft];
   return roots.filter((r) => {
     try {
       return fs.statSync(r).isDirectory();

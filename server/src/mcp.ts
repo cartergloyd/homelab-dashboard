@@ -239,6 +239,32 @@ server.registerTool(
   async ({ runId }) => text(await call("POST", `/api/sidecar/runs/${encodeURIComponent(runId)}/rollback`, {})),
 );
 
+// ---- the whole server (the ops agent) -------------------------------------------------
+
+server.registerTool("host_pressure", { title: "Memory, swap, disk and who uses them", description: "Available memory, swap use, memory pressure (PSI full avg10 = % of time everything stalled on memory), every disk's use, the 12 largest processes and every container's memory and CPU. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/host/pressure")));
+
+server.registerTool("units", { title: "User systemd units", description: "Every user service and timer with its active/sub state (failed ones show as failed). Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/units")));
+
+server.registerTool("unit_journal", { title: "A unit's journal", description: "The last lines a user unit logged (journalctl --user -u). Read-only.", inputSchema: { unit: z.string().min(3).max(120).describe("e.g. minecraft-status.service"), lines: z.number().int().min(1).max(400).default(80) } }, async ({ unit, lines }) =>
+  text(((await call<{ text: string }>("GET", `/api/units/${encodeURIComponent(unit)}/journal?lines=${lines}`)).text) || "(no journal lines)"),
+);
+
+server.registerTool("unit_action", { title: "Start or restart a user unit", description: "Start or restart a user systemd service or timer; systemd is reloaded first, so an edited unit file takes effect. Dashboard assistants may restart the same unit at most twice an hour, never stop units, and never restart the dashboard itself. Minecraft's unit shares Minecraft's restart limit.", inputSchema: { unit: z.string().min(3).max(120), action: z.enum(["start", "restart"]) } }, async ({ unit, action }) =>
+  text(await call("POST", `/api/units/${encodeURIComponent(unit)}/action`, { action })),
+);
+
+server.registerTool("containers", { title: "Docker containers", description: "Every container with its state, status (uptime, health) and image. Memory per container is in host_pressure. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/containers")));
+
+server.registerTool("container_logs", { title: "A container's logs", description: "The last lines a container logged (stdout and stderr, with timestamps). Read-only.", inputSchema: { name: z.string().min(1).max(64), lines: z.number().int().min(1).max(400).default(80) } }, async ({ name, lines }) =>
+  text(((await call<{ text: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?lines=${lines}`)).text) || "(no log lines)"),
+);
+
+server.registerTool("container_restart", { title: "Restart a container", description: "Restart one Docker container (20 s graceful stop). Dashboard assistants may restart the same container at most twice an hour; stopping, removing or recreating containers is the owner's.", inputSchema: { name: z.string().min(1).max(64) } }, async ({ name }) =>
+  text(await call("POST", `/api/containers/${encodeURIComponent(name)}/restart`, {})),
+);
+
+server.registerTool("ops_incidents", { title: "Whole-server incidents", description: "Incidents the ops agent tracks (units, containers, scripts and jobs, memory, disk): status, counts and sample lines, plus what it is working on now. Minecraft's own incidents are in list_incidents. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/ops")));
+
 // ---- sidecar: incidents & approvals (issue #5) ---------------------------------------
 
 server.registerTool(

@@ -6,6 +6,7 @@ import path from "node:path";
 import { cfg } from "../config.js";
 import { query } from "./alerts.js";
 import { listJobs } from "./scheduler.js";
+import type { RunLane } from "./runTokens.js";
 import { locate } from "./scripts.js";
 
 // ---- the Minecraft console ---------------------------------------------------------------------
@@ -80,11 +81,35 @@ export async function scriptRefusal(name: string): Promise<string | null> {
 }
 
 /** Why a run may not run this scheduled job now, or null. The route answers unknown ids itself. */
-export async function jobRefusal(id: string): Promise<string | null> {
+export async function jobRefusal(id: string, lane: RunLane = "minecraft"): Promise<string | null> {
   const job = listJobs().find((j) => j.id === id);
   if (!job) return null;
   if (job.type === "restart") return restartRefusal();
   if (job.type === "command") return rconRefusal(job.options.command ?? "");
-  if (job.type === "script" && job.options.script) return scriptRefusal(job.options.script);
+  if (job.type === "script" && job.options.script && lane === "minecraft") return scriptRefusal(job.options.script);
   return null; // backups are the Minecraft worlds; external jobs cannot be run from the dashboard
+}
+
+// ---- units and containers (the ops lane) --------------------------------------------------------
+
+const TARGET_RESTARTS_PER_HOUR = 2;
+const targetLog = new Map<string, number[]>();
+
+function targetRefusal(target: string, now: number): string | null {
+  const recent = (targetLog.get(target) ?? []).filter((t) => now - t < 3600_000);
+  if (recent.length >= TARGET_RESTARTS_PER_HOUR) return `${target} was already restarted ${recent.length} times by an assistant in the last hour. Another restart will not fix it: file a needs-human report.`;
+  targetLog.set(target, [...recent, now]);
+  return null;
+}
+
+/** Why a run may not start or restart this unit, or null. Paper shares the Minecraft restart limit. */
+export function unitRefusal(unit: string, action: string, now = Date.now()): string | null {
+  if (action !== "start" && action !== "restart") return `Assistants may start or restart units, not ${action} them; only the owner may.`;
+  if (unit === cfg.dashboardService || unit === `${cfg.dashboardService}.service`) return "The dashboard runs you; restarting it would end this run. Ask the owner in a needs-human report.";
+  if (unit === cfg.minecraft.service) return restartRefusal(now);
+  return targetRefusal(`unit ${unit}`, now);
+}
+
+export function containerRefusal(name: string, now = Date.now()): string | null {
+  return targetRefusal(`container ${name}`, now);
 }

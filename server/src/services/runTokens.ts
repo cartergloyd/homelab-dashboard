@@ -4,8 +4,8 @@
 // and scripts. Tokens live in memory only: a dashboard restart also ends every run.
 import crypto from "node:crypto";
 
-/** What a run may act on. The ops lane (whole server) arrives with the ops agent. */
-export type RunLane = "minecraft";
+/** What a run may act on: Minecraft only, or the whole server (the ops agent). */
+export type RunLane = "minecraft" | "ops";
 /** What started the run: a Discord player's message, or the dashboard itself (incident, owner, button). */
 export type RunOrigin = "discord" | "dashboard";
 

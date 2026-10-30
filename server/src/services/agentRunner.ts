@@ -68,8 +68,9 @@ export function listAgentRuns(limit = 20): AgentRun[] {
   return runs.slice(0, limit);
 }
 
-export function currentRun(): AgentRun | null {
-  return runs.find((r) => r.status === "running") ?? null;
+/** The run in progress in this lane (any lane when omitted). Each lane runs one agent at a time. */
+export function currentRun(lane?: RunLane): AgentRun | null {
+  return runs.find((r) => r.status === "running" && (!lane || (r.lane ?? "minecraft") === lane)) ?? null;
 }
 
 export function stopRun(id: string): boolean {
@@ -223,7 +224,7 @@ function parseLine(runner: AgentRunner, line: string): { message?: string; sessi
 
 export function launchRun(opts: LaunchOptions): AgentRun {
   if (!["codex", "claude"].includes(opts.runner)) throw new HttpError(400, "Unknown agent runner");
-  const running = currentRun();
+  const running = currentRun(opts.lane ?? "minecraft");
   if (running) throw new HttpError(409, `${RUNNER_NAME[running.runner]} is already running (${running.task.slice(0, 80)})`);
 
   const lane = opts.lane ?? "minecraft";
@@ -241,6 +242,7 @@ export function launchRun(opts: LaunchOptions): AgentRun {
     lines: 0,
     kind: opts.kind,
     incidentId: opts.incidentId ?? null,
+    lane: opts.lane ?? "minecraft",
     sessionId: opts.resume ?? null,
     pid: null,
     error: null,

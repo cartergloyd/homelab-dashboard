@@ -396,6 +396,8 @@ export interface AgentRun {
   lines: number;
   kind: AgentRunKind;
   incidentId: string | null;
+  /** minecraft (the Minecraft responder) or ops (the whole-server agent); one run at a time per lane */
+  lane?: "minecraft" | "ops";
   sessionId: string | null;
   pid: number | null;
   error: string | null;

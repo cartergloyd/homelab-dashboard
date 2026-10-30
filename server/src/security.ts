@@ -3,7 +3,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import { cfg } from "./config.js";
 import type { Identity } from "./auth.js";
-import { jobRefusal, memberRefusal, rconRefusal, restartRefusal, scriptRefusal } from "./services/runGuards.js";
+import { containerRefusal, jobRefusal, memberRefusal, rconRefusal, restartRefusal, scriptRefusal, unitRefusal } from "./services/runGuards.js";
 import type { RunLane } from "./services/runTokens.js";
 import { secretIn } from "./services/secretFilter.js";
 import { HttpError } from "./errors.js";
@@ -46,16 +46,19 @@ const target = (req: Request) => hash(JSON.stringify([req.method, req.originalUr
 // other check. Reads stay open for diagnosis, except the apps' own data, repositories, the
 // terminal and security settings. Within its lane and the run guards a run acts on its own: no
 // approvals and no step-up (the owner's choice, 2026-10-30).
+const MINECRAFT_WRITES = [
+  /^post \/minecraft\/(action|command|whitelist)$/,
+  /^post \/backups$/,
+  /^post \/scripts\/[^/]+\/run$/,
+  /^post \/jobs\/[^/]+\/run$/,
+  /^post \/reports$/,
+  /^post \/sidecar\/runs\/[^/]+\/rollback$/,
+  /^post \/storage\/(scan|refresh)$/,
+];
 const LANE_WRITES: Record<RunLane, RegExp[]> = {
-  minecraft: [
-    /^post \/minecraft\/(action|command|whitelist)$/,
-    /^post \/backups$/,
-    /^post \/scripts\/[^/]+\/run$/,
-    /^post \/jobs\/[^/]+\/run$/,
-    /^post \/reports$/,
-    /^post \/sidecar\/runs\/[^/]+\/rollback$/,
-    /^post \/storage\/(scan|refresh)$/,
-  ],
+  minecraft: MINECRAFT_WRITES,
+  // the ops agent may also start or restart user units and restart containers
+  ops: [...MINECRAFT_WRITES, /^post \/units\/[^/]+\/action$/, /^post \/containers\/[^/]+\/restart$/],
 };
 const LANE_HIDDEN = /^\/(security|directus|database|repositories|terminal)(\/|$)/;
 // Discord-started runs read only what join help needs, and their changes count against the member who asked.
@@ -92,11 +95,15 @@ async function guardRefusal(req: Request, p: string, user: Identity): Promise<st
   }
   if (p === "/minecraft/action" && req.body?.action === "stop") return "Stopping leaves Minecraft down for everyone; only the owner may stop it. Restart it to recover.";
   if (p === "/minecraft/action" && ["start", "restart"].includes(String(req.body?.action))) return restartRefusal();
-  // Routes match case-insensitively; script names keep their case.
+  // Routes match case-insensitively; names keep their case.
   const script = /^\/scripts\/([^/]+)\/run\/?$/i.exec(req.path);
-  if (script) return scriptRefusal(decodeSegment(script[1]));
+  if (script) return user.lane === "minecraft" ? scriptRefusal(decodeSegment(script[1])) : null;
   const job = /^\/jobs\/([^/]+)\/run\/?$/i.exec(req.path);
-  if (job) return jobRefusal(decodeSegment(job[1]));
+  if (job) return jobRefusal(decodeSegment(job[1]), user.lane);
+  const unit = /^\/units\/([^/]+)\/action\/?$/i.exec(req.path);
+  if (unit) return unitRefusal(decodeSegment(unit[1]), String(req.body?.action ?? ""));
+  const container = /^\/containers\/([^/]+)\/restart\/?$/i.exec(req.path);
+  if (container) return containerRefusal(decodeSegment(container[1]));
   return null;
 }
 
@@ -126,6 +133,8 @@ export function protectedAction(method: string, pathname: string, body: Record<s
   if (p.startsWith("/directus/") && !/\/(login|logout)$/.test(p)) return `Change Directus data: ${m} ${p}`;
   if (p === "/qbittorrent/control" && body.action === "remove") return "Remove a torrent from the queue (keep downloaded files)";
   if (p === "/jellyfin/restart") return "Restart Jellyfin";
+  if (/^\/units\/[^/]+\/action$/.test(p)) return `${String(body.action ?? "change")} ${p.split("/")[2]}`;
+  if (/^\/containers\/[^/]+\/restart$/.test(p)) return `Restart container ${p.split("/")[2]}`;
   if (/^\/jobs(?:\/|$)/.test(p)) return `Maintenance job: ${m} ${p}${body.name ? ` (${String(body.name).slice(0, 150)})` : ""}`;
   if (/^\/scripts\/.+\/run$/.test(p)) return `Run maintenance script: ${p.split("/")[2]}`;
   if (/^\/context(?:\/|$)/.test(p)) return "Change shared assistant instructions";

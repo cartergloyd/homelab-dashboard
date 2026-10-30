@@ -57,6 +57,7 @@ Conventions:
 | `server/src/services/agentRunner.ts` → `runnerAvailable()` | reports the CLI as available | real `codex` / `claude` on the unit's PATH, logged in as the service user |
 | `server/src/services/discordSupport.ts` → `prepareDiscordSupport()` | Discord join support never connects | the bot token file, `DISCORD_SUPPORT_ENABLED=1`, guild and bot ids; "Minecraft Discord join support connected as …" in the feed |
 | `server/src/services/minecraftWatch.ts` → `startMinecraftWatch()` | no outage watch (the demo has no Paper server to ping) | the Paper unit and its status port; outage reports appear in the feed when pings fail |
+| `server/src/services/opsAgent.ts` → `initOpsAgent()` | no memory/disk sampling (the demo host is a laptop) | `/proc/meminfo`, `/proc/pressure/memory` and `df` on the server; "Ops agent ready" in the feed |
 | `server/src/services/sidecar.ts` → `DEFAULTS()` (enabled in demo), `simulateAgent()`, `simulateIncident()` | the sidecar is **on** by default and a scripted fake agent answers incidents, asks for a restart approval and files reports | sidecar off until the owner enables it; the real CLI runs; `/api/sidecar/simulate` is refused |
 
 ## 3. Demo-only API and UI

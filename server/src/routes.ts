@@ -35,6 +35,8 @@ import { addReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
 import * as sidecar from "./services/sidecar.js";
+import * as hostOps from "./services/hostOps.js";
+import * as opsAgent from "./services/opsAgent.js";
 import { rollbackRun } from "./services/snapshots.js";
 import { whitelistAdd } from "./services/whitelist.js";
 import { requireStepUp, securityApi, legacyGate } from "./security.js";
@@ -56,6 +58,28 @@ function logAction(res: Response, action: string): void {
 
 api.use("/directus", directusRecordRoutes(logAction));
 api.get("/host", (req, res) => res.json(hostStatus(z.enum(["24h", "7d"]).parse(req.query.range ?? "24h"))));
+
+// ---- the whole server, for the ops agent (services/hostOps.ts) ------------------------------
+const lines = (req: Request) => Math.min(Math.max(Number(req.query.lines) || 80, 1), 400);
+api.get("/host/pressure", async (_req, res) => res.json(await hostOps.hostPressure()));
+api.get("/units", async (_req, res) => res.json(await hostOps.listUnits()));
+api.get("/units/:unit/journal", async (req, res) => res.json({ text: await hostOps.unitJournal(String(req.params.unit), lines(req)) }));
+api.post("/units/:unit/action", async (req, res) => {
+  const { action } = z.object({ action: z.enum(["start", "restart"]) }).parse(req.body);
+  const unit = String(req.params.unit);
+  await hostOps.restartUnit(unit, action);
+  logAction(res, `${action} ${unit}`);
+  res.json({ ok: true });
+});
+api.get("/containers", async (_req, res) => res.json(await hostOps.listContainers()));
+api.get("/containers/:name/logs", async (req, res) => res.json({ text: await hostOps.containerLogs(String(req.params.name), lines(req)) }));
+api.post("/containers/:name/restart", async (req, res) => {
+  const name = String(req.params.name);
+  await hostOps.restartNamedContainer(name);
+  logAction(res, `restarted container ${name}`);
+  res.json({ ok: true });
+});
+api.get("/ops", (_req, res) => res.json(opsAgent.payload()));
 api.post("/terminal/execute", async (req, res) => {
   const body = z.object({ command: z.string().trim().min(1).max(8192), cwd: z.string().max(4096).default("") }).parse(req.body);
   const result = await executeHostCommand(body.command, body.cwd);

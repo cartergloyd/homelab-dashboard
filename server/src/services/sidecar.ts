@@ -16,6 +16,8 @@ import { RUNNER_NAME, currentRun, launchRun, listAgentRuns, runnerAvailable, sto
 import { publish, query, subscribe } from "./alerts.js";
 import { addReport, getReport, onReport } from "./reports.js";
 import { writableRoots } from "./lanes.js";
+import { notifyOwner } from "./notify.js";
+import { getRouting, isChat, isNoise, isOomKill, takeRunBudget, tooTightToStart } from "./routing.js";
 import type { RunLane, RunOrigin } from "./runTokens.js";
 import { addFeedback, decideSuggestion, feedbackFor, incidentSummary, initIncidentReviews, markFeedbackRun, recordSuggestion, suggestionsFor } from "./incidentReviews.js";
 export { decideSuggestion };
@@ -164,6 +166,8 @@ function repeatedWarning(fp: string, ts: number): boolean {
 
 function isActionable(e: AlertEvent, fp: string): boolean {
   if (e.source !== "minecraft" || e.meta?.agent || e.meta?.incidentId) return false; // the agent's own output
+  // players' chat is never a problem, known noise is dropped, and OOM kills belong to the ops lane
+  if (isChat(e.text) || isNoise(e.text) || isOomKill(e.text)) return false;
   if (e.level === "error") return true;
   if (e.level === "warn") return repeatedWarning(fp, Date.parse(e.ts));
   return false;
@@ -252,7 +256,7 @@ function enqueue(incidentId: string): void {
 }
 
 function pump(): void {
-  if (currentRun()) return;
+  if (currentRun("minecraft") || starting) return;
   const continuation = conversationContinuations.shift();
   if (continuation) {
     launchManual(settings.runner, continuation);
@@ -325,7 +329,7 @@ function simulateAgent(inc: Incident | null, continuation: string | undefined, r
   const name = `${RUNNER_NAME[runner]} (demo)`;
   return async (emit, say, signal) => {
     const sleep = (ms: number) => delay(ms, undefined, { signal });
-    const runId = currentRun()?.id ?? null;
+    const runId = currentRun("minecraft")?.id ?? null;
     await sleep(700);
     emit("→ read_instructions()");
     await sleep(600);
@@ -396,12 +400,60 @@ function startIncidentRun(incidentId: string): void {
     pump();
     return;
   }
-  turnsThisRun = 0;
   const delivery = deliveryFor(inc.id);
   if (inc.fingerprint.startsWith("discord:") && !delivery) {
     inc.status = "failed"; inc.note = "Discord support context expired; the player must send a new mention.";
     void persistIncidents(); pump(); return;
   }
+  // Runs the log started on its own are budgeted and wait for memory; the owner's and players' are not.
+  const automatic = !continuation && !feedback.length && !delivery && !ownerRequested.delete(inc.id);
+  if (!automatic) return launchIncidentRun(inc, continuation, feedback, delivery);
+  starting = true;
+  void tooTightToStart().then((tight) => {
+    starting = false;
+    if (tight) return holdForMemory(inc);
+    if (!takeRunBudget(`minecraft:${inc.fingerprint}`)) return outOfBudget(inc);
+    launchIncidentRun(inc, continuation, feedback, delivery);
+  });
+}
+
+const ownerRequested = new Set<string>();
+const memoryHeldSince = new Map<string, number>();
+const budgetToldAt = new Map<string, number>();
+let starting = false;
+
+function holdForMemory(inc: Incident): void {
+  const since = memoryHeldSince.get(inc.id) ?? Date.now();
+  memoryHeldSince.set(inc.id, since);
+  if (Date.now() - since < 10 * 60_000) {
+    setPhase("queued", "Waiting for memory to recover before investigating");
+    setTimeout(() => enqueue(inc.id), 60_000).unref();
+  } else {
+    memoryHeldSince.delete(inc.id);
+    inc.note = "Skipped: memory stayed too tight for 10 minutes to start the assistant.";
+    inc.outcome = "needs-human";
+    void persistIncidents();
+    notifyOwner(`⏸️ Minecraft: ${inc.title} — memory stayed too tight to start the assistant for 10 minutes. It needs you.`);
+  }
+  pump();
+}
+
+function outOfBudget(inc: Incident): void {
+  const runs = getRouting().runsPerKeyPerDay;
+  inc.note = `Automatic investigations of this problem are paused: it already had ${runs} runs in the last 24 hours.`;
+  inc.outcome = "needs-human";
+  void persistIncidents();
+  if (Date.now() - (budgetToldAt.get(inc.fingerprint) ?? 0) > 24 * 3600_000) {
+    budgetToldAt.set(inc.fingerprint, Date.now());
+    notifyOwner(`⏸️ Minecraft: ${inc.title} keeps happening; the assistant already tried ${runs} times today. It needs you.`);
+  }
+  pump();
+}
+
+function launchIncidentRun(inc: Incident, continuation: string | undefined, feedback: ReturnType<typeof feedbackFor>, delivery: IncidentDelivery | null): void {
+  const incidentId = inc.id;
+  memoryHeldSince.delete(inc.id);
+  turnsThisRun = 0;
   let run: AgentRun;
   try {
     run = launchRun({
@@ -534,7 +586,7 @@ export async function stopAssistant(by: string): Promise<void> {
   await updateSettings({ enabled: false }, by);
   continuations.clear();
   conversationContinuations.splice(0);
-  const run = currentRun();
+  const run = currentRun("minecraft");
   if (run) stopRun(run.id);
   addTurn("system", run ? `${by} stopped the current job and paused automatic investigations.` : `${by} paused automatic investigations.`, run?.id ?? null, run?.incidentId ?? null);
   if (!run) setPhase("off", "Automatic investigations are paused; chat is ready.");
@@ -653,7 +705,7 @@ export async function gate(action: string, who: Identity, reason = "requested by
   if (who.lane) return;
   if (canRecover(action, who)) return;
   if (consumeApproval(action)) return;
-  const run = currentRun();
+  const run = currentRun("minecraft");
   const a = await requestApproval(action, reason, who.name, run?.id ?? null, current.incidentId);
   throw new HttpError(409, `Approval required for "${action}" (request ${a.id}). The owner has been asked in the Assistant panel. Stop here and end your turn — the dashboard resumes you with the decision.`);
 }
@@ -687,6 +739,7 @@ export function reviewIncident(id: string): IncidentReviewPayload {
 }
 
 export async function revisitIncident(id: string, text: string, by: string): Promise<Incident> {
+  ownerRequested.add(id);
   const incident = findIncident(id);
   await addFeedback(id, text, by);
   if (current.incidentId !== id) incident.status = "open";
@@ -700,6 +753,7 @@ export async function revisitIncident(id: string, text: string, by: string): Pro
 }
 
 export function investigateIncident(id: string, by: string): Incident {
+  ownerRequested.add(id);
   const inc = findIncident(id);
   if (!runnerOk.ok && !cfg.demo) throw new HttpError(409, runnerOk.note ?? "The agent CLI is not available on the server");
   if (inc.status === "dismissed" || inc.status === "resolved" || inc.status === "failed") inc.status = "open";
@@ -766,7 +820,7 @@ export function getSettings(): SidecarSettings {
 }
 
 export async function updateSettings(patch: Partial<SidecarSettings>, by: string): Promise<SidecarSettings> {
-  if (patch.runner && patch.runner !== settings.runner && currentRun()) throw new HttpError(409, "Stop the current job before changing agents");
+  if (patch.runner && patch.runner !== settings.runner && currentRun("minecraft")) throw new HttpError(409, "Stop the current job before changing agents");
   const before = settings;
   settings = { ...settings, ...patch };
   if (patch.runner && patch.runner !== before.runner) runnerOk = await runnerAvailable(settings.runner);
@@ -777,14 +831,14 @@ export async function updateSettings(patch: Partial<SidecarSettings>, by: string
     for (const t of launchTimers.values()) clearTimeout(t);
     launchTimers.clear();
     queue.splice(0);
-    if (!currentRun()) setPhase("off");
+    if (!currentRun("minecraft")) setPhase("off");
   } else if (phase === "off") setPhase("idle");
   if (settings.enabled && settings.autoTrigger) for (const inc of incidents) if (inc.status === "open" && (!inc.runIds.length || inc.fingerprint.startsWith("discord:"))) scheduleLaunch(inc);
   return settings;
 }
 
 function stateView(): SidecarState {
-  return { phase, since: phaseSince, detail: phaseDetail, currentIncidentId: current.incidentId, currentRunId: current.runId, queue: [...queue], lastRun: listAgentRuns(1)[0] ?? null, runnerAvailable: runnerOk.ok, runnerNote: runnerOk.note, sessionId: currentRun()?.sessionId ?? lastSession[settings.runner] ?? null, model: settings.runner === "codex" ? cfg.codexModel : null };
+  return { phase, since: phaseSince, detail: phaseDetail, currentIncidentId: current.incidentId, currentRunId: current.runId, queue: [...queue], lastRun: listAgentRuns(1)[0] ?? null, runnerAvailable: runnerOk.ok, runnerNote: runnerOk.note, sessionId: currentRun("minecraft")?.sessionId ?? lastSession[settings.runner] ?? null, model: settings.runner === "codex" ? cfg.codexModel : null };
 }
 
 /** Everything the agent did about each incident it reported on — the "Repairs" list. */
