@@ -35,6 +35,10 @@ import { addReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
 import * as sidecar from "./services/sidecar.js";
+import * as hostOps from "./services/hostOps.js";
+import * as opsAgent from "./services/opsAgent.js";
+import { rollbackRun } from "./services/snapshots.js";
+import { whitelistAdd } from "./services/whitelist.js";
 import { requireStepUp, securityApi, legacyGate } from "./security.js";
 import type { AgentRunner, AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
@@ -54,6 +58,28 @@ function logAction(res: Response, action: string): void {
 
 api.use("/directus", directusRecordRoutes(logAction));
 api.get("/host", (req, res) => res.json(hostStatus(z.enum(["24h", "7d"]).parse(req.query.range ?? "24h"))));
+
+// ---- the whole server, for the ops agent (services/hostOps.ts) ------------------------------
+const lines = (req: Request) => Math.min(Math.max(Number(req.query.lines) || 80, 1), 400);
+api.get("/host/pressure", async (_req, res) => res.json(await hostOps.hostPressure()));
+api.get("/units", async (_req, res) => res.json(await hostOps.listUnits()));
+api.get("/units/:unit/journal", async (req, res) => res.json({ text: await hostOps.unitJournal(String(req.params.unit), lines(req)) }));
+api.post("/units/:unit/action", async (req, res) => {
+  const { action } = z.object({ action: z.enum(["start", "restart"]) }).parse(req.body);
+  const unit = String(req.params.unit);
+  await hostOps.restartUnit(unit, action);
+  logAction(res, `${action} ${unit}`);
+  res.json({ ok: true });
+});
+api.get("/containers", async (_req, res) => res.json(await hostOps.listContainers()));
+api.get("/containers/:name/logs", async (req, res) => res.json({ text: await hostOps.containerLogs(String(req.params.name), lines(req)) }));
+api.post("/containers/:name/restart", async (req, res) => {
+  const name = String(req.params.name);
+  await hostOps.restartNamedContainer(name);
+  logAction(res, `restarted container ${name}`);
+  res.json({ ok: true });
+});
+api.get("/ops", (_req, res) => res.json(opsAgent.payload()));
 api.post("/terminal/execute", async (req, res) => {
   const body = z.object({ command: z.string().trim().min(1).max(8192), cwd: z.string().max(4096).default("") }).parse(req.body);
   const result = await executeHostCommand(body.command, body.cwd);
@@ -279,6 +305,13 @@ api.post("/minecraft/command", async (req, res) => {
   res.json({ output });
 });
 
+api.post("/minecraft/whitelist", async (req, res) => {
+  const { edition, name } = z.object({ edition: z.enum(["java", "bedrock"]), name: z.string().trim().min(1).max(32) }).parse(req.body);
+  const result = await whitelistAdd(edition, name);
+  logAction(res, result.alreadyListed ? `checked the whitelist: ${result.name} is already on it` : `added ${result.name} (${edition}) to the whitelist`);
+  res.json(result);
+});
+
 // ---- maintenance ---------------------------------------------------------
 
 api.get("/jobs", (_req, res) => {
@@ -492,7 +525,13 @@ api.put("/sidecar/settings", async (req, res) => {
 });
 
 api.get("/sidecar/conversation", (req, res) => {
-  res.json(sidecar.getConversation(Math.min(500, Number(req.query.limit) || 100)));
+  res.json(sidecar.getConversation(Math.max(1, Math.min(500, Number(req.query.limit) || 100)), typeof req.query.before === "string" ? req.query.before : undefined));
+});
+
+api.post("/sidecar/problems", (req, res) => {
+  if (user(res).viaKey && user(res).dashboardRunId) throw new HttpError(403, "The responder cannot submit its own outage reports");
+  const body = z.object({ kind: z.enum(["outage", "console"]), text: z.string().trim().min(1).max(4000) }).parse(req.body);
+  res.status(201).json(sidecar.reportProblem(body.kind, body.text, user(res).name));
 });
 
 api.post("/sidecar/chat", (req, res) => {
@@ -552,10 +591,19 @@ api.get("/sidecar/approvals", (req, res) => {
   res.json(sidecar.listApprovals(req.query.all === "1"));
 });
 
+/** Undo the file changes an agent run made (snapshots.ts). */
+api.post("/sidecar/runs/:id/rollback", async (req, res) => {
+  const runId = String(req.params.id);
+  const files = await rollbackRun(runId);
+  logAction(res, files.length ? `rolled back run ${runId.slice(0, 8)}: ${files.slice(0, 10).join(", ")}${files.length > 10 ? ", …" : ""}` : `rollback of run ${runId.slice(0, 8)}: nothing to undo`);
+  res.json({ files });
+});
+
 /** Agents ask here (MCP request_approval); the owner answers below. */
 api.post("/sidecar/approvals", async (req, res) => {
   const body = z.object({ action: z.string().trim().min(1).max(80), reason: z.string().trim().min(1).max(1000), incidentId: z.string().trim().max(40).optional() }).parse(req.body);
   const u = user(res);
+  if (u.viaKey && !u.dashboardRunId) throw new HttpError(400, "Ask the owner in your current CLI or assistant conversation. Dashboard approvals are for its dedicated assistant only.");
   res.status(201).json(await sidecar.requestApproval(body.action, body.reason, u.name, null, body.incidentId ?? null));
 });
 

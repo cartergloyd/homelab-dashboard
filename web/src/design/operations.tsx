@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { AssistantWidget } from "../components/AssistantWidget";
 import { useAppConfig } from "../App";
 import {
   Button,
@@ -161,7 +162,6 @@ export function MinecraftDesign({
     [history, setHistory] = useState<{ command: string; output: string }[]>([]),
     [reports, setReports] = useState(false),
     [controls, setControls] = useState(false),
-    [assistant, setAssistant] = useState(false),
     [logs, setLogs] = useState(false),
     [plugin, setPlugin] = useState<StagedUpdatePayload["items"][number] | null>(
       null,
@@ -213,9 +213,6 @@ export function MinecraftDesign({
         title="Minecraft"
         actions={
           <>
-            <Button icon="spark" onClick={() => setAssistant(true)}>
-              Assistant
-            </Button>
             <Button icon="pulse" onClick={() => setReports(true)}>
               Reports
             </Button>
@@ -224,79 +221,83 @@ export function MinecraftDesign({
       />
       <Issue error={q.error} />
       <div className="section-stack">
-        <Panel
-          title="Server console"
-          sub="Minecraft commands and server output"
-          actions={
-            <Status
-              label={
-                ready
-                  ? "Connected"
-                  : d?.ping
-                    ? "Server online · controls unavailable"
-                    : d
-                      ? "Unavailable"
-                      : "Connecting"
-              }
-              state={ready ? "ok" : d?.ping ? "warn" : "unknown"}
-            />
-          }
-        >
-          <div className="game-console">
-            <div className="console-lines" role="log">
-              <p>
-                {d?.ping
-                  ? `${d.ping.version} · ${d.players?.online ?? d.ping.online} / ${d.players?.max ?? d.ping.max} players online`
-                  : q.isPending
-                    ? "Connecting to Minecraft…"
-                    : "Game server is not responding."}
-              </p>
-              {events.data?.slice(-4).map((e) => (
-                <p key={e.id}>{e.text}</p>
-              ))}
-              {history.map((h, i) => (
-                <div key={i}>
-                  <p className="command-echo">&gt; {h.command}</p>
-                  <pre>{h.output}</pre>
-                </div>
-              ))}
-              {d && !ready && (
-                <p>
-                  Console unavailable:{" "}
-                  {d.rcon.error ?? "The RCON connection is not ready."}
-                </p>
-              )}
-            </div>
-            <form
-              id="mc-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (command.trim()) void send(command.trim());
-              }}
-            >
-              <label htmlFor="mc-command">&gt;</label>
-              <input
-                id="mc-command"
-                aria-label="Minecraft command"
-                placeholder={
+        <div className="minecraft-console-assistant">
+          <Panel
+            title="Server console"
+            className="minecraft-console-panel"
+            sub="Minecraft commands and server output"
+            actions={
+              <Status
+                label={
                   ready
-                    ? "Enter a Minecraft command"
-                    : "RCON connection unavailable"
+                    ? "Connected"
+                    : d?.ping
+                      ? "Server online · controls unavailable"
+                      : d
+                        ? "Unavailable"
+                        : "Connecting"
                 }
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                disabled={!ready || action.pending}
-                autoComplete="off"
+                state={ready ? "ok" : d?.ping ? "warn" : "unknown"}
               />
-              <Button
-                type="submit"
-                disabled={!ready || !command.trim() || action.pending}
+            }
+          >
+            <div className="game-console">
+              <div className="console-lines" role="log">
+                <p>
+                  {d?.ping
+                    ? `${d.ping.version} · ${d.players?.online ?? d.ping.online} / ${d.players?.max ?? d.ping.max} players online`
+                    : q.isPending
+                      ? "Connecting to Minecraft…"
+                      : "Game server is not responding."}
+                </p>
+                {events.data?.slice(-4).map((e) => (
+                  <p key={e.id}>{e.text}</p>
+                ))}
+                {history.map((h, i) => (
+                  <div key={i}>
+                    <p className="command-echo">&gt; {h.command}</p>
+                    <pre>{h.output}</pre>
+                  </div>
+                ))}
+                {d && !ready && (
+                  <p>
+                    Console unavailable:{" "}
+                    {d.rcon.error ?? "The RCON connection is not ready."}
+                  </p>
+                )}
+              </div>
+              <form
+                id="mc-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (command.trim()) void send(command.trim());
+                }}
               >
-                Send
-              </Button>
-            </form>
-          </div>
-        </Panel>
+                <label htmlFor="mc-command">&gt;</label>
+                <input
+                  id="mc-command"
+                  aria-label="Minecraft command"
+                  placeholder={
+                    ready
+                      ? "Enter a Minecraft command"
+                      : "RCON connection unavailable"
+                  }
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  disabled={!ready || action.pending}
+                  autoComplete="off"
+                />
+                <Button
+                  type="submit"
+                  disabled={!ready || !command.trim() || action.pending}
+                >
+                  Send
+                </Button>
+              </form>
+            </div>
+          </Panel>
+          <AssistantWidget title="Minecraft responder" />
+        </div>
         <Panel title="Quick commands">
           <div className="panel-body file-grid">
             {[
@@ -407,7 +408,6 @@ export function MinecraftDesign({
       {reports && (
         <ReportsDialog kind="minecraft" onClose={() => setReports(false)} />
       )}{" "}
-      {assistant && <AssistantDialog onClose={() => setAssistant(false)} />}{" "}
       {logs && <LogsDialog onClose={() => setLogs(false)} />}
       {controls && (
         <Drawer

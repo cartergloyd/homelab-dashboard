@@ -17,8 +17,9 @@ try {
   await fs.mkdir(path.join(tmp, "bin"));
   await fs.copyFile(new URL("./fixtures/agent-cli.mjs", import.meta.url), path.join(tmp, "bin/codex"));
   await fs.chmod(path.join(tmp, "bin/codex"), 0o755);
-  Object.assign(process.env, { PATH: `${path.join(tmp, "bin")}${path.delimiter}${process.env.PATH}`, DATA_DIR: tmp, MC_DIR: tmp, CONTEXT_FILE: path.join(tmp, "instructions.md"), HOST: "0.0.0.0", PORT: "32123", CODEX_MODEL: "fixture-model", DASHBOARD_KEY: "fixture-key", AUTH_DISABLED: "1", DEMO: "0" });
+  Object.assign(process.env, { PATH: `${path.join(tmp, "bin")}${path.delimiter}${process.env.PATH}`, DATA_DIR: tmp, MC_DIR: tmp, CONTEXT_FILE: path.join(tmp, "instructions.md"), HOST: "0.0.0.0", PORT: "32123", CODEX_MODEL: "fixture-model", DASHBOARD_KEY: "fixture-key", RCON_PASSWORD: "fixture-rcon-secret", AUTH_DISABLED: "1", DEMO: "0" });
   const runner = await import("./dist/services/agentRunner.js");
+  const { verifyRunToken } = await import("./dist/services/runTokens.js");
   const sidecar = await import("./dist/services/sidecar.js");
   const { publish } = await import("./dist/services/alerts.js");
   const { addReport } = await import("./dist/services/reports.js");
@@ -28,12 +29,20 @@ try {
 
   sidecar.chat("first message", "owner");
   const first = runner.currentRun();
+  assert.equal(sidecar.canRecover("minecraft_service:restart", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), true);
+  assert.equal(sidecar.canRecover("minecraft_service:stop", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), false);
+  assert.equal(sidecar.canRecover("minecraft_service:restart", { viaKey: true, name: "other", dashboardRunId: "unrelated-run" }), false);
+  assert.equal(sidecar.canRecover("rcon:op", { viaKey: true, name: "Dashboard Codex", dashboardRunId: first.id }), false);
   const turnsBefore = sidecar.getConversation().length;
   assert.throws(() => sidecar.chat("must not be recorded", "owner"), /already running/);
   assert.equal(sidecar.getConversation().length, turnsBefore, "busy submissions must not leave phantom user messages");
   await waitFor(() => first.finishedAt, "first run did not finish");
   assert.equal(first.status, "exited");
   assert.ok(first.pid);
+  const inputCount = sidecar.listIncidents(200, true).length;
+  publish({ source: "jellyfin", kind: "log", level: "error", text: "Not a Minecraft error" });
+  publish({ source: "jobs", kind: "job", level: "error", text: "Unrelated failed job" });
+  assert.equal(sidecar.listIncidents(200, true).length, inputCount, "the responder ignores non-Minecraft failures");
   assert.equal(sidecar.getPayload().state.sessionId, first.sessionId);
 
   sidecar.chat("follow-up", "owner");
@@ -45,6 +54,12 @@ try {
   assert.equal(invocations[0].url, "http://127.0.0.1:32123", "wildcard binds must use a loopback client URL");
   assert.equal(invocations[0].agent, "Dashboard Codex");
   assert.equal(invocations[0].keyPresent, true);
+  assert.match(invocations[0].token, /^hlr_/, "runs receive their own token");
+  assert.notEqual(invocations[0].token, "fixture-key", "runs never receive the master key");
+  assert.notEqual(invocations[0].token, invocations[1].token, "every run gets a fresh token");
+  assert.equal(verifyRunToken(invocations[0].token), null, "a run's token is revoked when it ends");
+  for (const secret of ["DASHBOARD_KEY", "RCON_PASSWORD", "DATA_DIR"]) assert.equal(invocations[0].envKeys.includes(secret), false, `${secret} must not reach the agent`);
+  assert.ok(invocations[0].envKeys.includes("PATH") && invocations[0].envKeys.includes("HOME"));
   assert.ok(invocations[0].args.includes("fixture-model"));
   assert.ok(invocations[0].args.some((arg) => arg.startsWith("mcp_servers.dashboard=") && arg.includes("required=true") && arg.includes('default_tools_approval_mode="approve"')));
   const resumeArgs = invocations[1].args;
@@ -164,8 +179,16 @@ try {
   } finally {
     await new Promise((resolve) => http.close(resolve));
   }
-  await assert.rejects(sidecar.gate("run_script:fixture.sh", { viaKey: true, name: "Dashboard Codex" }), /Approval required/);
+  await assert.rejects(sidecar.gate("run_script:fixture.sh", { viaKey: true, name: "Dashboard Codex", dashboardRunId: "fixture-run" }), /Approval required/);
   await sidecar.gate("run_script:fixture.sh", { viaKey: false, name: "owner" });
+  const page = sidecar.getConversation(2);
+  const previous = sidecar.getConversation(2, page[0].id);
+  assert.equal(previous.some(t => page.some(p => p.id === t.id)), false, "history pages do not overlap");
+  assert.throws(() => sidecar.getConversation(2, "unknown"), /cursor not found/);
+  const countBeforeReport = sidecar.getConversation(500).length;
+  sidecar.reportProblem("outage", "Players cannot connect to the server", "owner");
+  assert.equal(sidecar.getConversation(500).length, countBeforeReport + 1, "outage input appears in the continuous chat");
+  assert.match(sidecar.getConversation(1)[0].text, /Players cannot connect/);
   console.log("agent-runner: lifecycle, service launch, feedback persistence, and owner-only instruction approval passed");
 } finally {
   for (const pid of runningPids) {

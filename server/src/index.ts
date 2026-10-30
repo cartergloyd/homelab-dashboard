@@ -15,9 +15,13 @@ import { startHub } from "./services/alerts.js";
 import { initContext } from "./services/context.js";
 import { initDiskScan } from "./services/diskscan.js";
 import { initReports } from "./services/reports.js";
+import { startMinecraftWatch } from "./services/minecraftWatch.js";
 import { initMinecraft } from "./services/minecraft.js";
 import { initScheduler } from "./services/scheduler.js";
 import { initScripts } from "./services/scripts.js";
+import { prepareDiscordSupport } from "./services/discordSupport.js";
+import { startNotifications } from "./services/notify.js";
+import { initOpsAgent } from "./services/opsAgent.js";
 import { initSidecar } from "./services/sidecar.js";
 import { refreshFolders } from "./services/storage.js";
 import { initHostMetrics } from "./services/host.js";
@@ -50,7 +54,15 @@ async function main(): Promise<void> {
   await initContext();
   await initReports();
   await initScheduler();
+  const startDiscordSupport = await prepareDiscordSupport().catch(error => {
+    console.warn("Discord join support could not be prepared:", error.message);
+    return () => {};
+  });
   await initSidecar();
+  await startNotifications();
+  await initOpsAgent();
+  startDiscordSupport();
+  startMinecraftWatch();
   await initDiskScan();
   void refreshFolders();
 

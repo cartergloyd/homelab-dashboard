@@ -45,6 +45,14 @@ const Env = z.object({
   DATA_DIR: z.string().default(path.resolve(process.cwd(), "data")),
   DOCKER_SOCKET: z.string().default("/var/run/docker.sock"),
   SYSTEMD_USER: flag,
+  DISCORD_SUPPORT_ENABLED: flag,
+  DISCORD_SUPPORT_TOKEN_FILE: z.string().optional(),
+  DISCORD_SUPPORT_GUILD_ID: z.string().optional(),
+  DISCORD_SUPPORT_BOT_ID: z.string().optional(),
+  OPS_AGENT_DIR: z.string().optional(), // the ops agent's workspace (its AGENTS.md and notes)
+  OPS_WRITABLE_DIRS: z.string().optional(), // comma-separated extra folders the ops agent may change
+  OWNER_DISCORD_CHANNEL_ID: z.string().trim().regex(/^\d+$/).optional(), // where the assistant reports to the owner
+  OWNER_DISCORD_TOKEN_FILE: z.string().optional(), // env-style file with DISCORD_BOT_TOKEN; defaults to DISCORD_SUPPORT_TOKEN_FILE
   CODEX_MODEL: z.string().trim().min(1).optional(),
 
   JELLYFIN_URL: z.string().default("http://127.0.0.1:8096"),
@@ -190,6 +198,22 @@ export const cfg = {
   dataDir: env.DATA_DIR,
   dockerSocket: env.DOCKER_SOCKET,
   systemdUser: env.SYSTEMD_USER,
+  discordSupport: {
+    enabled: env.DISCORD_SUPPORT_ENABLED,
+    tokenFile: env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    guildId: env.DISCORD_SUPPORT_GUILD_ID ?? "",
+    botId: env.DISCORD_SUPPORT_BOT_ID ?? "",
+  },
+  ops: {
+    // [INSTALLER] the live server: ~/server-platform/ops-agent, with ~/server-platform/scripts and ~/.config/systemd/user writable
+    dir: env.OPS_AGENT_DIR?.trim() || path.join(path.dirname(path.resolve(env.DATA_DIR)), "ops-agent"),
+    writableDirs: (env.OPS_WRITABLE_DIRS ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+  },
+  ownerDiscord: {
+    channelId: env.OWNER_DISCORD_CHANNEL_ID ?? "",
+    tokenFile: env.OWNER_DISCORD_TOKEN_FILE ?? env.DISCORD_SUPPORT_TOKEN_FILE ?? "",
+    dashboardUrl: env.PUBLIC_DASHBOARD_URL?.trim().replace(/\/$/, "") || null,
+  },
   codexModel: env.CODEX_MODEL ?? null,
   timezone: env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   routerUrl: env.ROUTER_URL ?? null,

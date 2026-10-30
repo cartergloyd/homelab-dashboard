@@ -6,15 +6,13 @@ import { useAppConfig } from "../App";
 import { selectAlert, useSelectedAlert } from "../alertSelection";
 import { fmtDateTime, fmtRelative } from "../format";
 import type { AgentRunner, ConversationTurn, SidecarPayload, SidecarPhase, SidecarSettings } from "../types";
-import { ContextModal } from "./ContextModal";
-import { IncidentsMenu } from "./IncidentsMenu";
 import { Icons } from "./icons";
 import { Modal, useToast } from "./ui";
 
 const RUNNER_LABEL: Record<AgentRunner, string> = { codex: "Codex", claude: "Claude Code" };
 const PHASE: Record<SidecarPhase, { label: string; dot: string }> = {
-  off: { label: "Ready for your message", dot: "" },
-  idle: { label: "Watching the feed", dot: "ok" },
+  off: { label: "Monitoring paused", dot: "" },
+  idle: { label: "Watching Minecraft", dot: "ok" },
   queued: { label: "Incident queued", dot: "warn" },
   investigating: { label: "Working…", dot: "busy" },
   "waiting-approval": { label: "Needs your approval", dot: "warn" },
@@ -64,7 +62,7 @@ function SettingsModal({ payload, onClose }: { payload: SidecarPayload; onClose:
     <Modal title="Assistant settings" onClose={onClose} wide>
       <div className="stack">
         <div className="notice">
-          The dashboard runs one <strong>{RUNNER_LABEL[s.runner]}</strong> job at a time and keeps its own conversation between jobs, using your existing subscription. It is separate from your editor or ChatGPT conversation. Use the chat panel for tasks and follow-up questions.
+          The dashboard runs one <strong>{RUNNER_LABEL[s.runner]}</strong> job at a time and keeps its own conversation between jobs, using your existing subscription. It is separate from your editor or ChatGPT conversation. It responds to Minecraft console errors and outage reports; follow-ups stay in the same conversation.
           {payload.state.runnerNote && <span className="muted"> {payload.state.runnerNote}</span>}
         </div>
         <div className="form-grid">
@@ -82,10 +80,10 @@ function SettingsModal({ payload, onClose }: { payload: SidecarPayload; onClose:
           {field("maxRunMinutes", "Max run (minutes)", "A single investigation is stopped after this long.", <input className="input" type="number" min={1} max={180} value={s.maxRunMinutes} onChange={(e) => setS({ ...s, maxRunMinutes: Number(e.target.value) || 20 })} />)}
         </div>
         <label className="check">
-          <input type="checkbox" checked={s.enabled && s.autoTrigger} onChange={(e) => setS({ ...s, enabled: e.target.checked, autoTrigger: e.target.checked })} /> Investigate new incidents automatically (errors, failed jobs/scripts, repeated warnings). Chat is always available.
+          <input type="checkbox" checked={s.enabled && s.autoTrigger} onChange={(e) => setS({ ...s, enabled: e.target.checked, autoTrigger: e.target.checked })} /> Respond automatically to Minecraft errors, repeated warnings, and detected outages.
         </label>
         <label className="check">
-          <input type="checkbox" checked={s.requireApproval} onChange={(e) => setS({ ...s, requireApproval: e.target.checked })} /> Ask me before restart / stop / destructive console commands
+          <input type="checkbox" checked={s.requireApproval} onChange={(e) => setS({ ...s, requireApproval: e.target.checked })} /> Ask before destructive changes and maintenance scripts. Minecraft start/restart recovery is preauthorized.
         </label>
         <div className="row small muted">
           Workspace (sandbox root): <span className="mono">{s.workspace}</span>
@@ -147,223 +145,91 @@ function SettingsModal({ payload, onClose }: { payload: SidecarPayload; onClose:
 }
 
 
-export function AssistantWidget() {
+export function AssistantWidget({ title = "Minecraft responder" }: { title?: string }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const config = useAppConfig();
-  const [modal, setModal] = useState<"context" | "settings" | "incidents" | "simulate" | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [kind, setKind] = useState<"outage" | "console" | "followup">("outage");
+  const [older, setOlder] = useState<ConversationTurn[]>([]);
+  const [historyEnd, setHistoryEnd] = useState(false);
   const convoRef = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
   const selected = useSelectedAlert();
-
   const sidecar = useQuery({ queryKey: ["sidecar"], queryFn: () => api.get<SidecarPayload>("/sidecar"), refetchInterval: 3000 });
-  const convo = useQuery({ queryKey: ["sidecar", "conversation"], queryFn: () => api.get<ConversationTurn[]>("/sidecar/conversation?limit=80"), refetchInterval: 3000 });
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: ["sidecar"] });
-    qc.invalidateQueries({ queryKey: ["alerts"] });
-  };
+  const convo = useQuery({ queryKey: ["sidecar", "conversation"], queryFn: () => api.get<ConversationTurn[]>("/sidecar/conversation?limit=80"), refetchInterval: 2000 });
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ["sidecar"] }); qc.invalidateQueries({ queryKey: ["alerts"] }); };
   const onError = (e: Error) => toast(readableMessage(e.message), "error");
-  const chat = useMutation({
-    mutationFn: (v: { text: string; alertId?: string }) => api.post("/sidecar/chat", v),
-    onSuccess: () => {
-      setDraft("");
-      selectAlert(null);
-      invalidate();
-    },
-    onError,
+  const submit = useMutation({
+    mutationFn: (v: { text: string; kind: typeof kind }) => v.kind === "followup"
+      ? api.post("/sidecar/chat", { text: v.text, alertId: selected?.id })
+      : api.post("/sidecar/problems", { kind: v.kind, text: v.text }),
+    onSuccess: () => { setDraft(""); selectAlert(null); followBottom.current = true; invalidate(); }, onError,
   });
   const decide = useMutation({ mutationFn: (v: { id: string; decision: "approve" | "deny" }) => api.post(`/sidecar/approvals/${v.id}`, { decision: v.decision }), onSuccess: invalidate, onError });
-  const simulate = useMutation({
-    mutationFn: (v: { kind: "exception" | "warn" | "job" | "custom"; text?: string }) => api.post("/sidecar/simulate", v),
-    onSuccess: () => {
-      toast("Published to the feed — watch the panel react");
-      setModal(null);
-      invalidate();
-    },
-    onError,
-  });
-  const [pasted, setPasted] = useState("");
+  const stop = useMutation({ mutationFn: () => api.post("/sidecar/stop"), onSuccess: invalidate, onError });
   const toggle = useMutation({ mutationFn: (enabled: boolean) => api.put("/sidecar/settings", { enabled, autoTrigger: enabled }), onSuccess: invalidate, onError });
-  const stop = useMutation({ mutationFn: () => api.post("/sidecar/stop"), onSuccess: () => { toast("Stopping the job; automatic investigations are paused"); invalidate(); }, onError });
-
-  const turns = (convo.data ?? []).filter((turn) => !turn.incidentId && turn.role !== "system");
+  // Keep every visited page of history while polling the most recent messages.
+  useEffect(() => { if (convo.data) setOlder((previous) => [...new Map([...previous, ...convo.data!].map(t => [t.id, t])).values()]); }, [convo.data]);
+  const turns = [...new Map([...older, ...(convo.data ?? [])].map(t => [t.id, t])).values()].sort((a, b) => a.ts.localeCompare(b.ts));
+  const history = useMutation({
+    mutationFn: () => api.get<ConversationTurn[]>(`/sidecar/conversation?limit=80&before=${encodeURIComponent(turns[0]?.id ?? "")}`),
+    onSuccess: (page) => { followBottom.current = false; setOlder(previous => [...new Map([...page, ...previous].map(t => [t.id, t])).values()]); setHistoryEnd(page.length < 80); }, onError,
+  });
   const d = sidecar.data;
-  useEffect(() => {
-    const el = convoRef.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
-  }, [turns.length, d?.state.phase]);
-
   const phase = d?.state.phase ?? "off";
-  const p = PHASE[phase];
-  const pending = (d?.approvals ?? []).filter((a) => a.status === "pending");
   const busy = !!d?.state.currentRunId;
-  const runnerName = d ? RUNNER_LABEL[d.settings.runner] : "assistant";
-
+  const monitoring = !!d?.settings.enabled && !!d?.settings.autoTrigger;
+  useEffect(() => { if (followBottom.current && convoRef.current) convoRef.current.scrollTop = convoRef.current.scrollHeight; }, [turns.length, phase]);
   const send = () => {
     const text = draft.trim();
-    if (!text || busy || chat.isPending) return;
-    chat.mutate({ text, alertId: selected?.id });
+    if (text && !submit.isPending && !(kind === "followup" && busy)) submit.mutate({ text, kind });
   };
-
   return (
-    <section className="card assistant sidecar">
+    <section className="card assistant sidecar minecraft-responder">
       <div className="sidecar-head">
-        <h2 className="row" style={{ gap: 8, margin: 0 }}>
-          <Icons.spark width={16} height={16} style={{ color: "var(--accent)" }} /> Assistant
-          {d && <span className="badge">{runnerName}</span>}
-        </h2>
-        <div className="row" style={{ gap: 8 }}>
-          <span className="small nowrap">
-            <span className={`phase-dot ${d?.state.runnerAvailable === false ? "bad" : p.dot}`} />
-            {d?.state.runnerAvailable === false ? "Unavailable" : p.label}
-          </span>
-          {d && (
-            <button className={`btn sm ${d.settings.enabled && d.settings.autoTrigger ? "" : "ghost"}`} disabled={toggle.isPending} onClick={() => toggle.mutate(!(d.settings.enabled && d.settings.autoTrigger))} title="Controls automatic investigations. Pausing does not interrupt the current job; use Stop job to cancel it.">
-              {d.settings.enabled && d.settings.autoTrigger ? "Auto: on" : "Auto: paused"}
-            </button>
-          )}
-        </div>
+        <h2 className="row" style={{ gap: 8, margin: 0 }}><Icons.spark width={16} height={16} /> {title}</h2>
+        <span className="small"><span className={`phase-dot ${PHASE[phase].dot}`} />{PHASE[phase].label}</span>
       </div>
-      {d?.state.model && <div className="muted small">{d.state.model}</div>}
-      {sidecar.error && <div className="notice error small">Couldn't connect to the assistant. Please try again.</div>}
-      {d?.state.runnerAvailable === false && <div className="notice error small">The assistant couldn't start. Problems are still recorded, but aren't being investigated.</div>}
-      {d?.state.runnerAvailable !== false && phase === "failed" && <div className="notice error small">The assistant couldn't finish its last task. You can review the issue or ask it to try again.</div>}
-
-      {pending.map((a) => (
-        <div key={a.id} className="approval">
-          <div className="small">
-            <strong>The assistant needs your approval</strong>
-            <span className="muted"> · {fmtRelative(a.ts)}</span>
-          </div>
-          <div className="small" style={{ margin: "4px 0 8px" }}>
-            {a.reason}
-          </div>
-          <div className="row" style={{ gap: 6 }}>
-            <button className="btn sm primary" disabled={decide.isPending} onClick={() => decide.mutate({ id: a.id, decision: "approve" })}>
-              Approve
-            </button>
-            <button className="btn sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: a.id, decision: "deny" })}>
-              Deny
-            </button>
-          </div>
-        </div>
-      ))}
-
-      <div className="convo" ref={convoRef}>
-        {turns.length === 0 && (
-          <div className="muted small" style={{ textAlign: "center", padding: 12 }}>
-            {d?.settings.enabled && d.settings.autoTrigger ? "Watching for new problems. Ask a question or give the assistant a task below; follow-ups stay in the same conversation." : "Chat is ready. Automatic investigations are paused; you can still ask questions or give the assistant a task."}
-          </div>
-        )}
-        {turns.map((t) => (
-          <div key={t.id} className={`turn ${t.role}`} title={fmtDateTime(t.ts)}>
-            {readableMessage(t.text)}
-            {t.role !== "system" && (
-              <span className="turn-meta">
-                {t.role === "user" ? "you" : runnerName} · {fmtRelative(t.ts)}
-              </span>
-            )}
-          </div>
-        ))}
-        {busy && (
-          <div className="turn system">
-            <span className="phase-dot busy" />
-            {d?.state.currentIncidentId ? "The assistant is reviewing an incident. Open Incidents to follow its work." : "The assistant is working on your message."}
-          </div>
-        )}
+      <div className="responder-inputs">
+        <span className="small muted">Inputs</span>
+        <span className="badge">Minecraft console errors</span><span className="badge">Outage reports</span>
+        <span className="small muted">{monitoring ? "Automatic response on" : "Automatic response paused"}</span>
       </div>
-
-      {selected && (
-        <div className="row small" style={{ gap: 6, flexWrap: "nowrap" }}>
-          <span className="muted nowrap">Selected alert:</span>
-          <span className="mono truncate" title={selected.text}>
-            {selected.text}
-          </span>
-          <button className="btn sm" onClick={() => chat.mutate({ text: "What is this about and should I worry?", alertId: selected.id })} disabled={chat.isPending || busy}>
-            Ask about this
-          </button>
-          <button className="btn sm ghost" onClick={() => selectAlert(null)} title="Clear selection">
-            ×
-          </button>
-        </div>
-      )}
-
-      <div className="chatbox">
-        <textarea
-          className="input"
-          placeholder={selected ? "Ask about the selected alert… (Enter to send)" : "Ask the assistant… (Enter to send, Shift+Enter for a new line)"}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          disabled={chat.isPending}
-        />
-        <button className="btn primary" disabled={chat.isPending || !draft.trim() || busy} onClick={send} title={busy ? "Wait for the current run to finish" : "Send"}>
-          Send
-        </button>
+      {sidecar.error && <div className="notice error small">Couldn't connect to the responder.</div>}
+      {d?.state.runnerAvailable === false && <div className="notice error small">The agent couldn't start. Inputs are recorded, but aren't being investigated.</div>}
+      {phase === "failed" && <div className="notice error small">The last investigation failed. Review the conversation and report the issue again to retry.</div>}
+      <div className="convo" ref={convoRef} role="log" aria-label="Minecraft incident conversation" aria-live="polite" onScroll={() => { const el = convoRef.current; if (el) followBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }}>
+        {!historyEnd && turns.length >= 80 && <button className="btn sm ghost" disabled={history.isPending} onClick={() => history.mutate()}>Load earlier messages</button>}
+        {turns.length === 0 && <div className="turn system">Minecraft errors and outage reports appear here, followed by the agent's investigation, recovery actions, and replies.</div>}
+        {turns.map(t => <div key={t.id} className={`turn ${t.role}`} title={fmtDateTime(t.ts)}>
+          {readableMessage(t.text)}
+          <span className="turn-meta">{t.role === "assistant" ? "Minecraft responder" : t.role === "system" ? "Status" : t.incidentId ? "Incident input" : "You"} · {fmtRelative(t.ts)}</span>
+        </div>)}
+        {busy && <div className="turn system"><span className="phase-dot busy" /> Investigating Minecraft…</div>}
+        {(d?.approvals ?? []).filter(a => a.status === "pending").map(a => <div className="approval" key={a.id}>
+          <div className="small"><strong>Decision needed</strong> · {a.reason}</div>
+          <div className="row"><button className="btn sm primary" disabled={decide.isPending} onClick={() => decide.mutate({ id: a.id, decision: "approve" })}>Approve</button><button className="btn sm" disabled={decide.isPending} onClick={() => decide.mutate({ id: a.id, decision: "deny" })}>Deny</button></div>
+        </div>)}
       </div>
-      {busy && (
-        <div className="row spread">
-          <span className="muted small">You can draft your next message while this job finishes.</span>
-          <button className="btn" disabled={stop.isPending} onClick={() => stop.mutate()}>
-            {stop.isPending ? "Stopping..." : "Stop job and pause auto"}
-          </button>
+      <div className="responder-composer">
+        <label className="small" htmlFor="minecraft-input-kind">Send to the Minecraft responder</label>
+        <select id="minecraft-input-kind" className="input" value={kind} onChange={e => setKind(e.target.value as typeof kind)}>
+          <option value="outage">Report an outage</option><option value="console">Paste a console error</option><option value="followup">Follow up on an incident</option>
+        </select>
+        {selected?.source === "minecraft" && <div className="row small"><span className="truncate">Selected console line: {selected.text}</span><button className="btn sm ghost" onClick={() => { setKind("console"); setDraft(selected.text); selectAlert(null); }}>Use this error</button></div>}
+        <div className="chatbox"><textarea className="input" aria-label="Minecraft incident message" placeholder={kind === "outage" ? "What is down? Describe what players are seeing…" : kind === "console" ? "Paste the Minecraft console error…" : "Ask about the incident or add context…"} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} disabled={submit.isPending} />
+          <button className="btn primary" disabled={!draft.trim() || submit.isPending || (kind === "followup" && busy)} onClick={send}>{kind === "followup" ? "Send" : "Report"}</button>
         </div>
-      )}
-
-      <div className="row" style={{ gap: 8 }}>
-        <button className="btn" onClick={() => setModal("incidents")}>Incidents</button>
-        <button className="btn" onClick={() => setModal("context")}>
-          <Icons.file width={14} height={14} /> Instructions &amp; context
-        </button>
-        <button className="btn" onClick={() => setModal("settings")}>
-          <Icons.plug width={14} height={14} /> Settings
-        </button>
-        {/* [DEMO] demo-only button: fakes a server error so the sidecar loop can be watched (see DEMO_INDEX.md) */}
-        {config.data?.demo && (
-          <button className="btn ghost" disabled={simulate.isPending} onClick={() => setModal("simulate")} title="Demo: publish a fake error, or paste real console output, to watch the sidecar react">
-            Simulate incident
-          </button>
-        )}
+        {busy && <span className="small muted">New errors and outage reports are accepted while the agent works. Follow-up questions can be sent when it finishes.</span>}
+        {!monitoring && <span className="small muted">Reports are recorded while monitoring is paused. Resume monitoring to investigate them.</span>}
       </div>
-
-      {modal === "context" && <ContextModal onClose={() => setModal(null)} />}
-      {modal === "settings" && d && <SettingsModal payload={d} onClose={() => setModal(null)} />}
-      {modal === "incidents" && <IncidentsMenu onClose={() => setModal(null)} />}
-      {modal === "simulate" && (
-        <Modal title="Simulate an incident (demo)" onClose={() => setModal(null)} wide>
-          <div className="stack">
-            <p className="muted small" style={{ margin: 0 }}>
-              Demo only. Pick a canned error, or paste real console output — every line is published to the Minecraft feed and classified exactly like live log lines, so you can see how the detector groups it and what the assistant does.
-            </p>
-            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "exception" })}>
-                Server exception
-              </button>
-              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "warn" })}>
-                “Can't keep up” warning
-              </button>
-              <button className="btn sm" disabled={simulate.isPending} onClick={() => simulate.mutate({ kind: "job" })}>
-                Failed backup job
-              </button>
-            </div>
-            <label className="field">
-              Paste console output
-              <textarea className="input mono" rows={10} value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder={"[Fri 04:44:35 WARN  Geyser-Spigot] [mcxboxbroadcast] [Auth] Failed to refresh tokens\ncom.example.SomeException: status: 400 Bad Request …\n    at com.example.Foo.bar(Foo.java:32)"} spellCheck={false} />
-            </label>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-              <button className="btn primary" disabled={simulate.isPending || !pasted.trim()} onClick={() => simulate.mutate({ kind: "custom", text: pasted })}>
-                Publish to the feed
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <details className="responder-controls"><summary className="small muted">Responder controls</summary><div className="row">
+        <button className="btn sm" disabled={toggle.isPending} onClick={() => toggle.mutate(!monitoring)}>{monitoring ? "Pause monitoring" : "Resume monitoring"}</button>
+        {busy && <button className="btn sm" disabled={stop.isPending} onClick={() => stop.mutate()}>Stop and pause</button>}
+        <button className="btn sm ghost" onClick={() => setSettingsOpen(true)}>Settings</button>
+      </div></details>
+      {settingsOpen && d && <SettingsModal payload={d} onClose={() => setSettingsOpen(false)} />}
     </section>
   );
 }

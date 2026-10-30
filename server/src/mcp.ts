@@ -4,8 +4,10 @@
 // through the same routes the UI uses, so it is attributed in the alerts feed.
 //
 //   HOMELAB_URL   dashboard base URL (default http://127.0.0.1:3000)
-//   HOMELAB_KEY   the dashboard's DASHBOARD_KEY (a local password, not an AI API key)
+//   HOMELAB_KEY   the dashboard's DASHBOARD_KEY (a local password, not an AI API key), or,
+//                 for runs the dashboard launches, that run's own token (services/runTokens.ts)
 //   HOMELAB_AGENT optional display name; otherwise taken from the connecting client
+//   HOMELAB_RUN_ID set by the dashboard for its own runs; must match the run's token
 //
 // Never write to stdout here except through the MCP transport.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -18,6 +20,7 @@ const accessId = process.env.CF_ACCESS_CLIENT_ID;
 const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET;
 if (!!accessId !== !!accessSecret) throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET for remote automation.");
 if (accessId && new URL(BASE).protocol !== "https:") throw new Error("Cloudflare service credentials require an HTTPS HOMELAB_URL.");
+const dashboardRunId = process.env.HOMELAB_RUN_ID;
 let agentName = process.env.HOMELAB_AGENT ?? "MCP client";
 
 const LOG_SOURCES = ["minecraft", "jellyfin", "directus", "postgres", "dashboard", "system"] as const;
@@ -29,6 +32,7 @@ async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, 
     headers: {
       Authorization: `Bearer ${KEY}`,
       "X-Homelab-Agent": agentName,
+      ...(dashboardRunId ? { "X-Homelab-Run-Id": dashboardRunId } : {}),
       ...(accessId && accessSecret ? {
         "CF-Access-Client-Id": accessId,
         "CF-Access-Client-Secret": accessSecret,
@@ -183,7 +187,7 @@ server.registerTool(
   "minecraft_service",
   {
     title: "Start / stop / restart Minecraft",
-    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. When the sidecar requires approval, stop/restart return NOT RUN with an approval request: end your turn and the dashboard resumes you with the owner's decision.",
+    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. Dashboard-managed assistants act on their own: they may start and restart (at most twice an hour, counting systemd's own restarts) but not stop. Interactive CLI/chat assistants ask the owner in their current conversation when needed.",
     inputSchema: { action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional().describe("why — shown to the owner if approval is needed") },
   },
   async ({ action, reason }) => {
@@ -215,18 +219,64 @@ server.registerTool(
   async ({ refresh }) => text(await call("GET", `/api/updates${refresh ? "?refresh=1" : ""}`)),
 );
 
+server.registerTool(
+  "whitelist_add",
+  {
+    title: "Whitelist a Minecraft player",
+    description: "Add one player to the whitelist. Java: their exact Minecraft username (Paper checks it with Mojang). Bedrock: their Xbox gamertag without spaces (Floodgate checks it with Xbox and adds it with its prefix). The whitelist is read back to confirm. Additions only; removing players is the owner's. Discord-started runs may add at most 3 players a day per member.",
+    inputSchema: { edition: z.enum(["java", "bedrock"]), name: z.string().min(1).max(32).describe("Java username or Xbox gamertag") },
+  },
+  async ({ edition, name }) => text(await call("POST", "/api/minecraft/whitelist", { edition, name })),
+);
+
+server.registerTool(
+  "rollback_run",
+  {
+    title: "Undo an assistant run's file changes",
+    description: "Put the folders a dashboard assistant run may write (Minecraft scripts, Geyser and ViaVersion configs) back to how they were before that run. Later changes to the same files are undone too. The feed names the files each run changed and its run id.",
+    inputSchema: { runId: z.string().min(8).max(100) },
+  },
+  async ({ runId }) => text(await call("POST", `/api/sidecar/runs/${encodeURIComponent(runId)}/rollback`, {})),
+);
+
+// ---- the whole server (the ops agent) -------------------------------------------------
+
+server.registerTool("host_pressure", { title: "Memory, swap, disk and who uses them", description: "Available memory, swap use, memory pressure (PSI full avg10 = % of time everything stalled on memory), every disk's use, the 12 largest processes and every container's memory and CPU. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/host/pressure")));
+
+server.registerTool("units", { title: "User systemd units", description: "Every user service and timer with its active/sub state (failed ones show as failed). Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/units")));
+
+server.registerTool("unit_journal", { title: "A unit's journal", description: "The last lines a user unit logged (journalctl --user -u). Read-only.", inputSchema: { unit: z.string().min(3).max(120).describe("e.g. minecraft-status.service"), lines: z.number().int().min(1).max(400).default(80) } }, async ({ unit, lines }) =>
+  text(((await call<{ text: string }>("GET", `/api/units/${encodeURIComponent(unit)}/journal?lines=${lines}`)).text) || "(no journal lines)"),
+);
+
+server.registerTool("unit_action", { title: "Start or restart a user unit", description: "Start or restart a user systemd service or timer; systemd is reloaded first, so an edited unit file takes effect. Dashboard assistants may restart the same unit at most twice an hour, never stop units, and never restart the dashboard itself. Minecraft's unit shares Minecraft's restart limit.", inputSchema: { unit: z.string().min(3).max(120), action: z.enum(["start", "restart"]) } }, async ({ unit, action }) =>
+  text(await call("POST", `/api/units/${encodeURIComponent(unit)}/action`, { action })),
+);
+
+server.registerTool("containers", { title: "Docker containers", description: "Every container with its state, status (uptime, health) and image. Memory per container is in host_pressure. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/containers")));
+
+server.registerTool("container_logs", { title: "A container's logs", description: "The last lines a container logged (stdout and stderr, with timestamps). Read-only.", inputSchema: { name: z.string().min(1).max(64), lines: z.number().int().min(1).max(400).default(80) } }, async ({ name, lines }) =>
+  text(((await call<{ text: string }>("GET", `/api/containers/${encodeURIComponent(name)}/logs?lines=${lines}`)).text) || "(no log lines)"),
+);
+
+server.registerTool("container_restart", { title: "Restart a container", description: "Restart one Docker container (20 s graceful stop). Dashboard assistants may restart the same container at most twice an hour; stopping, removing or recreating containers is the owner's.", inputSchema: { name: z.string().min(1).max(64) } }, async ({ name }) =>
+  text(await call("POST", `/api/containers/${encodeURIComponent(name)}/restart`, {})),
+);
+
+server.registerTool("ops_incidents", { title: "Whole-server incidents", description: "Incidents the ops agent tracks (units, containers, scripts and jobs, memory, disk): status, counts and sample lines, plus what it is working on now. Minecraft's own incidents are in list_incidents. Read-only.", inputSchema: {} }, async () => text(await call("GET", "/api/ops")));
+
 // ---- sidecar: incidents & approvals (issue #5) ---------------------------------------
 
 server.registerTool(
   "request_approval",
   {
     title: "Ask the owner for approval",
-    description: "Before a risky step (restart/stop, destructive RCON, deleting files, changing timers) ask the owner. Returns immediately with the request id; the owner answers in the dashboard and the sidecar resumes you with the decision — so after calling this, STOP and end your turn. If a matching approval was already granted, the gated tool simply works.",
+    description: dashboardRunId ? "Not used by the dashboard's own assistant: you act on your own within your limits, and there are no approvals to wait for. If the dashboard refused something, file submit_report with outcome \"needs-human\" explaining what you would do and why." : "Dashboard approvals are only for its dedicated problem-solving assistant. For interactive work, ask any necessary question directly in your current CLI or assistant conversation. Do not create a dashboard approval or end your turn waiting for one.",
     inputSchema: { action: z.string().min(1).max(80).describe('short id, e.g. "minecraft_service:restart", "rcon:stop", "delete:old-backups"'), reason: z.string().min(1).max(1000).describe("what you want to do and why, in plain words"), incidentId: z.string().max(40).optional() },
   },
   async ({ action, reason, incidentId }) => {
-    const a = await call<{ id: string; status: string }>("POST", "/api/sidecar/approvals", { action, reason, incidentId });
-    return text(`Approval ${a.id} is ${a.status} for "${action}". End your turn now; the dashboard will resume you when the owner decides.`);
+    if (!dashboardRunId) return text("Ask any necessary approval question directly in your current CLI or assistant conversation. No dashboard approval was created. Continue work already authorized by the owner.");
+    return text(`No approval was created: the dashboard's assistant acts on its own. If "${action}" is something only the owner may do (${reason.slice(0, 200)}), file submit_report with outcome "needs-human"${incidentId ? ` for incident ${incidentId}` : ""} and continue with what you may do.`);
   },
 );
 
