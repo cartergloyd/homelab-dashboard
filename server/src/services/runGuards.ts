@@ -48,6 +48,24 @@ export function restartRefusal(now = Date.now()): string | null {
   return null;
 }
 
+// ---- per Discord member -------------------------------------------------------------------------
+
+// Counted in memory: a dashboard restart starts the windows over.
+const MEMBER_LIMITS = { action: { max: 6, windowMs: 3600_000, what: "6 changes an hour" }, whitelist: { max: 3, windowMs: 24 * 3600_000, what: "3 whitelist additions a day" } };
+type MemberKind = keyof typeof MEMBER_LIMITS;
+const memberLog = new Map<string, number[]>();
+
+/** Why the Discord member who started a run may not have it change something now, or null (then it is counted). */
+export function memberRefusal(requester: string | undefined, kinds: MemberKind[], now = Date.now()): string | null {
+  if (!requester) return null;
+  for (const kind of kinds) {
+    const recent = (memberLog.get(`${kind}:${requester}`) ?? []).filter((t) => now - t < MEMBER_LIMITS[kind].windowMs);
+    if (recent.length >= MEMBER_LIMITS[kind].max) return `This player has reached the limit of ${MEMBER_LIMITS[kind].what} through the assistant. Tell them the owner will follow up, and file a needs-human report.`;
+  }
+  for (const kind of kinds) memberLog.set(`${kind}:${requester}`, [...(memberLog.get(`${kind}:${requester}`) ?? []).filter((t) => now - t < MEMBER_LIMITS[kind].windowMs), now]);
+  return null;
+}
+
 // ---- scripts and jobs --------------------------------------------------------------------------
 
 function inside(dir: string, root: string): boolean {

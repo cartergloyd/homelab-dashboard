@@ -9,6 +9,8 @@ let sidecar;
 let runner;
 try {
   await fs.mkdir(path.join(tmp, 'bin'));
+  await fs.mkdir(path.join(tmp, 'scripts'));
+  await fs.mkdir(path.join(tmp, 'plugins/Geyser-Spigot'), { recursive: true });
   // Agents receive an allowlisted environment only, so the call log path is baked into the fixture.
   const fixture = `#!${process.execPath}\nimport fs from 'node:fs';if(process.argv[2]==='login')process.exit(0);let prompt='';for await(const c of process.stdin)prompt+=c;fs.appendFileSync(${JSON.stringify(path.join(tmp, 'cli-calls.jsonl'))},JSON.stringify({args:process.argv.slice(2),prompt,token:process.env.HOMELAB_KEY})+'\\n');console.log(JSON.stringify({type:'thread.started',thread_id:'responder-session'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Investigating the Minecraft outage.'}}));setTimeout(()=>{},300);`;
   await fs.writeFile(path.join(tmp, 'bin/codex'), fixture, { mode: 0o755 });
@@ -72,7 +74,7 @@ try {
   assert.equal(sidecar.canRecover('minecraft_service:restart',supportIdentity),true,'Discord support keeps start/restart recovery');
   await assert.rejects(requireStepUp({path:'/minecraft/action',method:'POST',body:{action:'restart'}},{locals:{user:supportIdentity}},()=>{}),/less than 5 minutes ago/,'both runs share one restart limit');
   await assert.rejects(requireStepUp({path:'/minecraft/command',method:'POST',body:{command:'op BadActor'}},{locals:{user:supportIdentity}},()=>{}),/only the owner may run it/);
-  await assert.rejects(requireStepUp({path:'/config',method:'GET'},{locals:{user:supportIdentity}},()=>{}),/limited to Minecraft diagnosis/);
+  await assert.rejects(requireStepUp({path:'/config',method:'GET'},{locals:{user:supportIdentity}},()=>{}),/may read only Minecraft status/);
   await assert.rejects(requireStepUp({path:'/terminal/execute',method:'POST',body:{command:'rm -rf world'}},{locals:{user:supportIdentity}},()=>{}),/no access to \/terminal/);
   sidecar.submitSupportReport('test-player-case', 'The screenshot says outdated client');
   await waitFor(() => supportRun.finishedAt);
@@ -80,8 +82,10 @@ try {
   await waitFor(() => !runner.currentRun());
   const calls=(await fs.readFile(path.join(tmp,'cli-calls.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
   const initial=calls.at(-2),followup=calls.at(-1);
-  assert.equal(initial.args[initial.args.indexOf('--sandbox')+1],'read-only');
-  assert.ok(initial.args.includes('shell_tool'));
+  assert.equal(initial.args[initial.args.indexOf('--sandbox')+1],'workspace-write','Discord runs may fix Minecraft files');
+  assert.equal(initial.args[initial.args.indexOf('-C')+1],path.join(tmp,'scripts'),'the workspace is the scripts folder, not the server root');
+  assert.equal(initial.args[initial.args.indexOf('--add-dir')+1],path.join(tmp,'plugins/Geyser-Spigot'));
+  assert.equal(initial.args.includes('shell_tool'),false);
   assert.ok(initial.args.includes('--image'));
   assert.ok(initial.args.includes(path.join(tmp,'error.png')));
   assert.equal(initial.args.includes('resume'),false,'Discord support starts an isolated CLI session');

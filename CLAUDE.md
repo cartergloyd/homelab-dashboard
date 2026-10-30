@@ -461,6 +461,24 @@ override the placeholders wherever they conflict:
     string. The feed names the kind of secret, never its value.
 
   Per-member Discord limits wait for `whitelist_add` (step 3).
+- 2026-10-30 **The Minecraft lane acts on its own** (owner: "work autonomously", "restarts aren't a big deal";
+  Discord members are trusted, and Discord-triggered actions stay inside Minecraft).
+  - **No approvals, no step-up:** lane runs never create approval holds. `request_approval` tells them
+    to file a needs-human report instead.
+  - **Sandbox:** `workspace-write` with `-C <MC_DIR>/scripts` plus `--add-dir` for
+    `plugins/Geyser-Spigot` and `plugins/ViaVersion` (`services/lanes.ts`). The server root, the
+    worlds, DiscordSRV (bot token, console roles) and floodgate (key) are not writable.
+  - **Discord runs:** they get the same sandbox and a shell. They read only join-help data
+    (`DISCORD_READS`), are limited per member to 6 changes an hour and 3 whitelist additions a day,
+    may not stop Minecraft, and their public replies hide IP addresses.
+  - **Snapshots:** each writable folder has a local git history (`services/snapshots.ts`; plugin
+    folders track config files only). Every run's changed files are posted to the feed and can be
+    undone with `rollback_run` / `POST /api/sidecar/runs/:id/rollback`.
+  - **Whitelisting:** `whitelist_add` uses Paper's `whitelist add` (Java) and Floodgate's
+    `fwhitelist add` (Bedrock), then reads the list back. The family site's worker uses the
+    Management Protocol, which is off in `server.properties` on the live server. Gamertags with
+    spaces are refused, because `fwhitelist` would take only the first word.
+  - **Screenshots:** they moved to `DATA_DIR/discord-support-attachments`.
 
 ## How to run & verify
 
@@ -532,12 +550,12 @@ these connections live in `server/test-dash-live.mjs` and use temporary data onl
 
 Interactive MCP clients ask necessary owner questions in their current CLI/chat and do not enqueue dashboard approval holds. Dashboard-managed assistants send HOMELAB_RUN_ID as X-Homelab-Run-Id and retain the Assistant panel approval workflow. Browser authenticator enforcement and owner-only security/approval decisions still apply.
 
-## Minecraft incident responder (2026-10-28)
+## Minecraft incident responder (2026-10-28, autonomous since 2026-10-30)
 
-The dedicated assistant responds only to Minecraft console errors, repeated Minecraft warnings, and outage reports. Its main window shows inputs and all incident messages in one continuous chat with paged history. Local status checks run every 15 seconds, debounce failures and allow 120 seconds for startup. An outage report enters the queue immediately; console errors use a short grouping window. The owner preauthorizes Minecraft start/restart recovery and read-only diagnosis for the current dashboard-managed run; browser TOTP and destructive-action approvals remain. Respect planned maintenance and intentional shutdowns. Other home services do not trigger this responder.
+The dedicated assistant handles Minecraft console errors, repeated Minecraft warnings, outage reports and Discord join help. Its main window shows inputs and all incident messages in one continuous chat with paged history. Local status checks run every 15 seconds, debounce failures and allow 120 seconds for startup. An outage report enters the queue immediately; console errors use a short grouping window. It acts on its own inside the Minecraft lane: no approvals, but the run guards apply (see the 2026-10-30 decisions). Respect planned maintenance and intentional shutdowns. Other home services do not trigger this responder.
 
 ## Discord join support (2026-10-28)
 
-The existing Family Forever Server#7671 bot (1469422607479865557) forwards mentions about joining problems in Family Discord (874080193306820628) into the same single Minecraft responder queue. Discord replies/screenshot follow-ups are scoped to the reporter and channel, with separate Codex sessions per support case. The bot asks for device/join method/error/screenshot, checks server health, performs authorized recovery or explains the joining steps. It never treats a player's message as administrative authority. Support CLI runs have shell tools disabled and a read-only sandbox; dashboard API access is limited to Minecraft diagnosis, safe start/restart and reports. Outbound Discord replies suppress mass mentions and use durable retry/deduplication. Raster screenshots are validated, private, limited to 8 MB each, and cleaned up after 7 days.
+The existing Family Forever Server#7671 bot (1469422607479865557) forwards mentions about joining problems in Family Discord (874080193306820628) into the same single Minecraft responder queue. Discord replies/screenshot follow-ups are scoped to the reporter and channel, with separate Codex sessions per support case. The bot asks for device/join method/error/screenshot, checks server health, performs authorized recovery or explains the joining steps. It never treats a player's message as administrative authority. Since 2026-10-30 support runs are Minecraft-lane runs: they may restart Minecraft, fix Minecraft scripts and Geyser/ViaVersion configs, and whitelist players, within the run guards and per-member limits; they read only join-help data, and public replies hide IP addresses. Outbound Discord replies suppress mass mentions and use durable retry/deduplication. Raster screenshots are validated, private (`DATA_DIR/discord-support-attachments`), limited to 8 MB each, and cleaned up after 7 days.
 
 Enable with DISCORD_SUPPORT_ENABLED=1, DISCORD_SUPPORT_TOKEN_FILE pointing to an env file with DISCORD_BOT_TOKEN, DISCORD_SUPPORT_GUILD_ID and DISCORD_SUPPORT_BOT_ID. Credentials stay in the Discord adapter and are not passed to CLI runs. Legacy Discord coding bots stay disabled.

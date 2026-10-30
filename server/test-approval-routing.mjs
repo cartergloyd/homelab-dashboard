@@ -22,15 +22,15 @@ try {
       await client.connect(new StdioClientTransport({ command: process.execPath, args: ['server/dist/mcp.js'], env }));
       const tools = await client.listTools();
       const approval = tools.tools.find(t => t.name === 'request_approval');
-      assert.ok(approval.description.includes(managed ? 'STOP and end your turn' : 'current CLI or assistant conversation'));
+      assert.ok(approval.description.includes(managed ? 'act on your own' : 'current CLI or assistant conversation'));
       const before = requests.length;
       const answer = await client.callTool({ name: 'request_approval', arguments: { action: 'minecraft_service:restart', reason: 'fixture only' } });
       assert.equal(answer.isError, undefined);
-      assert.equal(requests.length, before + Number(managed), 'interactive questions must not create dashboard holds');
+      assert.equal(requests.length, before, 'neither interactive clients nor dashboard runs create approval holds');
       await client.callTool({ name: 'minecraft_service', arguments: { action: 'restart' } });
       assert.equal(requests.at(-1).path, '/api/minecraft/action');
       assert.equal(requests.at(-1).runId, managed ? 'dedicated-run' : undefined, 'dedicated run identity must reach the API');
     } finally { await client.close(); }
   }
-  console.log('approval-routing: interactive conversation guidance and dedicated assistant run headers passed (mock API only)');
+  console.log('approval-routing: no approval holds from interactive clients or dashboard runs, and dedicated run headers passed (mock API only)');
 } finally { await new Promise(resolve => server.close(resolve)); }

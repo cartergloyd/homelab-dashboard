@@ -358,6 +358,8 @@ export interface AlertEvent {
     exitCode?: number | null;
     label?: string;
     incidentId?: string;
+    /** files an agent run changed (snapshots.ts), relative to the Minecraft folder */
+    files?: string[];
   };
 }
 

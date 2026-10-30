@@ -187,7 +187,7 @@ server.registerTool(
   "minecraft_service",
   {
     title: "Start / stop / restart Minecraft",
-    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. Dashboard-managed assistants use the Assistant panel for required approvals. Interactive CLI/chat assistants ask the owner in their current conversation when needed; do not stop to wait for dashboard approval.",
+    description: "Control the Paper server's systemd unit. Players are disconnected immediately on stop/restart — warn them with minecraft_rcon `say …` first if any are online. Dashboard-managed assistants act on their own: they may start and restart (at most twice an hour, counting systemd's own restarts) but not stop. Interactive CLI/chat assistants ask the owner in their current conversation when needed.",
     inputSchema: { action: z.enum(["start", "stop", "restart"]), reason: z.string().max(500).optional().describe("why — shown to the owner if approval is needed") },
   },
   async ({ action, reason }) => {
@@ -219,19 +219,38 @@ server.registerTool(
   async ({ refresh }) => text(await call("GET", `/api/updates${refresh ? "?refresh=1" : ""}`)),
 );
 
+server.registerTool(
+  "whitelist_add",
+  {
+    title: "Whitelist a Minecraft player",
+    description: "Add one player to the whitelist. Java: their exact Minecraft username (Paper checks it with Mojang). Bedrock: their Xbox gamertag without spaces (Floodgate checks it with Xbox and adds it with its prefix). The whitelist is read back to confirm. Additions only; removing players is the owner's. Discord-started runs may add at most 3 players a day per member.",
+    inputSchema: { edition: z.enum(["java", "bedrock"]), name: z.string().min(1).max(32).describe("Java username or Xbox gamertag") },
+  },
+  async ({ edition, name }) => text(await call("POST", "/api/minecraft/whitelist", { edition, name })),
+);
+
+server.registerTool(
+  "rollback_run",
+  {
+    title: "Undo an assistant run's file changes",
+    description: "Put the folders a dashboard assistant run may write (Minecraft scripts, Geyser and ViaVersion configs) back to how they were before that run. Later changes to the same files are undone too. The feed names the files each run changed and its run id.",
+    inputSchema: { runId: z.string().min(8).max(100) },
+  },
+  async ({ runId }) => text(await call("POST", `/api/sidecar/runs/${encodeURIComponent(runId)}/rollback`, {})),
+);
+
 // ---- sidecar: incidents & approvals (issue #5) ---------------------------------------
 
 server.registerTool(
   "request_approval",
   {
     title: "Ask the owner for approval",
-    description: dashboardRunId ? "Minecraft start/restart recovery is preauthorized; do not request approval for it. Before destructive changes, stopping without recovery, maintenance scripts or jobs, or changing timers, ask the owner. Returns immediately with the request id; the owner answers in the dashboard and the sidecar resumes you with the decision — so after calling this, STOP and end your turn. If a matching approval was already granted, the gated tool simply works." : "Dashboard approvals are only for its dedicated problem-solving assistant. For interactive work, ask any necessary question directly in your current CLI or assistant conversation. Do not create a dashboard approval or end your turn waiting for one.",
+    description: dashboardRunId ? "Not used by the dashboard's own assistant: you act on your own within your limits, and there are no approvals to wait for. If the dashboard refused something, file submit_report with outcome \"needs-human\" explaining what you would do and why." : "Dashboard approvals are only for its dedicated problem-solving assistant. For interactive work, ask any necessary question directly in your current CLI or assistant conversation. Do not create a dashboard approval or end your turn waiting for one.",
     inputSchema: { action: z.string().min(1).max(80).describe('short id, e.g. "minecraft_service:restart", "rcon:stop", "delete:old-backups"'), reason: z.string().min(1).max(1000).describe("what you want to do and why, in plain words"), incidentId: z.string().max(40).optional() },
   },
   async ({ action, reason, incidentId }) => {
     if (!dashboardRunId) return text("Ask any necessary approval question directly in your current CLI or assistant conversation. No dashboard approval was created. Continue work already authorized by the owner.");
-    const a = await call<{ id: string; status: string }>("POST", "/api/sidecar/approvals", { action, reason, incidentId });
-    return text(`Approval ${a.id} is ${a.status} for "${action}". End your turn now; the dashboard will resume you when the owner decides.`);
+    return text(`No approval was created: the dashboard's assistant acts on its own. If "${action}" is something only the owner may do (${reason.slice(0, 200)}), file submit_report with outcome "needs-human"${incidentId ? ` for incident ${incidentId}` : ""} and continue with what you may do.`);
   },
 );
 

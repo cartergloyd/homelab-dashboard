@@ -16,7 +16,9 @@ import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import type { AgentRun, AgentRunKind, AgentRunner } from "../types.js";
 import { publish, touchAgent } from "./alerts.js";
+import { writableRoots } from "./lanes.js";
 import { issueRunToken, revokeRunToken, type RunLane } from "./runTokens.js";
+import { snapshotAfter, snapshotBefore } from "./snapshots.js";
 
 // A run sees only what a CLI needs to start, never the dashboard's own environment: systemd's
 // EnvironmentFile puts DASHBOARD_KEY, the RCON password, the Postgres URL and app tokens there.
@@ -48,9 +50,11 @@ export interface LaunchOptions {
   timeoutMs?: number;
   /** Locally validated screenshots to attach to the CLI prompt. */
   imagePaths?: string[];
-  /** Player messages receive a read-only shell; recovery remains available through MCP. */
+  /** The run was started by a Discord player's message (its token's origin). */
   playerSupport?: boolean;
-  /** What the run's token may act on (default minecraft). */
+  /** The Discord member who sent that message (per-member limits). */
+  requester?: string;
+  /** What the run's token may act on and which folders it may write (default minecraft). */
   lane?: RunLane;
   /** the agent's own messages (not tool chatter), as they complete */
   onMessage?: (text: string) => void;
@@ -142,14 +146,14 @@ async function claudeMcpConfig(runId: string, token: string): Promise<string> {
   return file;
 }
 
-async function commandFor(runner: AgentRunner, prompt: string, resume: string | null | undefined, cwd: string, runId: string, token: string, imagePaths: string[] = [], playerSupport = false): Promise<{ command: string; args: string[] }> {
+/** `roots` are the folders the run may write (lanes.ts): the first is the workspace, the rest are added. None means read-only. */
+async function commandFor(runner: AgentRunner, prompt: string, resume: string | null | undefined, cwd: string, runId: string, token: string, imagePaths: string[] = [], roots: string[] = []): Promise<{ command: string; args: string[] }> {
   const command = await runnerCommand(runner);
   if (runner === "codex") {
     // The dashboard owns approvals for this connection; no terminal is attached.
     const mcp = `{command=${JSON.stringify(process.execPath)},args=[${JSON.stringify(path.join(cfg.repoRoot, "server/dist/mcp.js"))}],env_vars=["HOMELAB_URL","HOMELAB_KEY","HOMELAB_AGENT","HOMELAB_RUN_ID"],required=true,default_tools_approval_mode="approve"}`;
-    const args = ["exec", "--sandbox", playerSupport ? "read-only" : "workspace-write", "-C", cwd,
+    const args = ["exec", "--sandbox", roots.length ? "workspace-write" : "read-only", "-C", cwd, ...roots.slice(1).flatMap((dir) => ["--add-dir", dir]),
       "-c", "mcp_servers.homelab.enabled=false", "-c", `mcp_servers.dashboard=${mcp}`];
-    if (playerSupport) args.push("--disable", "shell_tool");
     if (cfg.codexModel) args.push("--model", cfg.codexModel);
     // Sandbox flags belong to exec, before resume. Pass the prompt over stdin.
     args.push(...(resume ? ["resume", "--json", "--skip-git-repo-check", resume, "-"] : ["--json", "--skip-git-repo-check", "-"]));
@@ -222,7 +226,9 @@ export function launchRun(opts: LaunchOptions): AgentRun {
   const running = currentRun();
   if (running) throw new HttpError(409, `${RUNNER_NAME[running.runner]} is already running (${running.task.slice(0, 80)})`);
 
-  const cwd = opts.cwd ?? cfg.minecraft.dir;
+  const lane = opts.lane ?? "minecraft";
+  const roots = writableRoots(lane);
+  const cwd = roots[0] ?? opts.cwd ?? cfg.minecraft.dir;
   const run: AgentRun = {
     id: crypto.randomUUID(),
     runner: opts.runner,
@@ -243,13 +249,14 @@ export function launchRun(opts: LaunchOptions): AgentRun {
   if (runs.length > 50) runs.splice(50);
   const timeoutMs = opts.timeoutMs ?? 20 * 60_000;
   // valid until the run ends (finish revokes it) or a minute past its run limit
-  const token = issueRunToken({ runId: run.id, lane: opts.lane ?? "minecraft", origin: opts.playerSupport ? "discord" : "dashboard" }, timeoutMs + 60_000);
+  const token = issueRunToken({ runId: run.id, lane, origin: opts.playerSupport ? "discord" : "dashboard", requester: opts.requester }, timeoutMs + 60_000);
 
   const name = `Dashboard ${RUNNER_NAME[opts.runner]}`;
   const meta = { agent: name, runId: run.id, ...(run.incidentId ? { incidentId: run.incidentId } : {}) };
   const messages: string[] = [];
   let finalText: string | null = null;
   let timer: NodeJS.Timeout | null = null;
+  let snapshotted = false;
   const control: { controller: AbortController; child?: ChildProcess; killTimer?: NodeJS.Timeout } = { controller: new AbortController() };
   active.set(run.id, control);
   const stderrTail: string[] = [];
@@ -277,6 +284,11 @@ export function launchRun(opts: LaunchOptions): AgentRun {
     run.error = run.status === "cancelled" ? null : startError ?? run.error ?? (code !== 0 ? stderrTail.slice(-3).join("\n") || `Agent exited ${code ?? "without an exit code"}` : null);
     active.delete(run.id);
     revokeRunToken(run.id);
+    if (snapshotted) {
+      void snapshotAfter(run.id).then((files) => {
+        if (files.length) publish({ source: "agent", kind: "agent", level: "warn", tags: ["maintenance", "files"], text: `${name} changed ${files.length} file${files.length === 1 ? "" : "s"}: ${files.slice(0, 10).join(", ")}${files.length > 10 ? ", …" : ""}. Undo with rollback_run ${run.id}.`, meta: { ...meta, files } });
+      }, (e) => publish({ source: "agent", kind: "agent", level: "error", text: `${name}: could not record its file changes: ${(e as Error).message}`, meta }));
+    }
     publish({
       source: "agent",
       kind: "agent",
@@ -300,7 +312,15 @@ export function launchRun(opts: LaunchOptions): AgentRun {
   }
 
   void (async () => {
-    const { command, args } = await commandFor(opts.runner, opts.prompt, opts.resume, cwd, run.id, token, opts.imagePaths, opts.playerSupport);
+    const { command, args } = await commandFor(opts.runner, opts.prompt, opts.resume, cwd, run.id, token, opts.imagePaths, roots);
+    if (roots.length) {
+      try {
+        await snapshotBefore(run.id, roots);
+        snapshotted = true;
+      } catch (e) {
+        emit(`(could not snapshot the writable folders; changes will not be listed: ${(e as Error).message.slice(0, 200)})`);
+      }
+    }
     if (control.controller.signal.aborted) {
       finish(null);
       return;

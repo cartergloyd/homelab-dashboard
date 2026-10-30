@@ -35,6 +35,8 @@ import { addReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
 import * as sidecar from "./services/sidecar.js";
+import { rollbackRun } from "./services/snapshots.js";
+import { whitelistAdd } from "./services/whitelist.js";
 import { requireStepUp, securityApi, legacyGate } from "./security.js";
 import type { AgentRunner, AlertSource, AppConfigPayload, DatabasePayload, OverviewPayload } from "./types.js";
 
@@ -277,6 +279,13 @@ api.post("/minecraft/command", async (req, res) => {
   const output = await minecraftCommand(command);
   logAction(res, `RCON: ${command.trim()}`);
   res.json({ output });
+});
+
+api.post("/minecraft/whitelist", async (req, res) => {
+  const { edition, name } = z.object({ edition: z.enum(["java", "bedrock"]), name: z.string().trim().min(1).max(32) }).parse(req.body);
+  const result = await whitelistAdd(edition, name);
+  logAction(res, result.alreadyListed ? `checked the whitelist: ${result.name} is already on it` : `added ${result.name} (${edition}) to the whitelist`);
+  res.json(result);
 });
 
 // ---- maintenance ---------------------------------------------------------
@@ -556,6 +565,14 @@ api.get("/sidecar/repairs", (req, res) => {
 
 api.get("/sidecar/approvals", (req, res) => {
   res.json(sidecar.listApprovals(req.query.all === "1"));
+});
+
+/** Undo the file changes an agent run made (snapshots.ts). */
+api.post("/sidecar/runs/:id/rollback", async (req, res) => {
+  const runId = String(req.params.id);
+  const files = await rollbackRun(runId);
+  logAction(res, files.length ? `rolled back run ${runId.slice(0, 8)}: ${files.slice(0, 10).join(", ")}${files.length > 10 ? ", …" : ""}` : `rollback of run ${runId.slice(0, 8)}: nothing to undo`);
+  res.json({ files });
 });
 
 /** Agents ask here (MCP request_approval); the owner answers below. */

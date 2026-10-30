@@ -20,6 +20,7 @@ export class MinecraftOutageWatch {
 }
 
 export function startMinecraftWatch(): void {
+  // [DEMO] demo-mode branch — skipped in `npm run demo`; never taken on a real install (see DEMO_INDEX.md)
   if (cfg.demo) return;
   const watch = new MinecraftOutageWatch();
   let busy = false;

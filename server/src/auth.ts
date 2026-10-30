@@ -19,6 +19,8 @@ export interface Identity {
   /** The run's lane and what started it; present exactly when dashboardRunId is. */
   lane?: RunLane;
   runOrigin?: RunOrigin;
+  /** The Discord member whose message started the run, when it came from Discord. */
+  requester?: string;
   /** Stable binding to the signed Access login, without retaining its JWT. */
   sessionId?: string;
 }
@@ -75,7 +77,7 @@ function keyIdentity(headers: IncomingHttpHeaders): Identity {
 function runIdentity(headers: IncomingHttpHeaders, run: RunClaims): Resolved {
   const claimed = header(headers, "x-homelab-run-id")?.trim();
   if (claimed && claimed !== run.runId) return { ok: false, status: 403, message: "X-Homelab-Run-Id does not match this run's token" };
-  return { ok: true, user: { login: "dashboard-run", name: agentName(headers), via: "key", viaKey: true, dashboardRunId: run.runId, lane: run.lane, runOrigin: run.origin } };
+  return { ok: true, user: { login: "dashboard-run", name: agentName(headers), via: "key", viaKey: true, dashboardRunId: run.runId, lane: run.lane, runOrigin: run.origin, requester: run.requester } };
 }
 
 // ---- Cloudflare Access (the dashboard published through the tunnel, SERVER_SETUP § 7b) ----------

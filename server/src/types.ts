@@ -391,6 +391,8 @@ export interface AlertEvent {
     label?: string;
     /** sidecar: the incident this event belongs to / was produced for */
     incidentId?: string;
+    /** files an agent run changed (snapshots.ts), relative to the Minecraft folder */
+    files?: string[];
   };
 }
 

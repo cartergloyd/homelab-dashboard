@@ -13,6 +13,8 @@ export interface RunClaims {
   runId: string;
   lane: RunLane;
   origin: RunOrigin;
+  /** the Discord member whose message started the run (per-member limits) */
+  requester?: string;
   expiresAt: number;
 }
 

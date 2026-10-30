@@ -3,7 +3,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { z } from "zod";
 import { cfg } from "./config.js";
 import type { Identity } from "./auth.js";
-import { jobRefusal, rconRefusal, restartRefusal, scriptRefusal } from "./services/runGuards.js";
+import { jobRefusal, memberRefusal, rconRefusal, restartRefusal, scriptRefusal } from "./services/runGuards.js";
 import type { RunLane } from "./services/runTokens.js";
 import { secretIn } from "./services/secretFilter.js";
 import { HttpError } from "./errors.js";
@@ -43,20 +43,24 @@ function session(req: Request, res: Response) {
 const target = (req: Request) => hash(JSON.stringify([req.method, req.originalUrl, req.body ?? null]));
 
 // What a dashboard-launched run may change, by lane. Anything not listed is refused before any
-// other check, so a run cannot even queue an approval for work outside its lane. Reads stay open
-// for diagnosis, except the apps' own data, repositories, the terminal and security settings.
+// other check. Reads stay open for diagnosis, except the apps' own data, repositories, the
+// terminal and security settings. Within its lane and the run guards a run acts on its own: no
+// approvals and no step-up (the owner's choice, 2026-10-30).
 const LANE_WRITES: Record<RunLane, RegExp[]> = {
   minecraft: [
-    /^post \/minecraft\/(action|command)$/,
+    /^post \/minecraft\/(action|command|whitelist)$/,
     /^post \/backups$/,
     /^post \/scripts\/[^/]+\/run$/,
     /^post \/jobs\/[^/]+\/run$/,
     /^post \/reports$/,
-    /^post \/sidecar\/approvals$/,
+    /^post \/sidecar\/runs\/[^/]+\/rollback$/,
     /^post \/storage\/(scan|refresh)$/,
   ],
 };
 const LANE_HIDDEN = /^\/(security|directus|database|repositories|terminal)(\/|$)/;
+// Discord-started runs read only what join help needs, and their changes count against the member who asked.
+const DISCORD_READS = new Set(["/status", "/minecraft", "/minecraft/settings", "/minecraft/players", "/alerts", "/context", "/jobs", "/scripts", "/backups", "/updates"]);
+const READ_ONLY_RCON = /^\/?\s*(list|tps|mspt|version|plugins|help|whitelist list)\s*$/i;
 
 /** Why a run in this lane may not make this request, or null when it may. `p` is the normalized API path. */
 export function laneRefusal(lane: RunLane, method: string, p: string): string | null {
@@ -86,6 +90,7 @@ async function guardRefusal(req: Request, p: string, user: Identity): Promise<st
     }
     return rconRefusal(command);
   }
+  if (p === "/minecraft/action" && req.body?.action === "stop") return "Stopping leaves Minecraft down for everyone; only the owner may stop it. Restart it to recover.";
   if (p === "/minecraft/action" && ["start", "restart"].includes(String(req.body?.action))) return restartRefusal();
   // Routes match case-insensitively; script names keep their case.
   const script = /^\/scripts\/([^/]+)\/run\/?$/i.exec(req.path);
@@ -93,6 +98,16 @@ async function guardRefusal(req: Request, p: string, user: Identity): Promise<st
   const job = /^\/jobs\/([^/]+)\/run\/?$/i.exec(req.path);
   if (job) return jobRefusal(decodeSegment(job[1]));
   return null;
+}
+
+function discordRefusal(req: Request, p: string, user: Identity): string | null {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method.toUpperCase())) {
+    if (!DISCORD_READS.has(p)) return "A Discord-started run may read only Minecraft status, settings, players, alerts, scripts, jobs, backups, updates and instructions.";
+    if (p === "/alerts" && req.query?.sources !== "minecraft") return "A Discord-started run may read Minecraft alerts only.";
+    return null;
+  }
+  if (p === "/reports" || (p === "/minecraft/command" && READ_ONLY_RCON.test(String(req.body?.command ?? "")))) return null;
+  return memberRefusal(user.requester, p === "/minecraft/whitelist" ? ["action", "whitelist"] : ["action"]);
 }
 
 /** Keep coverage centralized, including case/trailing-slash variants Express accepts. */
@@ -131,20 +146,10 @@ export async function requireStepUp(req: Request, res: Response, next: NextFunct
     throw new HttpError(403, "Only a signed-in owner can manage security or decide approvals");
   }
   if (user.lane) {
-    const refusal = laneRefusal(user.lane, req.method, p) ?? (await guardRefusal(req, p, user));
+    const refusal = laneRefusal(user.lane, req.method, p) ?? (await guardRefusal(req, p, user)) ?? (sidecar.isPlayerSupportRun(user) ? discordRefusal(req, p, user) : null);
     if (refusal) throw new HttpError(403, refusal);
+    return next();
   }
-  // Recovery is preauthorized for the dedicated responder; browser actions still use TOTP.
-  const recoveryAction = p === "/minecraft/action" ? `minecraft_service:${req.body?.action}`
-    : p === "/minecraft/command" ? `rcon:${String(req.body?.command ?? "").trim().replace(/^\//, "").replace(/\s+/g, " ").replace(/^say .*/i, "say").toLowerCase()}` : "";
-  if (sidecar.isPlayerSupportRun(user)) {
-    const diagnosis = req.method === "GET" && ["/status", "/minecraft", "/minecraft/settings", "/alerts", "/context", "/jobs", "/updates"].includes(p);
-    if (p === "/alerts" && req.query?.sources !== "minecraft") throw new HttpError(403, "Discord support may read Minecraft alerts only");
-    const report = req.method === "POST" && p === "/reports" && req.body?.runId === user.dashboardRunId;
-    if (diagnosis || report || (req.method === "POST" && sidecar.canRecover(recoveryAction, user))) return next();
-    throw new HttpError(403, "Discord player support is limited to Minecraft diagnosis and start/restart recovery. Administrative changes require the owner through the dashboard.");
-  }
-  if (sidecar.canRecover(recoveryAction, user)) return next();
   const description = protectedAction(req.method, req.path, req.body);
   if (!description) return next();
   const securityChange = p.startsWith("/security/");
