@@ -31,6 +31,11 @@ export const DEFAULT_ROUTING: Routing = {
     "pipewire|wireplumber",
     "\\bapport",
     "Advanced terminal features are not available",
+    // containers being restarted on purpose, and info/warning lines the error rules catch
+    "terminating connection due to administrator command",
+    "the database system is (shutting down|starting up|not yet accepting connections)",
+    "^\\[[\\d:.]+\\] \\[(INF|WRN|DBG)\\]",
+    "msg=process tree killed|msg=failed to kill - retrying",
   ],
   memory: { minAvailableMb: 400, maxPsiFull10: 20 },
   diskMaxUsedPct: 90,

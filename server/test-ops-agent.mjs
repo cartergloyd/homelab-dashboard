@@ -39,9 +39,11 @@ try {
   assert.equal(ops.signalFor(ev("system", "minecraft-paper.service: Failed with result 'exit-code'.")), null, "Paper's own failures stay with the Minecraft lane");
   assert.equal(ops.signalFor(ev("minecraft", "minecraft-paper.service: Failed with result 'oom-kill'.")).key, "host:memory", "an OOM kill is a host problem, from either stream");
   assert.equal(ops.signalFor(ev("system", "snap.firmware-updater.firmware-notifier.service: Failed with result 'exit-code'.")), null, "known noise is dropped");
-  assert.match(ops.signalFor(ev("postgres", "FATAL: the database system is shutting down")).key, /^container:postgres\|/);
+  assert.equal(ops.signalFor(ev("postgres", 'PANIC:  could not write to file "pg_logical/replorigin_checkpoint.tmp": No space left on device')).key, "container:postgres", "one incident per container");
+  for (const line of ["FATAL:  terminating connection due to administrator command", "FATAL:  the database system is shutting down", "[21:00:01] [INF] [12] Jellyfin.Database: SQLite connection error count 0"]) assert.equal(ops.signalFor(ev("postgres", line)), null, `${line} is restart chatter`);
   assert.equal(ops.signalFor(ev("scripts", "pg_backup.sh exited 1", "error", { meta: { script: "pg_backup.sh" } })).key, "job:pg_backup.sh");
-  for (const e of [ev("system", "gold-crm-observation.service: Failed with result 'exit-code'.", "warn"), ev("dashboard", "Scripts folder not found"), ev("agent", "Dashboard Codex: exited 1"), ev("system", "x.service: Failed with result 'exit-code'.", "error", { meta: { agent: "Dashboard Codex" } }), ev("system", "error: connect_to 10.0.0.1 port 22: failed.")]) assert.equal(ops.signalFor(e), null);
+  assert.equal(ops.signalFor(ev("scripts", "Traceback (most recent call last):", "error", { kind: "script", meta: { label: "backup_world.py", agent: "hl-run" } })).key, "job:backup_world.py", "cron output sent in by hl-run counts");
+  for (const e of [ev("system", "gold-crm-observation.service: Failed with result 'exit-code'.", "warn"), ev("dashboard", "Scripts folder not found"), ev("agent", "Dashboard Codex: exited 1"), ev("system", "x.service: Failed with result 'exit-code'.", "error", { kind: "agent" }), ev("system", "error: connect_to 10.0.0.1 port 22: failed.")]) assert.equal(ops.signalFor(e), null);
 
   // shared routing rules
   assert.equal(routing.isChat("[12:00:01 INFO]: <Steve> the server crashed ERROR"), true);

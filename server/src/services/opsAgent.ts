@@ -55,7 +55,9 @@ const quietMs = () => Math.max(2, getSettings().quietSeconds) * 1000;
 
 /** What the ops lane makes of a feed event, or null when it is not the ops lane's problem. */
 export function signalFor(e: AlertEvent): Signal | null {
-  if (e.meta?.agent || e.meta?.incidentId || e.kind === "agent" || e.source === "agent" || e.source === "dashboard") return null;
+  // agents' own lines and the dashboard's are not server problems; script lines ingested by hl-run carry a sender
+  // (meta.agent) but are real output, so only agent-kind events are skipped
+  if (e.kind === "agent" || e.source === "agent" || e.source === "dashboard" || e.meta?.incidentId) return null;
   if (e.level !== "error" || isNoise(e.text)) return null;
   if (isOomKill(e.text)) return { key: "host:memory", title: "Memory ran out and the kernel killed a process", severity: "P1", evidence: e.text };
   const unit = UNIT_FAILED.exec(e.text);
@@ -63,10 +65,11 @@ export function signalFor(e: AlertEvent): Signal | null {
     if (unit[1] === cfg.minecraft.service) return null; // Paper's own failures are the Minecraft lane's
     return { key: `unit:${unit[1]}`, title: `${unit[1]} failed${unit[2] ? ` (${unit[2]})` : ""}`, severity: "P2", evidence: e.text };
   }
-  if (CONTAINER_SOURCES.has(e.source)) return { key: `container:${e.source}|${normalize(e.text)}`, title: `${e.source}: ${e.text.slice(0, 90)}`, severity: "P2", evidence: e.text };
+  // one incident per container: a crash or restart burst logs several different lines
+  if (CONTAINER_SOURCES.has(e.source)) return { key: `container:${e.source}`, title: `${e.source} is logging errors: ${e.text.slice(0, 80)}`, severity: "P2", evidence: e.text };
   if (e.source === "scripts" || e.source === "jobs") {
-    const what = e.meta?.script ?? e.meta?.job ?? normalize(e.text);
-    return { key: `job:${what}`, title: `${e.meta?.script ?? e.meta?.job ?? "A scheduled job"} failed: ${e.text.slice(0, 80)}`, severity: "P2", evidence: e.text };
+    const name = e.meta?.script ?? e.meta?.job ?? e.meta?.label;
+    return { key: `job:${name ?? normalize(e.text)}`, title: `${name ?? "A scheduled job"} failed: ${e.text.slice(0, 80)}`, severity: "P2", evidence: e.text };
   }
   return null; // other system lines are desktop chatter; units report their own failures
 }

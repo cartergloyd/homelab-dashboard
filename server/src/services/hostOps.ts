@@ -34,7 +34,7 @@ export async function readPressure(): Promise<Pressure> {
   const mem = parseMeminfo(await fs.readFile("/proc/meminfo", "utf8").catch(() => ""));
   const psi = await fs.readFile("/proc/pressure/memory", "utf8").catch(() => "");
   const full = /^full avg10=([\d.]+)/m.exec(psi);
-  const df = await run("df", ["-P", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs", "-x", "overlay"]).catch(() => "");
+  const df = await run("df", ["-P", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs", "-x", "overlay", "-x", "efivarfs"]).catch(() => "");
   const disks = df.split("\n").slice(1).map((l) => l.trim().split(/\s+/)).filter((c) => c.length >= 6 && c[5].startsWith("/")).map((c) => ({ mount: c[5], usedPct: Number(c[4].replace("%", "")), availGb: Math.round(Number(c[3]) / 1024 / 1024) }));
   return { ...mem, psiFull10: full ? Number(full[1]) : null, disks };
 }
