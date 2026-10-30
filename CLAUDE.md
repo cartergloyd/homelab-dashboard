@@ -229,8 +229,23 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       checklist, service token for MCP, image versions in the Staged update card
 - [ ] Tunnel: token into the compose `.env` on the server, first `docker compose up` (then
       `fam-api.xgold.tech/server/health` turns from Cloudflare 530 into `{"status":"ok"}`)
-- [ ] Sidecar: verify `codex exec --json` / `codex exec resume <thread>` against the installed
-      Codex version on the server (plain-text output still works, resume is skipped if absent)
+- [x] Sidecar: `codex exec --json` and `codex exec resume <thread>` verified against the installed
+      Codex (0.162) on the server, 2026-10-30: runs parse messages and tool calls and resume sessions
+- [x] **Assistant redesign** (Carter, 2026-10-30; design in the decisions log below):
+      - a per-run lane token instead of `DASHBOARD_KEY`, and an allowlisted environment;
+      - run guards (console never-list, restart limit, Minecraft-only scripts, secret blocking);
+      - an autonomous Minecraft lane with `whitelist_add`, snapshots and rollback;
+      - Discord reports to the owner;
+      - the ops agent with routing, noise, run budget and memory guard.
+- [ ] Assistant redesign follow-ups:
+      - show the ops lane and its incidents in the Assistant panel (today: `GET /api/ops`, Discord
+        and reports);
+      - have the OnFailure hook (`notify_unit_failure.sh`) also ingest `{unit, result,
+        discordMessageId}`, so the dashboard replies under its post;
+      - group the same failure seen as a unit failure and as its script's output;
+      - retire the disabled `minecraft-claude-bot` / `minecraft-codex-bot` / `minecraft-log-monitor`
+        units and the `log_monitor.py` section of the Minecraft `CLAUDE.md`;
+      - review the first week of Discord posts and tune `routing.json`.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
