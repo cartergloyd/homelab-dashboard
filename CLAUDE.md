@@ -237,7 +237,7 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       - an autonomous Minecraft lane with `whitelist_add`, snapshots and rollback;
       - Discord reports to the owner;
       - the ops agent with routing, noise, run budget and memory guard.
-- [x] The **Server assistant** dialog shows both lanes (2026-10-30, not deployed yet): the ops agent
+- [x] The **Server assistant** dialog shows both lanes (deployed 2026-10-30): the ops agent
       (`OpsLane`) beside the Minecraft responder, with its state and current run, each incident's status,
       count and last seen, and each report with the rollback id of a run that changed files
       (`GET /api/ops`, `GET /api/reports/:id`). The Minecraft tab's responder is unchanged.
