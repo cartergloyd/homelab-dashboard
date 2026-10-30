@@ -1429,6 +1429,16 @@ table.table {
   background: color-mix(in srgb, var(--warning) 35%, transparent);
   color: var(--ink);
 }
+.badge.ok {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good-text);
+  border-color: transparent;
+}
+.badge.bad {
+  background: color-mix(in srgb, var(--critical) 14%, transparent);
+  color: var(--critical);
+  border-color: transparent;
+}
 .input.sm {
   padding: 4px 8px;
   font-size: 12px;
@@ -1524,3 +1534,18 @@ table.table {
 .responder-composer { display: flex; flex-direction: column; gap: 8px; }
 .responder-controls summary { cursor: pointer; }
 .responder-controls .row { margin-top: 8px; }
+
+/* The Assistant panel: the Minecraft responder and the ops agent side by side */
+.modal.wide:has(.assistant-lanes) { width: min(1320px, 100%); }
+.assistant-lanes { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.assistant-lanes > * { min-width: 0; margin: 0; }
+@media (max-width: 960px) { .assistant-lanes { grid-template-columns: minmax(0, 1fr); } }
+.ops-now { display: flex; flex-direction: column; gap: 4px; }
+.ops-counts { gap: 12px; }
+.ops-incidents { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 560px; overflow-y: auto; }
+.ops-incident { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface-2); min-width: 0; }
+.ops-reports { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.ops-lane .ops-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; text-align: left; }
+.ops-lane .ops-link:hover { text-decoration-thickness: 2px; }
+.ops-files { margin: 0; padding-left: 18px; overflow-wrap: anywhere; }
+.ops-run .row code { overflow-wrap: anywhere; }

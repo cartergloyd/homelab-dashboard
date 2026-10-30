@@ -15,8 +15,8 @@ await fs.mkdir(path.join(tmp, "data"));
 await fs.mkdir(path.join(tmp, "bin"));
 await fs.writeFile(path.join(opsDir, "AGENTS.md"), "# playbooks\n");
 await fs.writeFile(path.join(tmp, "data/sidecar.json"), JSON.stringify({ settings: { enabled: true, autoTrigger: true, quietSeconds: 0, requireApproval: true } }));
-// a fake Codex: records its arguments and run token, then either finishes or holds (for the two-lane check)
-await fs.writeFile(path.join(tmp, "bin/codex"), `#!${process.execPath}\nimport fs from 'node:fs';if(process.argv[2]==='login')process.exit(0);let p='';for await(const c of process.stdin)p+=c;fs.appendFileSync(${JSON.stringify(path.join(tmp, "calls.jsonl"))},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),prompt:p})+'\\n');console.log(JSON.stringify({type:'thread.started',thread_id:'ops-session'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Looked at it.'}}));if(p.includes('hold-me'))setTimeout(()=>{},6000);`, { mode: 0o755 });
+// a fake Codex: records its arguments and run token, may edit a file in its workspace, then either finishes or holds (for the two-lane check)
+await fs.writeFile(path.join(tmp, "bin/codex"), `#!${process.execPath}\nimport fs from 'node:fs';if(process.argv[2]==='login')process.exit(0);let p='';for await(const c of process.stdin)p+=c;fs.appendFileSync(${JSON.stringify(path.join(tmp, "calls.jsonl"))},JSON.stringify({args:process.argv.slice(2),cwd:process.cwd(),prompt:p})+'\\n');console.log(JSON.stringify({type:'thread.started',thread_id:'ops-session'}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Looked at it.'}}));if(p.includes('edit-me'))fs.writeFileSync('note.md','edited\\n');if(p.includes('hold-me'))setTimeout(()=>{},6000);`, { mode: 0o755 });
 Object.assign(process.env, { PATH: `${path.join(tmp, "bin")}:${process.env.PATH}`, DATA_DIR: path.join(tmp, "data"), MC_DIR: mc, MC_SERVICE: "minecraft-paper.service", DASHBOARD_SERVICE: "gold-dashboard.service", OPS_AGENT_DIR: opsDir, OPS_WRITABLE_DIRS: units, DEMO: "0", DASHBOARD_KEY: "fixture-master-key" });
 const calls = async () => (await fs.readFile(path.join(tmp, "calls.jsonl"), "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map(JSON.parse);
 const waitFor = async (predicate, what, ms = 20_000) => { const until = Date.now() + ms; while (!(await predicate())) { assert.ok(Date.now() < until, what); await delay(50); } };
@@ -117,7 +117,33 @@ try {
   await assert.rejects(step(user, "POST", "/terminal/execute", { command: "id" }), /no access to \/terminal/);
   const mcUser = (await resolveIdentity({ authorization: `Bearer ${issueRunToken({ runId: "run-m", lane: "minecraft", origin: "dashboard" }, 60_000)}` }, "127.0.0.1")).user;
   await assert.rejects(step(mcUser, "POST", "/containers/homelab-twenty/restart"), /acts on minecraft only/);
-  console.log("ops-agent: routing of units, OOM, containers and jobs, noise and chat dropped, ops runs in their own workspace and slot, reopen and run budget, unit and container limits passed");
+
+  // the Assistant panel's view of the lane: its state, the run in progress, and each report with its rollback id
+  assert.equal(ops.payload().phase, "idle");
+  const edit = ops.handleSignal({ key: "unit:fam-edit.service", title: "fam-edit.service failed", severity: "P2", evidence: "fam-edit.service: Failed with result 'exit-code'. edit-me hold-me" });
+  assert.equal(ops.payload().phase, "queued", "a new incident waits out the quiet period");
+  await waitFor(() => ops.payload().phase === "investigating", "the panel did not show the run");
+  const working = ops.payload();
+  assert.equal(working.current.incidentId, edit.id);
+  assert.equal(working.run.id, working.current.runId);
+  assert.equal(working.run.lane, "ops");
+  assert.match(working.detail, /fam-edit\.service failed/);
+  await waitFor(() => ops.payload().phase === "idle", "the run did not end");
+  const editRun = runner.listAgentRuns(10).find((r) => r.incidentId === edit.id);
+  assert.equal(ops.payload().lastRun.id, editRun.id);
+  await waitFor(() => edit.changes?.length === 1, "the run's changed files were not recorded");
+  assert.deepEqual(edit.changes[0].files, [`${opsDir}/note.md`]);
+  assert.deepEqual(editRun.changedFiles, [`${opsDir}/note.md`]);
+  await addReport("Dashboard Codex", "Fixed fam-edit", "Summary: Edited the note.", { incidentId: edit.id, runId: editRun.id, outcome: "fixed" });
+  await addReport("Dashboard Codex", "Checked again", "Summary: Looked once more.", { incidentId: edit.id, runId: "run-without-changes", outcome: "no-action" });
+  const shown = ops.payload().incidents.find((i) => i.id === edit.id);
+  assert.equal(shown.status, "resolved");
+  assert.deepEqual(shown.reports.map((r) => [r.title, r.outcome, r.runId, r.changedFiles]), [["Fixed fam-edit", "fixed", editRun.id, [`${opsDir}/note.md`]], ["Checked again", "no-action", "run-without-changes", []]]);
+  assert.equal(JSON.parse(await fs.readFile(path.join(tmp, "data/ops-incidents.json"), "utf8")).find((i) => i.id === edit.id).changes[0].runId, editRun.id, "changes survive a restart");
+  sidecar.getSettings().enabled = false;
+  assert.equal(ops.payload().phase, "off", "the Auto switch pauses this lane too");
+  sidecar.getSettings().enabled = true;
+  console.log("ops-agent: routing of units, OOM, containers and jobs, noise and chat dropped, ops runs in their own workspace and slot, reopen and run budget, unit and container limits, panel payload with reports and rollback ids passed");
 } finally {
   await delay(1500); // alerts batch their disk writes
   await fs.rm(tmp, { recursive: true, force: true });

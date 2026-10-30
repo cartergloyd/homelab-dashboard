@@ -401,6 +401,8 @@ export interface AgentRun {
   sessionId: string | null;
   pid: number | null;
   error: string | null;
+  /** the files the run changed in its writable folders, once recorded after it ends */
+  changedFiles?: string[];
 }
 
 export type SidecarPhase = "off" | "idle" | "queued" | "investigating" | "waiting-approval" | "acting" | "reporting" | "failed";
@@ -495,6 +497,66 @@ export interface RepairsPayload {
   /** incidents waiting on a human decision after the agent reported */
   needsHuman: number;
   items: RepairItem[];
+}
+
+// ---- ops agent: the whole-server lane (services/opsAgent.ts) -------------------------------
+
+export type OpsIncidentStatus = "open" | "investigating" | "resolved" | "needs-human";
+/** off = automatic runs paused (the assistant's Auto switch); queued = waiting for its quiet period, the slot or memory */
+export type OpsPhase = "off" | "idle" | "queued" | "investigating";
+
+/** The files one run changed (snapshots.ts); its runId is what rollback_run takes. */
+export interface OpsRunChange {
+  runId: string;
+  ts: string;
+  files: string[];
+}
+
+export interface OpsIncident {
+  id: string;
+  key: string;
+  title: string;
+  severity: "P1" | "P2";
+  status: OpsIncidentStatus;
+  firstSeen: string;
+  lastSeen: string;
+  count: number;
+  samples: string[];
+  runIds: string[];
+  reportIds: string[];
+  sessionId: string | null;
+  note: string | null;
+  /** runs of this incident that changed files, oldest first */
+  changes?: OpsRunChange[];
+}
+
+/** A report on an ops incident, as the Assistant panel lists it (the body is at GET /reports/:id). */
+export interface OpsReportLink {
+  id: string;
+  ts: string;
+  title: string;
+  agent: string;
+  outcome: ReportOutcome | null;
+  reviewed: boolean;
+  runId: string | null;
+  /** the files the report's run changed; empty when it changed none */
+  changedFiles: string[];
+}
+
+export interface OpsIncidentView extends OpsIncident {
+  reports: OpsReportLink[];
+}
+
+export interface OpsPayload {
+  phase: OpsPhase;
+  detail: string | null;
+  current: { incidentId: string; runId: string } | null;
+  /** the run in progress */
+  run: AgentRun | null;
+  /** the lane's latest finished run */
+  lastRun: AgentRun | null;
+  queue: string[];
+  incidents: OpsIncidentView[];
 }
 
 // ---- staged updates: Paper + plugins, installed / staged / upstream -------------------

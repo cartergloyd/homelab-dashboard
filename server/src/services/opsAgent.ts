@@ -8,14 +8,15 @@
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { cfg } from "../config.js";
-import type { AgentRun, AlertEvent } from "../types.js";
-import { launchRun, listAgentRuns, RUNNER_NAME } from "./agentRunner.js";
+import type { AgentRun, AlertEvent, OpsIncident, OpsIncidentView, OpsPayload } from "../types.js";
+import { currentRun, launchRun, listAgentRuns, RUNNER_NAME, type LaunchOptions } from "./agentRunner.js";
 import { publish, subscribe } from "./alerts.js";
 import { readPressure } from "./hostOps.js";
 import { writableRoots } from "./lanes.js";
 import { notifyOwner } from "./notify.js";
-import { onReport } from "./reports.js";
+import { addReport, getReport, onReport } from "./reports.js";
 import { getRouting, isNoise, isOomKill, memoryTight, takeRunBudget, tooTightToStart } from "./routing.js";
 import { getSettings } from "./sidecar.js";
 
@@ -24,22 +25,6 @@ export interface Signal {
   title: string;
   severity: "P1" | "P2";
   evidence: string;
-}
-
-export interface OpsIncident {
-  id: string;
-  key: string;
-  title: string;
-  severity: Signal["severity"];
-  status: "open" | "investigating" | "resolved" | "needs-human";
-  firstSeen: string;
-  lastSeen: string;
-  count: number;
-  samples: string[];
-  runIds: string[];
-  reportIds: string[];
-  sessionId: string | null;
-  note: string | null;
 }
 
 const UNIT_FAILED = /([\w@.\\-]+\.(?:service|timer)): (?:Failed with result '([^']+)'|Main process exited, code=killed|The kernel OOM killer killed)/;
@@ -83,8 +68,36 @@ let memoryLowSamples = 0;
 const file = () => path.join(cfg.dataDir, "ops-incidents.json");
 const persist = () => fsp.writeFile(`${file()}.tmp`, JSON.stringify(incidents.slice(0, 300), null, 2)).then(() => fsp.rename(`${file()}.tmp`, file())).catch(() => {});
 
-export function payload() {
-  return { current, queue: [...queue], incidents: incidents.slice(0, 40) };
+/** The lane as the Assistant panel shows it: its state, the run in progress, and each incident with its reports. */
+export function payload(): OpsPayload {
+  const runs = listAgentRuns(50).filter((r) => r.lane === "ops");
+  const settings = getSettings();
+  const working = current ? incidents.find((i) => i.id === current!.incidentId) : null;
+  const waiting = queue.length + timers.size;
+  const held = [...heldSince.keys()].some((id) => timers.has(id) || queue.includes(id));
+  const phase = current ? "investigating" : !settings.enabled || !settings.autoTrigger ? "off" : waiting ? "queued" : "idle";
+  const detail = phase === "investigating" ? (working ? `#${working.id}: ${working.title}` : null)
+    : phase === "off" ? "Automatic investigations are paused"
+    : phase === "queued" ? (held ? "Waiting for memory to recover before starting" : `${waiting} incident${waiting === 1 ? "" : "s"} waiting to start`)
+    : null;
+  return {
+    phase,
+    detail,
+    current,
+    run: current ? (runs.find((r) => r.id === current!.runId) ?? null) : null,
+    lastRun: runs.find((r) => r.finishedAt) ?? null,
+    queue: [...queue],
+    incidents: incidents.slice(0, 40).map(view),
+  };
+}
+
+function view(inc: OpsIncident): OpsIncidentView {
+  const filesOf = (runId: string | null | undefined) => (runId && inc.changes?.find((c) => c.runId === runId)?.files) || [];
+  const reports = inc.reportIds.flatMap((id) => {
+    const r = getReport(id);
+    return r ? [{ id: r.id, ts: r.ts, title: r.title, agent: r.agent, outcome: r.outcome ?? null, reviewed: r.reviewed, runId: r.runId ?? null, changedFiles: filesOf(r.runId) }] : [];
+  });
+  return { ...inc, reports };
 }
 
 export function listOpsIncidents(): OpsIncident[] {
@@ -166,6 +179,8 @@ async function pump(): Promise<void> {
       resume: inc.sessionId,
       timeoutMs: settings.maxRunMinutes * 60_000,
       onExit: onRunExit,
+      onChanges: recordChanges,
+      simulate: cfg.demo ? simulateOpsAgent(inc) : undefined, // [DEMO] scripted agent instead of the CLI (see DEMO_INDEX.md)
     });
   } catch {
     queue.unshift(inc.id);
@@ -190,6 +205,14 @@ function onRunExit(run: AgentRun): void {
   }
   current = null;
   void pump();
+}
+
+/** Keeps which of the incident's runs changed files, so the panel can offer each run's rollback id. */
+function recordChanges(run: AgentRun, files: string[]): void {
+  const inc = incidents.find((i) => i.id === run.incidentId);
+  if (!inc) return;
+  inc.changes = [...(inc.changes ?? []).filter((c) => c.runId !== run.id), { runId: run.id, ts: iso(), files: files.slice(0, 50) }].slice(-10);
+  void persist();
 }
 
 const OPS_RULES = `Rules:
@@ -231,7 +254,9 @@ export async function initOpsAgent(): Promise<void> {
   try {
     incidents = JSON.parse(await fsp.readFile(file(), "utf8")) as OpsIncident[];
   } catch {
-    incidents = [];
+    // [DEMO] seeded incidents for the Assistant panel (see DEMO_INDEX.md)
+    incidents = cfg.demo ? demoIncidents() : [];
+    if (cfg.demo) void persist();
   }
   for (const inc of incidents) if (inc.status === "investigating") (inc.status = "open"), (inc.note = "The dashboard restarted during the investigation.");
   onReport((r) => {
@@ -250,4 +275,47 @@ export async function initOpsAgent(): Promise<void> {
   if (cfg.demo) return; // [DEMO] the demo host has no real memory or disks to watch (see DEMO_INDEX.md)
   setInterval(() => void sampleHost(), 60_000).unref();
   publish({ source: "dashboard", kind: "log", level: "info", tags: ["maintenance"], text: `Ops agent ready (${RUNNER_NAME[getSettings().runner]}): watching units, containers, scripts, memory and disk` });
+}
+
+// ---- demo: seeded incidents and a simulated ops agent ----------------------------------------
+
+// [DEMO] what the ops lane looks like after a day: one fix with a rollback id, one for the owner, one left open (see DEMO_INDEX.md)
+function demoIncidents(): OpsIncident[] {
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const unit = "fam-jellyfin-sync.service";
+  return [
+    { id: "d3m0a1", key: "container:directus", title: "directus is logging errors: [ERROR] Couldn't connect to Redis at 127.0.0.1:6379", severity: "P2", status: "open", firstSeen: ago(9), lastSeen: ago(4), count: 2, samples: ["[ERROR] Couldn't connect to Redis at 127.0.0.1:6379"], runIds: ["demo-ops-run-3"], reportIds: [], sessionId: null, note: "The ops agent finished without filing its findings." },
+    { id: "d3m0b2", key: "host:disk:/srv", title: "Disk /srv is 93% full", severity: "P1", status: "needs-human", firstSeen: ago(200), lastSeen: ago(12), count: 14, samples: ["/srv: 93% used, 61 GB free"], runIds: ["demo-ops-run-2"], reportIds: ["demo-ops-report-2"], sessionId: null, note: "needs-human by Codex (demo)" },
+    { id: "d3m0c3", key: `unit:${unit}`, title: `${unit} failed (exit-code)`, severity: "P2", status: "resolved", firstSeen: ago(185), lastSeen: ago(170), count: 3, samples: [`${unit}: Failed with result 'exit-code'.`], runIds: ["demo-ops-run-1"], reportIds: ["demo-ops-report-1"], sessionId: null, note: "fixed by Codex (demo)", changes: [{ runId: "demo-ops-run-1", ts: ago(166), files: [`~/.config/systemd/user/${unit}`] }] },
+  ];
+}
+
+// [DEMO] a simulated ops agent stands in for codex/claude in demo mode (see DEMO_INDEX.md)
+function simulateOpsAgent(inc: OpsIncident): LaunchOptions["simulate"] {
+  const agent = `${RUNNER_NAME[getSettings().runner]} (demo)`;
+  return async (emit, say, signal) => {
+    const sleep = (ms: number) => delay(ms, undefined, { signal });
+    const run = currentRun("ops");
+    await sleep(700);
+    emit("→ read_instructions()");
+    await sleep(600);
+    emit("→ host_pressure()");
+    await sleep(600);
+    emit("→ get_alerts(problemsOnly=true, sinceMinutes=120)");
+    await sleep(700);
+    if (inc.key.startsWith("job:") || inc.key.startsWith("unit:")) {
+      const script = inc.key.startsWith("job:") ? "scripts/backup_world.py" : `~/.config/systemd/user/${inc.key.slice(5)}`;
+      emit(inc.key.startsWith("job:") ? "→ get_job_runs()" : `→ unit_journal(${inc.key.slice(5)})`);
+      await sleep(800);
+      emit(`→ edited ${script}`);
+      await sleep(600);
+      if (run) recordChanges(run, [script]);
+      say(`"${inc.title.slice(0, 80)}" came from ${script}. I fixed it and checked the next run; it passes now. The change can be undone with rollback_run ${run?.id ?? "?"}.`);
+      await addReport(agent, `Fixed: ${inc.title.slice(0, 80)}`, `Summary: ${inc.title} (${inc.count}×).\n\nActions taken:\n- Read the failing output and found the cause in ${script}.\n- Edited ${script} and ran it again; it finished cleanly.\n\nFollow-up for a human:\n- None. rollback_run ${run?.id ?? "?"} undoes the change.`, { incidentId: inc.id, runId: run?.id ?? null, outcome: "fixed" });
+      return 0;
+    }
+    say(`Looked into "${inc.title.slice(0, 80)}". The cause is outside what I may change, so I wrote down what you need to decide.`);
+    await addReport(agent, `Needs you: ${inc.title.slice(0, 80)}`, `Summary: ${inc.title} (${inc.count}×).\n\nActions taken:\n- Checked host_pressure, the containers and the last 2 hours of alerts. Nothing was changed.\n\nFollow-up for a human:\n- Decide whether to free space or raise the limit; the largest folders are on the Storage page.`, { incidentId: inc.id, runId: run?.id ?? null, outcome: "needs-human" });
+    return 0;
+  };
 }

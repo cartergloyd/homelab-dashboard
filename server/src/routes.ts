@@ -31,7 +31,7 @@ import { LOG_SOURCES } from "./services/logs.js";
 import { getRules, listAgents, publish, query, summary, touchAgent } from "./services/alerts.js";
 import { listRuns as listScriptRuns, listScripts, startScript } from "./services/scripts.js";
 import { getVersion, listHistory, readContext, restoreVersion, writeContext } from "./services/context.js";
-import { addReport, listReports, setReviewed } from "./services/reports.js";
+import { addReport, getReport, listReports, setReviewed } from "./services/reports.js";
 import { vpnStatus } from "./services/vpn.js";
 import { launchAgent, listAgentRuns } from "./services/agentRunner.js";
 import * as sidecar from "./services/sidecar.js";
@@ -615,8 +615,14 @@ api.post("/sidecar/approvals/:id", async (req, res) => {
 
 // [DEMO] demo-only endpoint: publishes a fake error so the sidecar loop can be watched; refused unless DEMO=1 (see DEMO_INDEX.md)
 api.post("/sidecar/simulate", (req, res) => {
-  const { kind, text } = z.object({ kind: z.enum(["exception", "warn", "job", "custom"]).default("exception"), text: z.string().max(40_000).optional() }).parse(req.body ?? {});
+  const { kind, text } = z.object({ kind: z.enum(["exception", "warn", "job", "unit", "custom"]).default("exception"), text: z.string().max(40_000).optional() }).parse(req.body ?? {});
   res.status(201).json(sidecar.simulateIncident(kind, text));
+});
+
+api.get("/reports/:id", (req, res) => {
+  const r = getReport(String(req.params.id));
+  if (!r) throw new HttpError(404, "Report not found");
+  res.json(r);
 });
 
 api.post("/reports/:id/review", async (req, res) => {

@@ -237,9 +237,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       - an autonomous Minecraft lane with `whitelist_add`, snapshots and rollback;
       - Discord reports to the owner;
       - the ops agent with routing, noise, run budget and memory guard.
+- [x] The **Server assistant** dialog shows both lanes (2026-10-30, not deployed yet): the ops agent
+      (`OpsLane`) beside the Minecraft responder, with its state and current run, each incident's status,
+      count and last seen, and each report with the rollback id of a run that changed files
+      (`GET /api/ops`, `GET /api/reports/:id`). The Minecraft tab's responder is unchanged.
 - [ ] Assistant redesign follow-ups:
-      - show the ops lane and its incidents in the Assistant panel (today: `GET /api/ops`, Discord
-        and reports);
+      - resuming the Auto switch re-queues only Minecraft incidents: ops incidents that arrived while
+        paused stay open until they recur; and Stop stops only a Minecraft run, not an ops run;
       - have the OnFailure hook (`notify_unit_failure.sh`) also ingest `{unit, result,
         discordMessageId}`, so the dashboard replies under its post;
       - group the same failure seen as a unit failure and as its script's output;
@@ -526,8 +530,8 @@ override the placeholders wherever they conflict:
   - **Residual risk, accepted by the owner:** a run that edits a script or unit file runs code
     outside its sandbox the next time that file runs. Every such change is posted with its
     rollback id.
-  - **The Auto switch** and the Stop button pause both lanes. Ops incidents are at `GET /api/ops`;
-    the Assistant panel does not show them yet.
+  - **The Auto switch** and the Stop button pause both lanes. Ops incidents are at `GET /api/ops`
+    and in the Server assistant dialog, next to the Minecraft responder.
 
 ## How to run & verify
 

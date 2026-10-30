@@ -62,7 +62,7 @@ function SettingsModal({ payload, onClose }: { payload: SidecarPayload; onClose:
     <Modal title="Assistant settings" onClose={onClose} wide>
       <div className="stack">
         <div className="notice">
-          The dashboard runs one <strong>{RUNNER_LABEL[s.runner]}</strong> job at a time and keeps its own conversation between jobs, using your existing subscription. It is separate from your editor or ChatGPT conversation. It responds to Minecraft console errors and outage reports; follow-ups stay in the same conversation.
+          The dashboard runs <strong>{RUNNER_LABEL[s.runner]}</strong> in two lanes, one job at a time each, using your existing subscription: this Minecraft responder, which keeps its own conversation between jobs, and the ops agent for the rest of the server. Both are separate from your editor or ChatGPT conversation. These settings and the automatic-response switch apply to both lanes.
           {payload.state.runnerNote && <span className="muted"> {payload.state.runnerNote}</span>}
         </div>
         <div className="form-grid">

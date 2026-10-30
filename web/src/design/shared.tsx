@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Modal } from "../components/ui";
 import { ReportsCard } from "../components/ReportsCard";
 import { AssistantWidget } from "../components/AssistantWidget";
+import { OpsLane } from "../components/OpsLane";
 import { AlertsFeed } from "../components/AlertsFeed";
 import { StorageExplorer } from "../components/StorageExplorer";
 import { LogViewer } from "../components/LogViewer";
@@ -44,7 +45,10 @@ export function Drawer({
 export function AssistantDialog({ onClose }: { onClose: () => void }) {
   return (
     <Drawer title="Server assistant" onClose={onClose}>
-      <AssistantWidget />
+      <div className="assistant-lanes">
+        <AssistantWidget />
+        <OpsLane />
+      </div>
     </Drawer>
   );
 }

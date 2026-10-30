@@ -42,6 +42,36 @@ export async function initReports(): Promise<void> {
         runId: null,
         outcome: "no-action",
       });
+      // the ops agent's seeded incidents (opsAgent.ts demoIncidents) point at these two
+      reports.push(
+        {
+          id: "demo-ops-report-1",
+          ts: new Date(Date.now() - 168 * 60_000).toISOString(),
+          agent: "Codex (demo)",
+          title: "Fixed: fam-jellyfin-sync.service failed (exit-code)",
+          body: "Summary: the sync unit failed three times since 14:05 because its ExecStart still pointed at the old scripts folder.\n\nActions taken:\n- Read unit_journal: \"No such file or directory\" for the script path.\n- Corrected ExecStart in ~/.config/systemd/user/fam-jellyfin-sync.service and restarted the unit with unit_action; it finished cleanly.\n\nFollow-up for a human:\n- None. rollback_run demo-ops-run-1 undoes the change.",
+          reviewed: false,
+          reviewedBy: null,
+          reviewedAt: null,
+          incidentId: "d3m0c3",
+          runId: "demo-ops-run-1",
+          outcome: "fixed",
+        },
+        {
+          id: "demo-ops-report-2",
+          ts: new Date(Date.now() - 15 * 60_000).toISOString(),
+          agent: "Codex (demo)",
+          title: "Needs you: Disk /srv is 93% full",
+          body: "Summary: /srv has been above the 90% threshold for three hours; 61 GB are free.\n\nActions taken:\n- Checked host_pressure and the storage scan. The Jellyfin transcode cache is 48 GB and the Postgres dumps folder 22 GB.\n- Changed nothing: deleting data is not something I may do.\n\nFollow-up for a human:\n- Clear the transcode cache in Jellyfin's dashboard, or move the dumps off-site and prune them.",
+          reviewed: false,
+          reviewedBy: null,
+          reviewedAt: null,
+          incidentId: "d3m0b2",
+          runId: "demo-ops-run-2",
+          outcome: "needs-human",
+        },
+      );
+      reports.sort((a, b) => b.ts.localeCompare(a.ts));
       await save().catch(() => {});
     }
   }

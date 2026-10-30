@@ -795,7 +795,7 @@ export function resolveIncident(id: string, by: string, note?: string): Incident
 
 /** Demo only: inject an error into the feed so the whole loop can be watched. */
 // [DEMO] demo-only: inject a fake error into the feed (see DEMO_INDEX.md)
-export function simulateIncident(kind: "exception" | "warn" | "job" | "custom" = "exception", text?: string): AlertEvent {
+export function simulateIncident(kind: "exception" | "warn" | "job" | "unit" | "custom" = "exception", text?: string): AlertEvent {
   if (!cfg.demo) throw new HttpError(403, "Only in demo mode");
   if (kind === "custom") {
     // paste real console output: every line becomes a Minecraft log line, classified like the real feed
@@ -809,6 +809,8 @@ export function simulateIncident(kind: "exception" | "warn" | "job" | "custom" =
     return first!;
   }
   if (kind === "job") return publish({ source: "jobs", kind: "job", level: "error", tags: ["maintenance"], text: 'Job "Semi-weekly world backup" failed: backup_world.py exited 1: tar: world/region/r.0.0.mca: file changed as we read it', meta: { job: "Semi-weekly world backup" } });
+  // job and unit failures are the ops lane's (opsAgent.ts); the rest are Minecraft's
+  if (kind === "unit") return publish({ source: "system", kind: "log", level: "error", text: "fam-mc-activity.service: Failed with result 'exit-code'." });
   if (kind === "warn") return publish({ source: "minecraft", kind: "log", text: "[Server thread/WARN]: Can't keep up! Is the server overloaded? Running 4120ms or 82 ticks behind" });
   return publish({ source: "minecraft", kind: "log", text: "[Server thread/ERROR]: Exception ticking world — java.lang.NullPointerException: Cannot invoke \"net.minecraft.world.entity.Entity.tick()\" because \"entity\" is null" });
 }

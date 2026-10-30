@@ -60,6 +60,8 @@ export interface LaunchOptions {
   onMessage?: (text: string) => void;
   /** called once, after the process ends */
   onExit?: (run: AgentRun, finalText: string) => void;
+  /** called after onExit when the run changed files in its writable folders (rollback_run undoes them) */
+  onChanges?: (run: AgentRun, files: string[]) => void;
   /** demo mode: a simulated agent instead of a real CLI */
   simulate?: (emit: (line: string) => void, say: (text: string) => void, signal: AbortSignal) => Promise<number>;
 }
@@ -288,7 +290,10 @@ export function launchRun(opts: LaunchOptions): AgentRun {
     revokeRunToken(run.id);
     if (snapshotted) {
       void snapshotAfter(run.id).then((files) => {
-        if (files.length) publish({ source: "agent", kind: "agent", level: "warn", tags: ["maintenance", "files"], text: `${name} changed ${files.length} file${files.length === 1 ? "" : "s"}: ${files.slice(0, 10).join(", ")}${files.length > 10 ? ", …" : ""}. Undo with rollback_run ${run.id}.`, meta: { ...meta, files } });
+        run.changedFiles = files;
+        if (!files.length) return;
+        opts.onChanges?.(run, files);
+        publish({ source: "agent", kind: "agent", level: "warn", tags: ["maintenance", "files"], text: `${name} changed ${files.length} file${files.length === 1 ? "" : "s"}: ${files.slice(0, 10).join(", ")}${files.length > 10 ? ", …" : ""}. Undo with rollback_run ${run.id}.`, meta: { ...meta, files } });
       }, (e) => publish({ source: "agent", kind: "agent", level: "error", text: `${name}: could not record its file changes: ${(e as Error).message}`, meta }));
     }
     publish({

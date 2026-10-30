@@ -53,18 +53,18 @@ Conventions:
 | `server/src/services/apps.ts` | fixed fam/ai/personal databases, tunnel state, loopback exposure (`demo.apps()`) | each app's Directus `/server/health` locally and via the tunnel, the app databases over `PG_URL`, `PG_BACKUP_DIR`, cloudflared's `/ready` endpoint, `ss -ltn` for port bindings |
 | `server/src/services/updates.ts` | fixed Paper/plugin versions and dates (`demo.stagedUpdates()`) | jars in `MC_DIR` + `MC_DIR/plugins`, the staging folder (`UPDATE_STAGING_DIR`), PaperMC / Modrinth / Hangar / GitHub APIs |
 | `server/src/services/scheduler.ts` → `defaultJobs()` | four seeded jobs, flagged `seeded: true` (two disabled built-ins, two external mirrors with made-up timer/cron) | **zero** jobs; `npm run discover -- --apply` mirrors the real timers/crontab |
-| `server/src/services/reports.ts` | one seeded "(demo)" maintenance report | none; agents file real ones |
+| `server/src/services/reports.ts` | one seeded "(demo)" maintenance report, plus the two reports the seeded ops incidents point at | none; agents file real ones |
 | `server/src/services/agentRunner.ts` → `runnerAvailable()` | reports the CLI as available | real `codex` / `claude` on the unit's PATH, logged in as the service user |
 | `server/src/services/discordSupport.ts` → `prepareDiscordSupport()` | Discord join support never connects | the bot token file, `DISCORD_SUPPORT_ENABLED=1`, guild and bot ids; "Minecraft Discord join support connected as …" in the feed |
 | `server/src/services/minecraftWatch.ts` → `startMinecraftWatch()` | no outage watch (the demo has no Paper server to ping) | the Paper unit and its status port; outage reports appear in the feed when pings fail |
-| `server/src/services/opsAgent.ts` → `initOpsAgent()` | no memory/disk sampling (the demo host is a laptop) | `/proc/meminfo`, `/proc/pressure/memory` and `df` on the server; "Ops agent ready" in the feed |
+| `server/src/services/opsAgent.ts` → `initOpsAgent()`, `demoIncidents()`, `simulateOpsAgent()` | no memory/disk sampling (the demo host is a laptop); three seeded ops incidents (open, needs-human, resolved with a rollback id) for the Assistant panel; a scripted fake ops agent answers new ops incidents, records a fake changed file and files a report | `/proc/meminfo`, `/proc/pressure/memory` and `df` on the server; "Ops agent ready" in the feed; the real CLI runs in the ops workspace and the changed files come from `snapshots.ts` |
 | `server/src/services/sidecar.ts` → `DEFAULTS()` (enabled in demo), `simulateAgent()`, `simulateIncident()` | the sidecar is **on** by default and a scripted fake agent answers incidents, asks for a restart approval and files reports | sidecar off until the owner enables it; the real CLI runs; `/api/sidecar/simulate` is refused |
 
 ## 3. Demo-only API and UI
 
 | Where | What | Real install |
 |---|---|---|
-| `server/src/routes.ts` → `POST /api/sidecar/simulate` | injects a fake exception / warning / failed-job event | returns 403 unless `DEMO=1` |
+| `server/src/routes.ts` → `POST /api/sidecar/simulate` | injects a fake exception / warning / failed-job / failed-unit event (`job` and `unit` go to the ops lane) | returns 403 unless `DEMO=1` |
 | `web/src/components/AssistantWidget.tsx` → "Simulate incident" button | shown only when `/api/config` says `demo: true` | hidden |
 | `web/src/App.tsx` → header shows "demo mode" instead of "over Tailscale" | the badge under the server name | shows "over Tailscale" |
 
