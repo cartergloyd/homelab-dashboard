@@ -44,7 +44,7 @@ export const api = {
   del: <T>(path: string) => request<T>(`/api${path}`, { method: "DELETE" }),
   upload: <T>(path: string, files: FileList | File[]) => {
     const form = new FormData();
-    for (const f of Array.from(files)) form.append("files", f, f.name);
+    for (const f of Array.from(files)) form.append("files", f, (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name); // folder picks keep their relative paths
     return request<T>(`/api${path}`, { method: "POST", body: form });
   },
 };

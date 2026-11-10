@@ -6,6 +6,7 @@ import { useDialog, useToast } from "../components/ui";
 import { Button, Empty, Icon, Issue, Panel, Status, Table } from "./ui";
 import { Drawer } from "./shared";
 import { FileStore } from "./storage";
+import { FeedPublish } from "./feed";
 
 type Target = { id: string; label: string; url: string };
 type Collection = { collection: string; meta?: { singleton?: boolean } };
@@ -22,7 +23,8 @@ export function DirectusDesign({
   workspace?: "personal" | "business";
 }) {
   const [connecting, setConnecting] = useState(false),
-    [files, setFiles] = useState<"upload" | "browse" | null>(null);
+    [files, setFiles] = useState<"upload" | "browse" | null>(null),
+    [publishing, setPublishing] = useState(false);
   const qc = useQueryClient(),
     toast = useToast(),
     { confirm, prompt } = useDialog();
@@ -231,6 +233,11 @@ export function DirectusDesign({
         <Button icon="folder" onClick={() => setFiles("browse")}>
           Files
         </Button>
+        {target === "ai" && (
+          <Button icon="upload" onClick={() => setPublishing(true)}>
+            Publish to website
+          </Button>
+        )}
       </div>
       <Issue
         error={
@@ -490,6 +497,11 @@ export function DirectusDesign({
               </>
             )}
           </form>
+        </Drawer>
+      )}
+      {publishing && (
+        <Drawer title="Publish to website" onClose={() => setPublishing(false)}>
+          <FeedPublish />
         </Drawer>
       )}
       {files && (

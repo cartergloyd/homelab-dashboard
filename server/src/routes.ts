@@ -10,6 +10,7 @@ import type { Identity } from "./auth.js";
 import * as files from "./services/files.js";
 import * as jellyfin from "./services/jellyfin.js";
 import { databaseFileRoutes } from "./services/databaseFiles.js";
+import { feedRoutes } from "./services/feed.js";
 import { readMinecraftSettings } from "./services/minecraftSettings.js";
 import { directusRecordRoutes } from "./services/directusRecords.js";
 import { hostStatus, executeHostCommand } from "./services/host.js";
@@ -257,6 +258,7 @@ api.post(
 // ---- database ------------------------------------------------------------
 
 api.use("/database/files", databaseFileRoutes(logAction));
+api.use("/feed", feedRoutes(logAction));
 
 // Directus-per-app platform + Cloudflare Tunnel + Postgres core (read-only)
 api.get("/apps", async (req, res) => {

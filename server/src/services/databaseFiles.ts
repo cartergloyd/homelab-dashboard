@@ -22,15 +22,15 @@ function targets() {
   ].map(t => ({ ...t, token: tokens[t.id] }));
 }
 
-function target(id: string) {
+export function target(id: string) {
   const t = targets().find(t => t.id === id);
   if (!t) throw new HttpError(404, "Unknown upload database");
   if (!t.token) throw new HttpError(503, "File uploads are not configured for this database");
   return t;
 }
 
-async function request(t: ReturnType<typeof target>, endpoint: string, init: RequestInit = {}) {
-  const response = await fetch(t.url + endpoint, { ...init, redirect: "error", signal: AbortSignal.timeout(120_000), headers: { Authorization: `Bearer ${t.token}` } });
+export async function request(t: ReturnType<typeof target>, endpoint: string, init: RequestInit = {}, timeoutMs = 120_000) {
+  const response = await fetch(t.url + endpoint, { ...init, redirect: "error", signal: AbortSignal.timeout(timeoutMs), headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${t.token}` } });
   if (!response.ok) {
     await response.body?.cancel();
     throw new HttpError(response.status === 404 ? 404 : 502, `Database file request failed (${response.status}). Try again or check Directus.`);
