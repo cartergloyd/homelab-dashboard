@@ -59,6 +59,7 @@ const Env = z.object({
   JELLYFIN_PUBLIC_URL: z.string().optional(),
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_CONTAINER: z.string().default("jellyfin"),
+  NOTES_URL: z.string().optional(), // self-hosted AppFlowy (deploy/appflowy), framed by the Notes page
   QBITTORRENT_PUBLIC_URL: z.string().optional(),
   QBITTORRENT_URL: z.string().url().optional(),
   QBITTORRENT_USERNAME: z.string().optional(),
@@ -165,6 +166,16 @@ const Env = z.object({
 
 const env = Env.parse(process.env);
 
+/** A bad or empty NOTES_URL means "Notes not connected", never a boot failure. */
+function notesFrom(raw?: string): { url: string; origin: string } | null {
+  try {
+    const u = new URL(raw ?? "");
+    return u.protocol === "https:" || u.protocol === "http:" ? { url: raw!.replace(/\/$/, ""), origin: u.origin } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Comma-separated paths; each may contain spaces (quote the whole value in the env file). */
 const splitPaths = (v: string): string[] =>
   v
@@ -229,6 +240,7 @@ export const cfg = {
     username: env.QBITTORRENT_USERNAME,
     password: env.QBITTORRENT_PASSWORD,
   },
+  notes: notesFrom(env.NOTES_URL),
   mediaRoots: parseRoots(env.MEDIA_ROOTS),
   minecraft: {
     service: env.MC_SERVICE,

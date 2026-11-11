@@ -14,6 +14,7 @@ process.env.CF_ACCESS_TEAM_DOMAIN = 'test.cloudflareaccess.com';
 process.env.CF_ACCESS_AUD = 'test-audience';
 process.env.PUBLIC_DASHBOARD_URL = 'https://dashboard.example';
 process.env.ALLOWED_LOGINS = 'owner@example.com';
+process.env.NOTES_URL = 'https://notes.example/app';
 const { resolveIdentity, accessVerifier, identityMiddleware } = await import('./dist/auth.js');
 const { verifyAccessJwt } = await import('./dist/cf-access.js');
 const { httpSecurity, sensitiveRateLimit } = await import('./dist/httpSecurity.js');
@@ -56,6 +57,7 @@ try {
   assert.match(r.headers.get('strict-transport-security'),/max-age=/);
   assert.match(r.headers.get('content-security-policy'),/script-src 'self';/);
   assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+  assert.match(r.headers.get('content-security-policy'),/frame-src 'self' https:\/\/notes\.example;/, 'Notes page may frame exactly the AppFlowy origin');
   const unauth = await fetch(base+'/api/config');
   assert.equal(unauth.status,401);
   assert.equal(unauth.headers.get('cache-control'),'no-store');

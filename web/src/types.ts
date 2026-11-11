@@ -794,7 +794,7 @@ export interface AppConfigPayload {
   demo: boolean;
   torrentAdd: boolean;
   user: { login: string; name: string; via: IdentityVia };
-  links: { jellyfin: string; directus: string; qbittorrent: string | null; router: string | null };
+  links: { jellyfin: string; directus: string; qbittorrent: string | null; notes: string | null; router: string | null };
   mediaRoots: string[];
   timezone: string;
   logSources: LogSource[];

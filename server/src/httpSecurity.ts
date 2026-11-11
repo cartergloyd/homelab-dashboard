@@ -5,7 +5,7 @@ import { cfg } from "./config.js";
 export const httpSecurity: RequestHandler = (req, res, next) => {
   const socketOrigin = cfg.cfAccess?.publicUrl ? new URL(cfg.cfAccess.publicUrl).origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:") : "";
   res.set({
-    "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ${socketOrigin}; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
+    "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ${socketOrigin}; frame-src 'self'${cfg.notes ? " " + cfg.notes.origin : ""}; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`,
     "Strict-Transport-Security": "max-age=15552000",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",

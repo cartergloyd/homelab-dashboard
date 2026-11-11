@@ -30,6 +30,7 @@ import {
 } from "./design/pages";
 import { MinecraftDesign, JellyfinDesign } from "./design/operations";
 import { StorageDesign } from "./design/storage";
+import { NotesDesign } from "./design/notes";
 import { Drawer } from "./design/shared";
 import { Icon } from "./design/ui";
 import { useRead, type Host } from "./design/data";
@@ -43,6 +44,7 @@ const PERSONAL: { to: string; label: string; icon: IconName }[] = [
   { to: "/minecraft", label: "Minecraft", icon: "cube" },
   { to: "/jellyfin", label: "Jellyfin", icon: "film" },
   { to: "/files", label: "Files & storage", icon: "folder" },
+  { to: "/notes", label: "Notes", icon: "file" }, // index 4: BUSINESS reuses slice(4), so it gets /business/notes too
   { to: "/network", label: "Network", icon: "pulse" },
   { to: "/terminal", label: "Terminal", icon: "terminal" },
   { to: "/automation", label: "Automation", icon: "clock" },
@@ -295,6 +297,7 @@ function Shell() {
               />
               {["", "/business"].map((base) => (
                 <Route key={base} path={base || "/"}>
+                  <Route path="notes" element={<NotesDesign />} />
                   <Route path="network" element={<NetworkDesign />} />
                   <Route
                     path="terminal"
