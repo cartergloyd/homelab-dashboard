@@ -31,6 +31,7 @@ import {
   ReportsDialog,
 } from "./shared";
 import { RepositoryHub } from "./repositories";
+import { PeoplePanel } from "./people";
 import { fmtBytes, fmtDateTime, fmtRelative, describeCron } from "../format";
 import type {
   AgentPresence,
@@ -1389,6 +1390,7 @@ export function AccessDesign() {
             />
           </div>
         </Panel>
+        <PeoplePanel />
         <Panel title="Connections">
           <Table headers={["Connection", "Status", "Details"]}>
             <tr>

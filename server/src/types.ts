@@ -857,3 +857,21 @@ export interface AppConfigPayload {
   /** only sent to Tailscale-identified users, never to key-authenticated clients */
   dashboardKey?: string;
 }
+
+/** Website sign-ups and approvals, kept in the ai Directus (deploy/ai-members.sql). "system" = Directus admins and service users. */
+export type PersonRole = "pending" | "customer" | "admin" | "system";
+export interface PersonRow {
+  id: string;
+  email: string;
+  name: string;
+  role: PersonRole;
+  roleName: string | null;
+  provider: string;
+  status: string;
+  lastAccess: string | null;
+}
+export interface PeoplePayload {
+  ready: boolean; // false until deploy/ai-members.sql has been run
+  people: PersonRow[];
+  dashAllowList: string[] | null; // ALLOWED_LOGINS; null = not set (Cloudflare Access decides alone)
+}

@@ -252,6 +252,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       proxying to AppFlowy (`services/notesProxy.ts`, `NOTES_UPSTREAM`) — no hostname or Cloudflare setup of its
       own. Running on `127.0.0.1:8070`, owner-only login, sign-ups closed, nightly backup cron.
 - [ ] AppFlowy follow-ups: off-site copy of `backups/`, hl-run on the backup cron.
+- [x] **One login, two roles** (Carter, 2026-11-10; plan and checklist in `docs/SSO.md`): admins reach everything,
+      customers only the private area of xgold.tech, everyone signs in with Google. Built: Directus (ai) roles
+      Pending / Customer / Network admin + `members_items` (`deploy/ai-members.sql`), **Access → People** panel
+      (`design/people.tsx`, routes `GET/PATCH /api/directus/:target/people` in `directusRecords.ts`).
+- [ ] SSO needs Carter first: Google OAuth client + secret in `~/server-platform/google-oauth.env`, Cloudflare Google
+      login + group Admins on both Access apps (`docs/SSO.md` § A, B). Then wire Directus / Twenty / AppFlowy Google
+      sign-in and set `ALLOWED_LOGINS`. The website's private page lives in the `ai.xgold.tech` repo.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -554,6 +561,15 @@ override the placeholders wherever they conflict:
   `Authorization`, which carries AppFlowy's own token), strips the dash's credentials from what AppFlowy sees,
   and gives only AppFlowy's responses a looser CSP and `X-Frame-Options: SAMEORIGIN`. Trade-off accepted: AppFlowy
   runs same-origin with the dash. Native AppFlowy apps cannot sign in through Access; browser only.
+
+- 2026-11-10 **One login = Google; roles by e-mail; customers sign up and Carter approves.** Google is the only
+  provider Twenty (Google/Microsoft), AppFlowy (Google/GitHub/Discord), Cloudflare Access and Directus all accept
+  free of charge. Admins are the Cloudflare Access group "Admins" (door for dash, AppFlowy, CRM). Customers are
+  Directus (ai) users: a first Google sign-in lands as role **Pending** (no permissions), the People panel moves it
+  to **Customer** or **Network admin**. The dash holds no Cloudflare API token, so it cannot edit the Access group
+  (a dash that could would be a bigger prize); People only warns when an admin is missing from `ALLOWED_LOGINS`.
+  People never touches Directus administrators or service accounts. Family site, Jellyfin and the Directus admin
+  consoles stay on their own logins.
 
 ## How to run & verify
 

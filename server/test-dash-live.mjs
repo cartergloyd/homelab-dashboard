@@ -156,7 +156,9 @@ try {
     protectedAction("POST", "/qbittorrent/control", { action: "remove" }),
   );
   assert.equal(protectedAction("POST", "/directus/personal/login"), null);
+  assert.ok(protectedAction("PATCH", "/directus/ai/people/11111111-1111-4111-8111-111111111111"), "approving a customer needs the step-up code");
   let refreshes = 0,
+    peoplePatches = [],
     upstreamCalls = [];
   globalThis.fetch = async (url, init = {}) => {
     upstreamCalls.push({ url, init });
@@ -192,6 +194,32 @@ try {
           { collection: "hidden", meta: { hidden: true } },
         ],
       });
+    if (url.includes("/roles?"))
+      return Response.json({
+        data: [
+          { id: "r-admin", name: "Administrator" },
+          { id: "r-pend", name: "Pending" },
+          { id: "r-cust", name: "Customer" },
+          { id: "r-net", name: "Network admin" },
+        ],
+      });
+    if (/\/users\?/.test(url))
+      return Response.json({
+        data: [
+          { id: "11111111-1111-4111-8111-111111111111", email: "new@example.com", first_name: "New", last_name: "Person", status: "active", provider: "google", last_access: null, role: "r-pend" },
+          { id: "22222222-2222-4222-8222-222222222222", email: "admin@xgold.tech", status: "active", provider: "default", role: "r-admin" },
+          { id: "33333333-3333-4333-8333-333333333333", email: "svc@internal.invalid", status: "active", provider: "default", role: null },
+        ],
+      });
+    const one = /\/users\/([0-9a-f-]{36})\?fields=email,role$/.exec(url);
+    if (one)
+      return Response.json({
+        data: one[1].startsWith("2222") ? { email: "admin@xgold.tech", role: "r-admin" } : { email: "new@example.com", role: "r-pend" },
+      });
+    if (init.method === "PATCH" && /\/users\/[0-9a-f-]{36}$/.test(url)) {
+      peoplePatches.push(JSON.parse(init.body));
+      return Response.json({ data: {} });
+    }
     if (init.method === "DELETE") return new Response(null, { status: 204 });
     if (init.method === "PATCH")
       return Response.json({ data: JSON.parse(init.body) });
@@ -290,6 +318,28 @@ try {
   assert.deepEqual(await r.json(), { title: "Edited" });
   r = await request("/personal/items/notes/1", undefined, {}, "DELETE");
   assert.equal(r.status, 200);
+  // People: sign-ups are listed, approved by role name, and Directus admins / service accounts stay untouchable
+  r = await request("/personal/people");
+  const people = await r.json();
+  assert.equal(people.ready, true);
+  assert.deepEqual(
+    people.people.map((p) => [p.email, p.role]),
+    [["new@example.com", "pending"], ["admin@xgold.tech", "system"]],
+    "service accounts without a role are hidden, Directus admins show as read-only system accounts",
+  );
+  r = await request("/personal/people/11111111-1111-4111-8111-111111111111", { role: "customer" }, {}, "PATCH");
+  assert.equal(r.status, 200);
+  assert.deepEqual(peoplePatches.at(-1), { role: "r-cust" });
+  r = await request("/personal/people/11111111-1111-4111-8111-111111111111", { status: "suspended" }, {}, "PATCH");
+  assert.deepEqual(peoplePatches.at(-1), { status: "suspended" });
+  const before = peoplePatches.length;
+  r = await request("/personal/people/22222222-2222-4222-8222-222222222222", { role: "customer" }, {}, "PATCH");
+  assert.equal(r.status, 403, "a Directus administrator cannot be changed from the People panel");
+  r = await request("/personal/people/11111111-1111-4111-8111-111111111111", { role: "Administrator" }, {}, "PATCH");
+  assert.equal(r.status, 400, "only pending, customer and admin can be assigned");
+  r = await request("/personal/people/not-a-uuid", { role: "customer" }, {}, "PATCH");
+  assert.equal(r.status, 400);
+  assert.equal(peoplePatches.length, before, "refused changes never reach Directus");
   r = await request("/personal/logout", {});
   assert.equal(r.status, 200);
   r = await request("/personal/items/notes");

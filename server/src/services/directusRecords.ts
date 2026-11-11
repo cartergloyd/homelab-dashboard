@@ -4,6 +4,7 @@ import { z } from "zod";
 import { cfg } from "../config.js";
 import { HttpError } from "../errors.js";
 import type { Identity } from "../auth.js";
+import type { PeoplePayload, PersonRole } from "../types.js";
 
 const cookieName = "dash-directus-session";
 const identifier = z
@@ -333,6 +334,66 @@ export function directusRecordRoutes(
       method: "DELETE",
     });
     logAction(res, `deleted Directus ${req.params.target}/${name} record`);
+    res.json({ ok: true });
+  });
+
+  // People: website sign-ups and who is approved (deploy/ai-members.sql, docs/SSO.md). Directus admins and
+  // service accounts are listed as "system" and never changed from here, so this cannot grant or take
+  // Directus admin rights. Writes ride on the same owner session, origin check and step-up code as the items.
+  const PEOPLE_ROLES = { pending: "Pending", customer: "Customer", admin: "Network admin" } as const;
+  const roleKey = (name?: string | null): PersonRole =>
+    (Object.entries(PEOPLE_ROLES).find(([, n]) => n === name)?.[0] as PersonRole | undefined) ?? "system";
+  async function roleNames(req: Request, res: Response) {
+    const roles = await request(req, res, "/roles?fields=id,name&limit=100");
+    return new Map<string, string>((roles.data as { id: string; name: string }[]).map((r) => [r.id, r.name]));
+  }
+  router.get("/:target/people", async (req, res) => {
+    const roles = await roleNames(req, res);
+    const users = await request(
+      req,
+      res,
+      "/users?fields=id,email,first_name,last_name,status,provider,last_access,role&sort=email&limit=500",
+    );
+    const payload: PeoplePayload = {
+      ready: [...roles.values()].includes(PEOPLE_ROLES.pending),
+      dashAllowList: cfg.allowedLogins.length ? cfg.allowedLogins : null,
+      people: (users.data as Record<string, string | null>[])
+        .filter((u) => u.role) // service accounts have no role
+        .map((u) => ({
+          id: u.id as string,
+          email: u.email ?? "",
+          name: [u.first_name, u.last_name].filter(Boolean).join(" "),
+          role: roleKey(roles.get(u.role as string)),
+          roleName: roles.get(u.role as string) ?? null,
+          provider: u.provider ?? "default",
+          status: u.status ?? "active",
+          lastAccess: u.last_access ?? null,
+        })),
+    };
+    res.json(payload);
+  });
+  router.patch("/:target/people/:id", async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id),
+      body = z
+        .object({
+          role: z.enum(["pending", "customer", "admin"]).optional(),
+          status: z.enum(["active", "suspended"]).optional(),
+        })
+        .refine((b) => b.role || b.status, "Nothing to change")
+        .parse(req.body);
+    const roles = await roleNames(req, res);
+    const user = (await request(req, res, `/users/${id}?fields=email,role`)).data as { email: string; role: string | null };
+    if (roleKey(user.role ? roles.get(user.role) : null) === "system")
+      throw new HttpError(403, "System accounts are managed in Directus, not here");
+    const patch: Record<string, string> = {};
+    if (body.role) {
+      const wanted = [...roles].find(([, n]) => n === PEOPLE_ROLES[body.role!]);
+      if (!wanted) throw new HttpError(409, "The customer roles are not installed yet (deploy/ai-members.sql)");
+      patch.role = wanted[0];
+    }
+    if (body.status) patch.status = body.status;
+    await request(req, res, `/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+    logAction(res, `set ${user.email} to ${body.role ?? body.status} in Directus ${req.params.target}`);
     res.json({ ok: true });
   });
   return router;
