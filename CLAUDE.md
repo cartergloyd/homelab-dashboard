@@ -256,9 +256,11 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       customers only the private area of xgold.tech, everyone signs in with Google. Built: Directus (ai) roles
       Pending / Customer / Network admin + `members_items` (`deploy/ai-members.sql`), **Access → People** panel
       (`design/people.tsx`, routes `GET/PATCH /api/directus/:target/people` in `directusRecords.ts`).
-- [ ] SSO needs Carter first: Google OAuth client + secret in `~/server-platform/google-oauth.env`, Cloudflare Google
-      login + group Admins on both Access apps (`docs/SSO.md` § A, B). Then wire Directus / Twenty / AppFlowy Google
-      sign-in and set `ALLOWED_LOGINS`. The website's private page lives in the `ai.xgold.tech` repo.
+- [ ] SSO needs Carter first. Done 2026-11-10: Google OAuth client created and its id + secret saved on the server in
+      `~/server-platform/google-oauth.env` (mode 600). Still open: the downloaded JSON listed **no redirect URIs**, so
+      add the four from `docs/SSO.md` § A to the client in Google Cloud; Cloudflare Google login + group Admins on both
+      Access apps (§ B). Then wire Directus / Twenty / AppFlowy Google sign-in and set `ALLOWED_LOGINS`. The website's
+      private page lives in the `ai.xgold.tech` repo.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
