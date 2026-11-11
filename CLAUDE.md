@@ -246,6 +246,13 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       - retire the disabled `minecraft-claude-bot` / `minecraft-codex-bot` / `minecraft-log-monitor`
         units and the `log_monitor.py` section of the Minecraft `CLAUDE.md`;
       - review the first week of Discord posts and tune `routing.json`.
+- [x] **AppFlowy notes** (Carter, 2026-11-10): self-hosted AppFlowy Cloud as its own compose project on
+      gold-server (`~/server-platform/appflowy`, source `deploy/appflowy/`, README there), shown as the
+      **Notes** tab (`web/src/design/notes.tsx`, an iframe of `NOTES_URL`; CSP `frame-src` allows that origin
+      only). Running and healthy on `127.0.0.1:8070`, owner-only login, sign-ups closed, nightly backup cron.
+- [ ] AppFlowy publish: Cloudflare Access app for `notes.xgold.tech` first, then the tunnel public hostname →
+      `http://127.0.0.1:8070`, then `NOTES_URL` in the dashboard env + restart (README § Publish). Until then
+      the Notes tab shows "Not connected". Follow-ups: off-site copy of `backups/`, hl-run on the backup cron.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -308,6 +315,10 @@ override the placeholders wherever they conflict:
   runs). It edits and pushes; the server runs. From the office network it cannot reach the server
   (no Tailscale client, the LAN address only works at home) and `gh` fails TLS behind the corporate
   proxy while `curl` and git-over-SSH work.
+- **The live dashboard** is `~/server-platform/homelab-dashboard-live` (branch `deploy/2026-10-30`), run by the
+  **user** unit `gold-dashboard.service` (`systemctl --user …`, env `~/server-platform/homelab-dashboard.env`,
+  port 8088). On 2026-11-10 it carried 3 commits main lacks (ops-lane panel UI, publish-card variant) and lacked
+  9 that main has, so changes go in by `git cherry-pick`, not by merging main over it, until someone reconciles.
 
 ## Decisions log
 
@@ -528,6 +539,17 @@ override the placeholders wherever they conflict:
     rollback id.
   - **The Auto switch** and the Stop button pause both lanes. Ops incidents are at `GET /api/ops`;
     the Assistant panel does not show them yet.
+
+- 2026-11-10 **AppFlowy is upstream's compose plus a thin override, not a fork** (`deploy/appflowy/`). Requested by
+  the owner. Pinned by commit and image version because upstream's tags stop at
+  0.9.64 while its images are 0.20.x; MinIO swapped for the `pgsty/minio` fork because `minio/minio` no longer
+  exists on Docker Hub or Quay; AI, admin console and sign-ups are off; every container is memory-capped because
+  gold-server runs at ~2 GB available. Own Postgres (pgvector), so it is not covered by `gold-postgres-backup`:
+  `deploy/appflowy/backup.sh` has its own cron.
+- 2026-11-10 **Notes = an iframe of its own hostname, not a path proxy.** `notes.xgold.tech` is same-site with the
+  dash, so cookies and storage work in the frame, and AppFlowy's SPA needs no path rewriting. Cloudflare Access
+  guards it (owner only, 1-month session): a frame cannot show Access's login page, so the page always offers
+  "Open Notes" in a new tab. Native AppFlowy apps cannot pass Access; browser only, by the owner's choice.
 
 ## How to run & verify
 

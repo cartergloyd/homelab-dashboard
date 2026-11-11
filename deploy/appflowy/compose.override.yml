@@ -1,0 +1,19 @@
+# Layered over upstream/docker-compose.yml (AppFlowy-Cloud) by ./dc.
+#  - only 127.0.0.1:8070 is published: that is the Cloudflare tunnel's origin for notes.xgold.tech
+#  - memory is capped (memswap = mem, like the CRM stack): gold-server has little headroom, and a
+#    runaway container must die alone instead of swapping Minecraft out
+#  - AI and the admin console never start (profile "off"); delete the profile line to turn one on
+services:
+  nginx:           { ports: !override ["127.0.0.1:8070:80"], restart: unless-stopped, mem_limit: 64m,  memswap_limit: 64m }
+  postgres:        { restart: unless-stopped, mem_limit: 512m, memswap_limit: 512m }
+  redis:           { restart: unless-stopped, mem_limit: 64m,  memswap_limit: 64m }
+  # upstream's minio/minio image was removed from Docker Hub and Quay (MinIO stopped publishing);
+  # pgsty/minio is the community fork of the same server, same command and env
+  minio:           { image: "pgsty/minio:RELEASE.2026-08-04T00-00-00Z", restart: unless-stopped, mem_limit: 256m, memswap_limit: 256m }
+  gotrue:          { restart: unless-stopped, mem_limit: 128m, memswap_limit: 128m }
+  appflowy_cloud:  { restart: unless-stopped, mem_limit: 768m, memswap_limit: 768m }
+  appflowy_worker: { restart: unless-stopped, mem_limit: 256m, memswap_limit: 256m }
+  appflowy_search: { restart: unless-stopped, mem_limit: 384m, memswap_limit: 384m }
+  appflowy_web:    { restart: unless-stopped, mem_limit: 96m,  memswap_limit: 96m }
+  ai:              { profiles: [off] }
+  admin_frontend:  { profiles: [off] }

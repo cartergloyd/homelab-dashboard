@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# docker compose for the AppFlowy stack:  ./dc ps | logs -f appflowy_cloud | restart | down
+cd "$(dirname "$0")" && exec docker compose -p homelab-notes --project-directory upstream \
+  -f upstream/docker-compose.yml -f compose.override.yml --env-file .env "$@"
