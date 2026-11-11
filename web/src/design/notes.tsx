@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAppConfig } from "../App";
 import { Empty, Head, Icon, Panel } from "./ui";
 
-/** AppFlowy (deploy/appflowy) framed inside the dash. NOTES_URL on the server decides where. */
+/** AppFlowy (deploy/appflowy) framed inside the dash. The dash serves it at /appflowy (notesProxy.ts). */
 export function NotesDesign() {
   const config = useAppConfig(),
     url = config.data?.links.notes ?? null,
@@ -21,11 +21,6 @@ export function NotesDesign() {
       />
       {url ? (
         <>
-          {/* A frame cannot report that it was refused, so the way out is always on screen. */}
-          <p className="notes-hint">
-            AppFlowy has its own sign-in. If the frame is blank or asks you to
-            sign in, open Notes in a new tab once, then come back.
-          </p>
           <div className="notes-frame">
             {!loaded && (
               <p className="notes-loading" role="status">
@@ -45,9 +40,9 @@ export function NotesDesign() {
         config.data && (
           <Panel title="Notes" sub="Not connected">
             <Empty>
-              Notes isn&apos;t connected yet. Set <code>NOTES_URL</code> to your
-              AppFlowy address in the dashboard environment, then restart the
-              dashboard.
+              Notes isn&apos;t connected yet. Set <code>NOTES_UPSTREAM</code> to
+              your AppFlowy address in the dashboard environment, then restart
+              the dashboard.
             </Empty>
           </Panel>
         )

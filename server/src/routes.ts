@@ -111,7 +111,7 @@ api.get("/config", (_req, res) => {
     demo: cfg.demo,
     torrentAdd: cfg.demo || !!cfg.qbittorrent.url,
     user: { login: u.login, name: u.name, via: u.via },
-    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl, notes: cfg.notes?.url ?? null, router: cfg.routerUrl },
+    links: { jellyfin: cfg.jellyfin.publicUrl, directus: cfg.directus.publicUrl, qbittorrent: cfg.qbittorrent.publicUrl, notes: cfg.notes ? "/appflowy/" : null, router: cfg.routerUrl },
     mediaRoots: cfg.mediaRoots.map((r) => r.name),
     timezone: cfg.timezone,
     logSources: LOG_SOURCES,

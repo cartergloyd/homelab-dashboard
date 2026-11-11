@@ -27,6 +27,7 @@ import { refreshFolders } from "./services/storage.js";
 import { initHostMetrics } from "./services/host.js";
 import { initRepositoryChecks } from "./services/repositories.js";
 import { attachLogSocket } from "./ws.js";
+import { attachNotesSocket, notesProxy } from "./services/notesProxy.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   app.set("trust proxy", false);
   app.disable("x-powered-by");
   app.use(httpSecurity);
+  app.use(notesProxy); // before express.json: it forwards raw request bodies, and does its own sign-in check
   app.use(express.json({ limit: "1mb" }));
   app.use(identityMiddleware);
   app.use(sensitiveRateLimit());
@@ -86,6 +88,7 @@ async function main(): Promise<void> {
 
   const server = http.createServer(app);
   attachLogSocket(server);
+  attachNotesSocket(server);
   server.listen(cfg.port, cfg.host, () => {
     console.log(`homelab-dashboard listening on http://${cfg.host}:${cfg.port}${cfg.demo ? " (DEMO mode)" : ""}${cfg.authDisabled ? " (auth disabled)" : ""}`);
     if (!cfg.dashboardKey) console.warn("DASHBOARD_KEY is not set: scripts and the MCP connector cannot authenticate.");

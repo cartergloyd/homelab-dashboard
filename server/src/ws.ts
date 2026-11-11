@@ -5,6 +5,7 @@ import { resolveIdentity } from "./auth.js";
 import { isProblem, isRoutineConnection, isTailed, query, recentLines, subscribe, subscribeRaw } from "./services/alerts.js";
 import { LOG_SOURCES, openLogStream } from "./services/logs.js";
 import { minecraftPlayers } from "./services/minecraft.js";
+import { isNotesPath } from "./services/notesProxy.js";
 import type { AlertSource, LogSource } from "./types.js";
 
 const MAX_BUFFERED = 1_000_000; // bytes queued to a slow client before we drop messages
@@ -20,6 +21,7 @@ export function attachLogSocket(server: http.Server): void {
 
   server.on("upgrade", async (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (isNotesPath(url.pathname)) return; // AppFlowy's sync socket, handled by notesProxy.ts
     if (url.pathname !== "/ws/logs" && url.pathname !== "/ws/alerts" && url.pathname !== "/ws/minecraft") {
       socket.destroy();
       return;

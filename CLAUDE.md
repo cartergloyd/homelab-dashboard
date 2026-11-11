@@ -248,11 +248,10 @@ $DASHBOARD_KEY` plus `X-Homelab-Agent: <name>` so their actions are attributed.
       - review the first week of Discord posts and tune `routing.json`.
 - [x] **AppFlowy notes** (Carter, 2026-11-10): self-hosted AppFlowy Cloud as its own compose project on
       gold-server (`~/server-platform/appflowy`, source `deploy/appflowy/`, README there), shown as the
-      **Notes** tab (`web/src/design/notes.tsx`, an iframe of `NOTES_URL`; CSP `frame-src` allows that origin
-      only). Running and healthy on `127.0.0.1:8070`, owner-only login, sign-ups closed, nightly backup cron.
-- [ ] AppFlowy publish: Cloudflare Access app for `notes.xgold.tech` first, then the tunnel public hostname →
-      `http://127.0.0.1:8070`, then `NOTES_URL` in the dashboard env + restart (README § Publish). Until then
-      the Notes tab shows "Not connected". Follow-ups: off-site copy of `backups/`, hl-run on the backup cron.
+      **Notes** tab (`web/src/design/notes.tsx`, an iframe of `/appflowy/`), which the dash itself serves by
+      proxying to AppFlowy (`services/notesProxy.ts`, `NOTES_UPSTREAM`) — no hostname or Cloudflare setup of its
+      own. Running on `127.0.0.1:8070`, owner-only login, sign-ups closed, nightly backup cron.
+- [ ] AppFlowy follow-ups: off-site copy of `backups/`, hl-run on the backup cron.
 - [ ] VPN connect/disconnect actions (needs the real provider CLI + sudoers)
 - [x] **Step 7** became the sidecar above (headless agent on the owner's subscription, no API key)
 - [ ] Alert-rule editing from the UI (today: edit `data/alert-rules.json`, hot-reloaded)
@@ -546,10 +545,15 @@ override the placeholders wherever they conflict:
   exists on Docker Hub or Quay; AI, admin console and sign-ups are off; every container is memory-capped because
   gold-server runs at ~2 GB available. Own Postgres (pgvector), so it is not covered by `gold-postgres-backup`:
   `deploy/appflowy/backup.sh` has its own cron.
-- 2026-11-10 **Notes = an iframe of its own hostname, not a path proxy.** `notes.xgold.tech` is same-site with the
-  dash, so cookies and storage work in the frame, and AppFlowy's SPA needs no path rewriting. Cloudflare Access
-  guards it (owner only, 1-month session): a frame cannot show Access's login page, so the page always offers
-  "Open Notes" in a new tab. Native AppFlowy apps cannot pass Access; browser only, by the owner's choice.
+- 2026-11-10 **Notes lives at `dash.xgold.tech/appflowy`, proxied by the dash, not on its own hostname** (owner:
+  "I don't want to mess around with Cloudflare"). The first design was `notes.xgold.tech` + tunnel + Access app;
+  dropped. AppFlowy's web app cannot run under a sub-path (absolute `/static`, `/app`, `/login`… everywhere), so
+  `notesProxy.ts` forwards `/appflowy/*` with the prefix stripped (the app's API, sign-in and websocket URLs are
+  runtime config, set to `https://dash.xgold.tech/appflowy` in the stack's `.env`) plus a short list of root
+  paths. It runs before `express.json` (raw bodies), checks the dash sign-in itself (headers minus
+  `Authorization`, which carries AppFlowy's own token), strips the dash's credentials from what AppFlowy sees,
+  and gives only AppFlowy's responses a looser CSP and `X-Frame-Options: SAMEORIGIN`. Trade-off accepted: AppFlowy
+  runs same-origin with the dash. Native AppFlowy apps cannot sign in through Access; browser only.
 
 ## How to run & verify
 

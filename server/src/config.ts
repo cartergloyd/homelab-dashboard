@@ -59,7 +59,7 @@ const Env = z.object({
   JELLYFIN_PUBLIC_URL: z.string().optional(),
   JELLYFIN_API_KEY: z.string().optional(),
   JELLYFIN_CONTAINER: z.string().default("jellyfin"),
-  NOTES_URL: z.string().optional(), // self-hosted AppFlowy (deploy/appflowy), framed by the Notes page
+  NOTES_UPSTREAM: z.string().optional(), // AppFlowy's nginx, e.g. http://127.0.0.1:8070 (deploy/appflowy); the dash serves it at /appflowy
   QBITTORRENT_PUBLIC_URL: z.string().optional(),
   QBITTORRENT_URL: z.string().url().optional(),
   QBITTORRENT_USERNAME: z.string().optional(),
@@ -166,11 +166,11 @@ const Env = z.object({
 
 const env = Env.parse(process.env);
 
-/** A bad or empty NOTES_URL means "Notes not connected", never a boot failure. */
-function notesFrom(raw?: string): { url: string; origin: string } | null {
+/** A bad or empty NOTES_UPSTREAM means "Notes not connected", never a boot failure. */
+function notesFrom(raw?: string): { host: string; port: number } | null {
   try {
     const u = new URL(raw ?? "");
-    return u.protocol === "https:" || u.protocol === "http:" ? { url: raw!.replace(/\/$/, ""), origin: u.origin } : null;
+    return u.protocol === "http:" ? { host: u.hostname, port: Number(u.port || 80) } : null;
   } catch {
     return null;
   }
@@ -240,7 +240,7 @@ export const cfg = {
     username: env.QBITTORRENT_USERNAME,
     password: env.QBITTORRENT_PASSWORD,
   },
-  notes: notesFrom(env.NOTES_URL),
+  notes: notesFrom(env.NOTES_UPSTREAM),
   mediaRoots: parseRoots(env.MEDIA_ROOTS),
   minecraft: {
     service: env.MC_SERVICE,

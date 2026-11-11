@@ -496,17 +496,10 @@
   --accent-soft: #352c42;
 }
 
-/* Notes: AppFlowy framed inside the dash. 13px text, not the dash's 10px, because this page is read. */
-.dash-design .notes-hint {
-  margin: -8px 0 14px;
-  max-width: 70ch;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--sub);
-}
+/* Notes: AppFlowy framed inside the dash. */
 .dash-design .notes-frame {
   position: relative;
-  height: max(520px, calc(100dvh - 250px));
+  height: max(520px, calc(100dvh - 200px));
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -530,6 +523,6 @@
 }
 @media (max-width: 900px) {
   .dash-design .notes-frame {
-    height: max(480px, calc(100dvh - 230px));
+    height: max(480px, calc(100dvh - 190px));
   }
 }
